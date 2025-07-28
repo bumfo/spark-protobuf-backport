@@ -25,7 +25,7 @@
 
 package org.apache.spark.sql.protobuf.backport
 
-import com.google.protobuf.{DescriptorProtos, Field, Type}
+import com.google.protobuf._
 import org.apache.spark.SparkFiles
 import org.apache.spark.sql.SparkSession
 
@@ -77,8 +77,13 @@ object TestProtobufBackport {
     // FileDescriptorProto for Type itself because its dependencies (e.g. google.api annotations)
     // are part of the standard descriptor set included in the Protobuf library.  Write it
     // to a temporary file and register it with Spark so executors can retrieve it.
-    val fileDescProto = Type.getDescriptor.getFile.toProto
-    val descSet = DescriptorProtos.FileDescriptorSet.newBuilder().addFile(fileDescProto).build()
+    val descSet = DescriptorProtos.FileDescriptorSet.newBuilder()
+      .addFile(Type.getDescriptor.getFile.toProto)
+      .addFile(AnyProto.getDescriptor.getFile.toProto)
+      .addFile(SourceContextProto.getDescriptor.getFile.toProto)
+      .addFile(ApiProto.getDescriptor.getFile.toProto)
+      // .addFile(OptionProto.getDescriptor.getFile.toProto)
+      .build()
     val tempDesc = java.io.File.createTempFile("type_descriptor", ".desc")
     java.nio.file.Files.write(tempDesc.toPath, descSet.toByteArray)
     spark.sparkContext.addFile(tempDesc.getAbsolutePath)
