@@ -142,14 +142,10 @@ private[backport] case class ProtobufDataToCatalyst(
    * Returns [[Some]] when parsing succeeds, otherwise [[None]].
    */
   private def parseCompiled(binary: Array[Byte]): Option[PbMessage] = {
-    messageClassOpt.flatMap { cls =>
-      try {
-        val method = cls.getMethod("parseFrom", classOf[Array[Byte]])
-        val msg = method.invoke(null, binary).asInstanceOf[PbMessage]
-        Some(msg)
-      } catch {
-        case _: Throwable => None
-      }
+    messageClassOpt.map { cls =>
+      val method = cls.getMethod("parseFrom", classOf[Array[Byte]])
+      val msg = method.invoke(null, binary).asInstanceOf[PbMessage]
+      msg
     }
   }
 
