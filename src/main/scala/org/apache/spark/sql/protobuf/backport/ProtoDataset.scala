@@ -1,13 +1,12 @@
 package org.apache.spark.sql.protobuf.backport
 
-import scala.reflect.ClassTag
-
 import com.google.protobuf.Message
-import org.apache.spark.sql.{DataFrame, Dataset}
-import org.apache.spark.rdd.RDD
-
-import org.apache.spark.sql.protobuf.backport.utils.ProtobufUtils
 import fastproto.ProtoToRowGenerator
+import org.apache.spark.rdd.RDD
+import org.apache.spark.sql.protobuf.backport.utils.ProtobufUtils
+import org.apache.spark.sql.{DataFrame, Dataset}
+
+import scala.reflect.ClassTag
 
 /**
  * Helper object for converting a [[Dataset]] of compiled Protobuf messages

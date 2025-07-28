@@ -1,13 +1,12 @@
 package fastproto
 
 // Use JavaConverters for Scala 2.12 compatibility
-import scala.collection.JavaConverters._
 
 import com.google.protobuf.Descriptors.{Descriptor, FieldDescriptor}
-
+import org.apache.spark.sql.types._
 import org.codehaus.janino.SimpleCompiler
 
-import org.apache.spark.sql.types._
+import scala.collection.JavaConverters._
 
 /**
  * Factory object for generating [[RowConverter]] instances on the fly.  Given a
@@ -47,7 +46,7 @@ object ProtoToRowGenerator {
    * @return a [[StructType]] representing the schema
    */
   private def buildStructType(descriptor: Descriptor): StructType = {
-    val fields = descriptor.getFields().asScala.map { fd =>
+    val fields = descriptor.getFields.asScala.map { fd =>
       val dt = fieldToDataType(fd)
       // Proto3 fields are optional by default; mark field nullable unless explicitly required
       val nullable = !fd.isRequired
@@ -107,14 +106,14 @@ object ProtoToRowGenerator {
   /**
    * Generate a concrete [[RowConverter]] for the given Protobuf message type.
    *
-   * @param descriptor the Protobuf descriptor describing the message schema
+   * @param descriptor   the Protobuf descriptor describing the message schema
    * @param messageClass the compiled Protobuf Java class
    * @tparam T the concrete type of the message
    * @return a [[RowConverter]] capable of converting the message into an
    *         [[org.apache.spark.sql.catalyst.InternalRow]]
    */
   def generateConverter[T <: com.google.protobuf.Message](descriptor: Descriptor,
-                      messageClass: Class[T]): RowConverter[T] = {
+      messageClass: Class[T]): RowConverter[T] = {
     // Build the Spark SQL schema corresponding to this descriptor
     val schema: StructType = buildStructType(descriptor)
 
@@ -123,7 +122,7 @@ object ProtoToRowGenerator {
     val nestedInfos = scala.collection.mutable.ArrayBuffer[NestedInfo]()
 
     // Inspect each field to detect nested message types that require their own converter
-    descriptor.getFields().asScala.foreach { fd =>
+    descriptor.getFields.asScala.foreach { fd =>
       if (fd.getJavaType == FieldDescriptor.JavaType.MESSAGE) {
         // Determine the compiled Java class for the nested message by inspecting the
         // return type of the generated getter.  For singular nested fields, the
@@ -205,7 +204,7 @@ object ProtoToRowGenerator {
     code ++= "    writer.reset();\n"
     code ++= "    writer.zeroOutNullBytes();\n"
     // Generate per‑field extraction and writing logic
-    descriptor.getFields().asScala.zipWithIndex.foreach { case (fd, idx) =>
+    descriptor.getFields.asScala.zipWithIndex.foreach { case (fd, idx) =>
       // Insert a comment into the generated Java code to aid debugging.  This
       // comment identifies the Protobuf field being processed along with
       // whether it is repeated.  Because Janino reports compilation errors

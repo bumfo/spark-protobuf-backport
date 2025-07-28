@@ -18,17 +18,17 @@ object DevInterface {
    * `SparkSession.internalCreateDataFrame` which bypasses schema inference
    * and uses the provided schema exactly as specified.
    *
-   * @param spark the active [[SparkSession]]
+   * @param spark        the active [[SparkSession]]
    * @param catalystRows the underlying row data
-   * @param schema the Catalyst schema describing the rows
-   * @param isStreaming flag indicating whether the resulting DataFrame is streaming
+   * @param schema       the Catalyst schema describing the rows
+   * @param isStreaming  flag indicating whether the resulting DataFrame is streaming
    * @return a [[DataFrame]] with the specified schema and rows
    */
   def internalCreateDataFrame(
       spark: SparkSession,
       catalystRows: RDD[InternalRow],
       schema: StructType,
-      isStreaming: Boolean = false
+      isStreaming: Boolean = false,
   ): DataFrame = {
     spark.internalCreateDataFrame(catalystRows, schema, isStreaming)
   }

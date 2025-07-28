@@ -15,21 +15,18 @@
 
 package org.apache.spark.sql.protobuf.backport
 
-import scala.collection.JavaConverters._
-import scala.util.control.NonFatal
-
-import com.google.protobuf.DynamicMessage
-import com.google.protobuf.{Message => PbMessage}
-
+import com.google.protobuf.{DynamicMessage, Message => PbMessage}
+import fastproto.{ProtoToRowGenerator, RowConverter}
+import org.apache.spark.sql.catalyst.expressions.codegen.{CodeGenerator, CodegenContext, ExprCode}
 import org.apache.spark.sql.catalyst.expressions.{ExpectsInputTypes, Expression, UnaryExpression}
-import org.apache.spark.sql.catalyst.expressions.codegen.{CodegenContext, CodeGenerator, ExprCode}
 import org.apache.spark.sql.catalyst.util.{FailFastMode, ParseMode, PermissiveMode}
+import org.apache.spark.sql.protobuf.backport.shims.{QueryCompilationErrors, QueryExecutionErrors}
+import org.apache.spark.sql.protobuf.backport.utils.{ProtobufOptions, ProtobufUtils, SchemaConverters}
 import org.apache.spark.sql.types.{AbstractDataType, BinaryType, DataType}
 import org.apache.spark.unsafe.types.UTF8String
 
-import org.apache.spark.sql.protobuf.backport.utils.{ProtobufOptions, ProtobufUtils, SchemaConverters}
-import org.apache.spark.sql.protobuf.backport.shims.{QueryCompilationErrors, QueryExecutionErrors}
-import fastproto.{ProtoToRowGenerator, RowConverter}
+import scala.collection.JavaConverters._
+import scala.util.control.NonFatal
 
 /**
  * A Catalyst expression that deserializes a Protobuf binary column into a
@@ -43,18 +40,18 @@ import fastproto.{ProtoToRowGenerator, RowConverter}
  * Otherwise this falls back to Spark's original DynamicMessage‑based
  * deserialization path.
  *
- * @param child        The binary column to deserialize.
- * @param messageName  The fully qualified message name or Java class name.
- * @param descFilePath Optional path to a serialized descriptor file.  If
- *                     provided the descriptor will be loaded from the file;
- *                     otherwise `messageName` is treated as a Java class name.
- * @param options      Reader options; currently supports "mode" (permissive|failfast)
- *                     and "recursive.fields.max.depth".
+ * @param child               The binary column to deserialize.
+ * @param messageName         The fully qualified message name or Java class name.
+ * @param descFilePath        Optional path to a serialized descriptor file.  If
+ *                            provided the descriptor will be loaded from the file;
+ *                            otherwise `messageName` is treated as a Java class name.
+ * @param options             Reader options; currently supports "mode" (permissive|failfast)
+ *                            and "recursive.fields.max.depth".
  * @param binaryDescriptorSet Optional binary descriptor set.  If defined, this
- *                     descriptor will be used to build the message descriptor
- *                     instead of reading from a file on the executors.  This
- *                     allows the descriptor to be serialized with the
- *                     expression and avoids file availability issues.
+ *                            descriptor will be used to build the message descriptor
+ *                            instead of reading from a file on the executors.  This
+ *                            allows the descriptor to be serialized with the
+ *                            expression and avoids file availability issues.
  */
 private[backport] case class ProtobufDataToCatalyst(
     child: Expression,
@@ -62,8 +59,8 @@ private[backport] case class ProtobufDataToCatalyst(
     descFilePath: Option[String] = None,
     options: Map[String, String] = Map.empty,
     binaryDescriptorSet: Option[Array[Byte]] = None)
-    extends UnaryExpression
-    with ExpectsInputTypes {
+  extends UnaryExpression
+          with ExpectsInputTypes {
 
   override def inputTypes: Seq[AbstractDataType] = Seq(BinaryType)
 
@@ -82,7 +79,7 @@ private[backport] case class ProtobufDataToCatalyst(
 
   // Cache the set of known field numbers to detect clashes from unknown fields.
   @transient private lazy val fieldsNumbers =
-    messageDescriptor.getFields.asScala.map(f => f.getNumber).toSet
+  messageDescriptor.getFields.asScala.map(f => f.getNumber).toSet
 
   // Legacy deserializer using DynamicMessage for fallback path.
   @transient private lazy val deserializer = new ProtobufDeserializer(messageDescriptor, dataType)
@@ -128,16 +125,16 @@ private[backport] case class ProtobufDataToCatalyst(
    * cannot be loaded this will be [[None]].
    */
   @transient private lazy val rowConverterOpt: Option[RowConverter[PbMessage]] =
-    messageClassOpt.map { cls =>
-      // Use the descriptor used to compute the Catalyst schema so that
-      // the row converter's schema matches the Catalyst data type.  Cast
-      // the generated converter to RowConverter[PbMessage] since PbMessage
-      // is a supertype of all generated protobuf classes.
-      val desc: com.google.protobuf.Descriptors.Descriptor = messageDescriptor
-      ProtoToRowGenerator
-        .generateConverter(desc, cls.asInstanceOf[Class[PbMessage]])
-        .asInstanceOf[RowConverter[PbMessage]]
-    }
+  messageClassOpt.map { cls =>
+    // Use the descriptor used to compute the Catalyst schema so that
+    // the row converter's schema matches the Catalyst data type.  Cast
+    // the generated converter to RowConverter[PbMessage] since PbMessage
+    // is a supertype of all generated protobuf classes.
+    val desc: com.google.protobuf.Descriptors.Descriptor = messageDescriptor
+    ProtoToRowGenerator
+      .generateConverter(desc, cls.asInstanceOf[Class[PbMessage]])
+      .asInstanceOf[RowConverter[PbMessage]]
+  }
 
   /**
    * Parse a Protobuf binary into a compiled message if the message class is
@@ -203,6 +200,7 @@ private[backport] case class ProtobufDataToCatalyst(
       // Convert any java.lang.String values in the deserialized result into UTF8String.
       // This avoids ClassCastException when Spark expects UTF8String for StringType fields.
       val rawValue = deserialized.get
+
       def toInternalString(value: Any, dt: DataType): Any = (value, dt) match {
         case (null, _) => null
         case (s: String, _: org.apache.spark.sql.types.StringType) => UTF8String.fromString(s)
@@ -220,6 +218,7 @@ private[backport] case class ProtobufDataToCatalyst(
           }
         case _ => value
       }
+
       toInternalString(rawValue, dataType)
     } catch {
       case NonFatal(e) => handleException(e)
@@ -244,7 +243,7 @@ private[backport] case class ProtobufDataToCatalyst(
            |  ${ev.value} = $result;
            |}
            |""".stripMargin
-      }
+      },
     )
   }
 
