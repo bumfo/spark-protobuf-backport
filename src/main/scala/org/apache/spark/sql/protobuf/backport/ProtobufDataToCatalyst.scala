@@ -25,6 +25,7 @@ import org.apache.spark.sql.catalyst.expressions.{ExpectsInputTypes, Expression,
 import org.apache.spark.sql.catalyst.expressions.codegen.{CodegenContext, CodeGenerator, ExprCode}
 import org.apache.spark.sql.catalyst.util.{FailFastMode, ParseMode, PermissiveMode}
 import org.apache.spark.sql.types.{AbstractDataType, BinaryType, DataType}
+import org.apache.spark.unsafe.types.UTF8String
 
 import org.apache.spark.sql.protobuf.backport.utils.{ProtobufOptions, ProtobufUtils, SchemaConverters}
 import org.apache.spark.sql.protobuf.backport.shims.{QueryCompilationErrors, QueryExecutionErrors}
@@ -199,7 +200,27 @@ private[backport] case class ProtobufDataToCatalyst(
       require(
         deserialized.isDefined,
         "Protobuf deserializer cannot return an empty result because filters are not pushed down")
-      deserialized.get
+      // Convert any java.lang.String values in the deserialized result into UTF8String.
+      // This avoids ClassCastException when Spark expects UTF8String for StringType fields.
+      val rawValue = deserialized.get
+      def toInternalString(value: Any, dt: DataType): Any = (value, dt) match {
+        case (null, _) => null
+        case (s: String, _: org.apache.spark.sql.types.StringType) => UTF8String.fromString(s)
+        case (arr: scala.collection.Seq[_], at: org.apache.spark.sql.types.ArrayType) =>
+          // Convert each element according to the element type
+          arr.map(elem => toInternalString(elem, at.elementType))
+        case (row: org.apache.spark.sql.catalyst.InternalRow, st: org.apache.spark.sql.types.StructType) =>
+          val newValues = st.fields.zipWithIndex.map { case (field, idx) =>
+            toInternalString(row.get(idx, field.dataType), field.dataType)
+          }
+          org.apache.spark.sql.catalyst.InternalRow.fromSeq(newValues)
+        case (m: Map[_, _], mt: org.apache.spark.sql.types.MapType) =>
+          m.map { case (k, v) =>
+            toInternalString(k, mt.keyType) -> toInternalString(v, mt.valueType)
+          }
+        case _ => value
+      }
+      toInternalString(rawValue, dataType)
     } catch {
       case NonFatal(e) => handleException(e)
     }
