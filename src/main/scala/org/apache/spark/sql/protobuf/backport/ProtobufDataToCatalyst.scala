@@ -166,16 +166,18 @@ private[backport] case class ProtobufDataToCatalyst(
     }
   }
 
-  override def nullSafeEval(input: Any): Any = {
+  override def nullSafeEval(input: Any): Any = nullSafeEvalInternal[PbMessage](input)
+
+  private def nullSafeEvalInternal[T <: PbMessage](input: Any): Any = {
     val binary = input.asInstanceOf[Array[Byte]]
     try {
       // If a rowConverter is defined, attempt to parse using the compiled class
-      rowConverterOpt match {
+      rowConverterOpt.asInstanceOf[Option[RowConverter[T]]] match {
         case Some(converter) =>
           parseCompiled(binary) match {
             case Some(msg) =>
               // Directly convert the compiled message into an InternalRow
-              return converter.convert(msg)
+              return converter.convert(msg.asInstanceOf[T])
             case None => // fallback to DynamicMessage path
           }
         case None => // fallback to DynamicMessage path
