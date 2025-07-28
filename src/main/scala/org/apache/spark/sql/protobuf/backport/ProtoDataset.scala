@@ -46,6 +46,6 @@ object ProtoDataset {
     // Use internalCreateDataFrame to avoid schema inference.  This helper is
     // defined in the same package as SparkSession so that it can call the
     // package-private method.
-    org.apache.spark.sql.DevInterface.internalCreateDataFrame(spark, rows, schema)
+    spark.internalCreateDataFrame(rows, schema)
   }
 }
