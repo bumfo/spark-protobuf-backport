@@ -9,23 +9,18 @@
 
 package org.apache.spark.sql.protobuf.backport.utils
 
-import java.io.{BufferedInputStream, FileInputStream, IOException}
-import java.util.Locale
-
-import scala.collection.JavaConverters._
-
-import com.google.protobuf.{DescriptorProtos, Descriptors, InvalidProtocolBufferException, Message}
 import com.google.protobuf.DescriptorProtos.{FileDescriptorProto, FileDescriptorSet}
 import com.google.protobuf.Descriptors.{Descriptor, FieldDescriptor}
-
+import com.google.protobuf.{DescriptorProtos, Descriptors, InvalidProtocolBufferException, Message}
 import org.apache.spark.internal.Logging
-import org.apache.spark.sql.AnalysisException
-import org.apache.spark.sql.catalyst.util.CaseInsensitiveMap
 import org.apache.spark.sql.internal.SQLConf
+import org.apache.spark.sql.protobuf.backport.shims.QueryCompilationErrors
 import org.apache.spark.sql.types._
 import org.apache.spark.util.Utils
 
-import org.apache.spark.sql.protobuf.backport.shims.QueryCompilationErrors
+import java.io.{BufferedInputStream, FileInputStream, IOException}
+import java.util.Locale
+import scala.collection.JavaConverters._
 
 /**
  * Collection of helper methods used by the Protobuf reader and writer.  In
@@ -50,10 +45,10 @@ private[backport] object ProtobufUtils extends Logging {
    * Catalyst schema and vice‑versa, respecting settings for case sensitivity.
    * The match results can be accessed using the `matchedFields` property.
    *
-   * @param descriptor      the descriptor in which to search for fields
-   * @param catalystSchema  the Catalyst schema to use for matching
-   * @param protoPath       the sequence of parent field names leading to the Protobuf descriptor
-   * @param catalystPath    the sequence of parent field names leading to the Catalyst schema
+   * @param descriptor     the descriptor in which to search for fields
+   * @param catalystSchema the Catalyst schema to use for matching
+   * @param protoPath      the sequence of parent field names leading to the Protobuf descriptor
+   * @param catalystPath   the sequence of parent field names leading to the Catalyst schema
    */
   class ProtoSchemaHelper(
       descriptor: Descriptor,
@@ -239,7 +234,7 @@ private[backport] object ProtobufUtils extends Logging {
    * descriptor corresponding to `messageName` is searched among all messages in
    * the descriptor set.  Throws if the message is not found.
    *
-   * @param descBytes the serialized FileDescriptorSet (as produced by protoc)
+   * @param descBytes   the serialized FileDescriptorSet (as produced by protoc)
    * @param messageName the message name or fully qualified name to locate
    */
   private[backport] def buildDescriptorFromBytes(descBytes: Array[Byte], messageName: String): Descriptor = {

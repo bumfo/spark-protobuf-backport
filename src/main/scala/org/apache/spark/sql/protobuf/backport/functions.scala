@@ -8,14 +8,14 @@
 
 package org.apache.spark.sql.protobuf.backport
 
-import scala.collection.JavaConverters._
-
 import org.apache.spark.annotation.Experimental
 import org.apache.spark.sql.Column
 
+import scala.collection.JavaConverters._
+
 // scalastyle:off: object.name
 object functions {
-// scalastyle:on: object.name
+  // scalastyle:on: object.name
 
   /**
    * Converts a binary column of Protobuf format into its corresponding Catalyst
@@ -33,7 +33,7 @@ object functions {
       descFilePath: String,
       options: java.util.Map[String, String]): Column = {
     new Column(
-      ProtobufDataToCatalyst(data.expr, messageName, Some(descFilePath), options.asScala.toMap)
+      ProtobufDataToCatalyst(data.expr, messageName, Some(descFilePath), options.asScala.toMap),
     )
   }
 
@@ -111,7 +111,7 @@ object functions {
       descFilePath: String,
       options: java.util.Map[String, String]): Column = {
     new Column(
-      CatalystDataToProtobuf(data.expr, messageName, Some(descFilePath), options.asScala.toMap)
+      CatalystDataToProtobuf(data.expr, messageName, Some(descFilePath), options.asScala.toMap),
     )
   }
 
@@ -173,7 +173,7 @@ object functions {
       data: Column,
       messageName: String,
       binaryDescriptor: Array[Byte],
-      options: java.util.Map[String, String]
+      options: java.util.Map[String, String],
   ): Column = {
     new Column(ProtobufDataToCatalyst(data.expr, messageName, None, options.asScala.toMap, Some(binaryDescriptor)))
   }
@@ -208,7 +208,7 @@ object functions {
       data: Column,
       messageName: String,
       binaryDescriptor: Array[Byte],
-      options: java.util.Map[String, String]
+      options: java.util.Map[String, String],
   ): Column = {
     new Column(CatalystDataToProtobuf(data.expr, messageName, None, options.asScala.toMap, Some(binaryDescriptor)))
   }

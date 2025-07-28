@@ -9,12 +9,10 @@
 package org.apache.spark.sql.protobuf.backport
 
 import com.google.protobuf.DynamicMessage
-
-import org.apache.spark.sql.catalyst.expressions.{Expression, UnaryExpression}
 import org.apache.spark.sql.catalyst.expressions.codegen.{CodegenContext, ExprCode}
-import org.apache.spark.sql.types.{BinaryType, DataType}
-
+import org.apache.spark.sql.catalyst.expressions.{Expression, UnaryExpression}
 import org.apache.spark.sql.protobuf.backport.utils.ProtobufUtils
+import org.apache.spark.sql.types.{BinaryType, DataType}
 
 /**
  * A Catalyst expression that serializes a Catalyst value (typically a
@@ -34,6 +32,7 @@ private[backport] case class CatalystDataToProtobuf(
     messageName: String,
     descFilePath: Option[String] = None,
     options: Map[String, String] = Map.empty,
+
     /**
      * Optional binary descriptor set.  If defined, this descriptor will be used
      * to build the message descriptor instead of reading from a file.  This
@@ -41,7 +40,7 @@ private[backport] case class CatalystDataToProtobuf(
      * requiring the descriptor file to be present on executors.
      */
     binaryDescriptorSet: Option[Array[Byte]] = None)
-    extends UnaryExpression {
+  extends UnaryExpression {
 
   override def dataType: DataType = BinaryType
 

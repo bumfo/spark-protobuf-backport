@@ -11,8 +11,6 @@
 package org.apache.spark.sql.protobuf.backport.utils
 
 import org.apache.hadoop.conf.Configuration
-
-import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.catalyst.util.{CaseInsensitiveMap, FailFastMode, ParseMode}
 
 /**
@@ -26,19 +24,19 @@ import org.apache.spark.sql.catalyst.util.{CaseInsensitiveMap, FailFastMode, Par
 private[backport] class ProtobufOptions(
     @transient val parameters: CaseInsensitiveMap[String],
     @transient val conf: Configuration)
-    extends Serializable {
+  extends Serializable {
 
   def this(parameters: Map[String, String], conf: Configuration) = {
     this(CaseInsensitiveMap(parameters), conf)
   }
 
   /** Reader parse mode.  Supported values are "PERMISSIVE" (default) and
-   *  "FAILFAST".  Defaults to [[FailFastMode]].
+   * "FAILFAST".  Defaults to [[FailFastMode]].
    */
   val parseMode: ParseMode = parameters.get("mode").map(ParseMode.fromString).getOrElse(FailFastMode)
 
   /** Maximum recursion depth for nested message fields.  A value of -1
-   *  disables recursion entirely.  Values greater than 10 are prohibited.
+   * disables recursion entirely.  Values greater than 10 are prohibited.
    */
   val recursiveFieldMaxDepth: Int = parameters.getOrElse("recursive.fields.max.depth", "-1").toInt
 }

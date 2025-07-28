@@ -9,18 +9,16 @@
 
 package org.apache.spark.sql.protobuf.backport
 
-import scala.collection.JavaConverters._
-import scala.util.control.NonFatal
-
 import com.google.protobuf.DynamicMessage
-
+import org.apache.spark.sql.catalyst.expressions.codegen.{CodeGenerator, CodegenContext, ExprCode}
 import org.apache.spark.sql.catalyst.expressions.{ExpectsInputTypes, Expression, UnaryExpression}
-import org.apache.spark.sql.catalyst.expressions.codegen.{CodegenContext, CodeGenerator, ExprCode}
 import org.apache.spark.sql.catalyst.util.{FailFastMode, ParseMode, PermissiveMode}
+import org.apache.spark.sql.protobuf.backport.shims.{QueryCompilationErrors, QueryExecutionErrors}
+import org.apache.spark.sql.protobuf.backport.utils.{ProtobufOptions, ProtobufUtils, SchemaConverters}
 import org.apache.spark.sql.types.{AbstractDataType, BinaryType, DataType}
 
-import org.apache.spark.sql.protobuf.backport.utils.{ProtobufOptions, ProtobufUtils, SchemaConverters}
-import org.apache.spark.sql.protobuf.backport.shims.{QueryCompilationErrors, QueryExecutionErrors}
+import scala.collection.JavaConverters._
+import scala.util.control.NonFatal
 
 /**
  * A Catalyst expression that deserializes a Protobuf binary column into a
@@ -40,6 +38,7 @@ private[backport] case class ProtobufDataToCatalyst(
     messageName: String,
     descFilePath: Option[String] = None,
     options: Map[String, String] = Map.empty,
+
     /**
      * Optional binary descriptor set.  If defined, this descriptor will be used
      * to build the message descriptor instead of reading from a file on the
@@ -47,8 +46,8 @@ private[backport] case class ProtobufDataToCatalyst(
      * expression and avoids file availability issues.
      */
     binaryDescriptorSet: Option[Array[Byte]] = None)
-    extends UnaryExpression
-    with ExpectsInputTypes {
+  extends UnaryExpression
+          with ExpectsInputTypes {
 
   override def inputTypes: Seq[AbstractDataType] = Seq(BinaryType)
 
@@ -131,7 +130,7 @@ private[backport] case class ProtobufDataToCatalyst(
            |  ${ev.value} = $result;
            |}
            |""".stripMargin
-      }
+      },
     )
   }
 

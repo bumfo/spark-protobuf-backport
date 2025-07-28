@@ -9,15 +9,13 @@
 
 package org.apache.spark.sql.protobuf.backport.utils
 
-import scala.collection.JavaConverters._
-
 import com.google.protobuf.Descriptors.{Descriptor, FieldDescriptor}
-
 import org.apache.spark.annotation.DeveloperApi
 import org.apache.spark.internal.Logging
+import org.apache.spark.sql.protobuf.backport.shims.QueryCompilationErrors
 import org.apache.spark.sql.types._
 
-import org.apache.spark.sql.protobuf.backport.shims.QueryCompilationErrors
+import scala.collection.JavaConverters._
 
 /**
  * A collection of helper methods to convert Protobuf schemas to Spark SQL schemas.
@@ -31,8 +29,8 @@ object SchemaConverters extends Logging {
   /**
    * Converts a Protobuf schema to a corresponding Spark SQL schema.
    *
-   * @param descriptor       the Protobuf descriptor
-   * @param protobufOptions  options controlling recursion depth
+   * @param descriptor      the Protobuf descriptor
+   * @param protobufOptions options controlling recursion depth
    */
   def toSqlType(
       descriptor: Descriptor,

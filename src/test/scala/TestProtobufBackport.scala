@@ -62,7 +62,7 @@ object TestProtobufBackport {
     // Use the compiled Java class for schema inference.  The resulting struct
     // contains fields corresponding to the Type message ("name", "fields", etc.).
     val structDf = df.select(
-      functions.from_protobuf($"data", classOf[Type].getName).as("struct")
+      functions.from_protobuf($"data", classOf[Type].getName).as("struct"),
     )
     // Extract the name and fields from the struct.  The first column is the name,
     // the second column is an array of structs representing the nested Field messages.
@@ -92,8 +92,8 @@ object TestProtobufBackport {
       functions.from_protobuf(
         $"data",
         "google.protobuf.Type",
-        SparkFiles.get(fileName)
-      ).as("struct")
+        SparkFiles.get(fileName),
+      ).as("struct"),
     )
     val row2 = structDf2.select("struct.name", "struct.fields").head()
     val typeName2 = row2.getString(0)
@@ -105,7 +105,7 @@ object TestProtobufBackport {
     // function to avoid file I/O on executors.
     val descBytes = descSet.toByteArray
     val structDf3 = df.select(
-      functions.from_protobuf($"data", "google.protobuf.Type", descBytes).as("struct")
+      functions.from_protobuf($"data", "google.protobuf.Type", descBytes).as("struct"),
     )
     val row3 = structDf3.select("struct.name", "struct.fields").head()
     val typeName3 = row3.getString(0)

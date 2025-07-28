@@ -10,14 +10,11 @@
 
 package org.apache.spark.sql.protobuf.backport
 
-import scala.collection.Seq
-
-import org.apache.spark.sql.SparkSessionExtensions
+import org.apache.spark.sql.{AnalysisException, SparkSessionExtensions}
 import org.apache.spark.sql.catalyst.FunctionIdentifier
-import org.apache.spark.sql.catalyst.analysis.UnresolvedAttribute
 import org.apache.spark.sql.catalyst.expressions.{Expression, ExpressionInfo, Literal}
-import org.apache.spark.sql.types.DataType
-import org.apache.spark.sql.AnalysisException
+
+import scala.collection.Seq
 
 /**
  * Registers the Protobuf conversion functions with a [[SparkSessionExtensions]].

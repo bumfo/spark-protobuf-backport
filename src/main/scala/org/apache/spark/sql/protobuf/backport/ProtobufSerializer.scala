@@ -9,23 +9,21 @@
 
 package org.apache.spark.sql.protobuf.backport
 
-import scala.collection.JavaConverters._
-
-import com.google.protobuf.{Duration, DynamicMessage, Timestamp}
-import com.google.protobuf.Descriptors.{Descriptor, FieldDescriptor}
 import com.google.protobuf.Descriptors.FieldDescriptor.JavaType._
-
+import com.google.protobuf.Descriptors.{Descriptor, FieldDescriptor}
+import com.google.protobuf.{Duration, DynamicMessage, Timestamp}
 import org.apache.spark.internal.Logging
 import org.apache.spark.sql.AnalysisException
 import org.apache.spark.sql.catalyst.InternalRow
 import org.apache.spark.sql.catalyst.expressions.SpecializedGetters
-import org.apache.spark.sql.catalyst.util.{DateTimeUtils, IntervalUtils}
 import org.apache.spark.sql.catalyst.util.IntervalStringStyles.ANSI_STYLE
+import org.apache.spark.sql.catalyst.util.{DateTimeUtils, IntervalUtils}
+import org.apache.spark.sql.protobuf.backport.shims.QueryCompilationErrors
+import org.apache.spark.sql.protobuf.backport.utils.ProtobufUtils
+import org.apache.spark.sql.protobuf.backport.utils.ProtobufUtils.{ProtoMatchedField, toFieldStr}
 import org.apache.spark.sql.types._
 
-import org.apache.spark.sql.protobuf.backport.utils.ProtobufUtils
-import org.apache.spark.sql.protobuf.backport.utils.ProtobufUtils.{toFieldStr, ProtoMatchedField}
-import org.apache.spark.sql.protobuf.backport.shims.QueryCompilationErrors
+import scala.collection.JavaConverters._
 
 /**
  * A serializer to serialize data in Catalyst format to data in Protobuf
@@ -40,7 +38,7 @@ private[backport] class ProtobufSerializer(
     rootCatalystType: DataType,
     rootDescriptor: Descriptor,
     nullable: Boolean)
-    extends Logging {
+  extends Logging {
 
   /** Serialize a Catalyst value into a Protobuf DynamicMessage or null. */
   def serialize(catalystData: Any): Any = {
