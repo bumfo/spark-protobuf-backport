@@ -126,14 +126,16 @@ private[backport] case class ProtobufDataToCatalyst(
    * so that the schema matches the Catalyst data type.  If the message class
    * cannot be loaded this will be [[None]].
    */
-  @transient private lazy val rowConverterOpt: Option[RowConverter[_ <: PbMessage]] =
+  @transient private lazy val rowConverterOpt: Option[RowConverter[PbMessage]] =
     messageClassOpt.map { cls =>
-      // We use the same descriptor used to compute the Catalyst schema to
-      // ensure the row converter's schema matches the Catalyst data type.
+      // Use the descriptor used to compute the Catalyst schema so that
+      // the row converter's schema matches the Catalyst data type.  Cast
+      // the generated converter to RowConverter[PbMessage] since PbMessage
+      // is a supertype of all generated protobuf classes.
       val desc: com.google.protobuf.Descriptors.Descriptor = messageDescriptor
       ProtoToRowGenerator
         .generateConverter(desc, cls.asInstanceOf[Class[PbMessage]])
-        .asInstanceOf[RowConverter[_ <: PbMessage]]
+        .asInstanceOf[RowConverter[PbMessage]]
     }
 
   /**
@@ -166,18 +168,16 @@ private[backport] case class ProtobufDataToCatalyst(
     }
   }
 
-  override def nullSafeEval(input: Any): Any = nullSafeEvalInternal[PbMessage](input)
-
-  private def nullSafeEvalInternal[T <: PbMessage](input: Any): Any = {
+  override def nullSafeEval(input: Any): Any = {
     val binary = input.asInstanceOf[Array[Byte]]
     try {
       // If a rowConverter is defined, attempt to parse using the compiled class
-      rowConverterOpt.asInstanceOf[Option[RowConverter[T]]] match {
+      rowConverterOpt match {
         case Some(converter) =>
           parseCompiled(binary) match {
             case Some(msg) =>
               // Directly convert the compiled message into an InternalRow
-              return converter.convert(msg.asInstanceOf[T])
+              return converter.convert(msg)
             case None => // fallback to DynamicMessage path
           }
         case None => // fallback to DynamicMessage path

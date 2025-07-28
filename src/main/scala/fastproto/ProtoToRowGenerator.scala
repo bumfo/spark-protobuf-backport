@@ -8,6 +8,7 @@ import com.google.protobuf.Message
 
 import org.apache.spark.sql.types._
 import org.apache.spark.sql.catalyst.InternalRow
+import org.apache.spark.unsafe.types.UTF8String
 
 /**
  * Factory object for generating [[RowConverter]] instances using simple reflection.
@@ -115,28 +116,27 @@ object ProtoToRowGenerator {
       override def convert(message: T): InternalRow = {
         val values: Seq[Any] = descriptor.getFields.asScala.map { fd =>
           try {
-            val accessor = accessorName(fd)
-            val value = if (fd.isRepeated) {
-              // repeated fields: call getXList to return java.util.List; we don't support nested arrays yet
-              val m = messageClass.getMethod(s"get${accessor}List")
-              m.invoke(message)
-            } else {
-              val m = messageClass.getMethod(s"get${accessor}")
-              m.invoke(message)
-            }
-            if (value == null) {
+            if (fd.isRepeated) {
+              // Repeated fields are not expanded in this simplified converter
               null
             } else {
-              fd.getJavaType match {
-                case JavaType.INT     => value.asInstanceOf[java.lang.Integer].intValue()
-                case JavaType.LONG    => value.asInstanceOf[java.lang.Long].longValue()
-                case JavaType.FLOAT   => value.asInstanceOf[java.lang.Float].floatValue()
-                case JavaType.DOUBLE  => value.asInstanceOf[java.lang.Double].doubleValue()
-                case JavaType.BOOLEAN => value.asInstanceOf[java.lang.Boolean].booleanValue()
-                case JavaType.STRING  => value.toString
-                case JavaType.BYTE_STRING => value.asInstanceOf[com.google.protobuf.ByteString].toByteArray
-                case JavaType.ENUM    => value.toString
-                case JavaType.MESSAGE => null // nested messages not expanded
+              val accessor = accessorName(fd)
+              val m = messageClass.getMethod(s"get${accessor}")
+              val value = m.invoke(message)
+              if (value == null) {
+                null
+              } else {
+                fd.getJavaType match {
+                  case JavaType.INT        => value.asInstanceOf[java.lang.Integer].intValue()
+                  case JavaType.LONG       => value.asInstanceOf[java.lang.Long].longValue()
+                  case JavaType.FLOAT      => value.asInstanceOf[java.lang.Float].floatValue()
+                  case JavaType.DOUBLE     => value.asInstanceOf[java.lang.Double].doubleValue()
+                  case JavaType.BOOLEAN    => value.asInstanceOf[java.lang.Boolean].booleanValue()
+                  case JavaType.STRING     => UTF8String.fromString(value.toString)
+                  case JavaType.BYTE_STRING => value.asInstanceOf[com.google.protobuf.ByteString].toByteArray
+                  case JavaType.ENUM       => UTF8String.fromString(value.toString)
+                  case JavaType.MESSAGE    => null // nested messages not expanded
+                }
               }
             }
           } catch {
