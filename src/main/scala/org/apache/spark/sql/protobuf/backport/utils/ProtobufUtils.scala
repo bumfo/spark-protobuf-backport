@@ -220,6 +220,41 @@ private[backport] object ProtobufUtils extends Logging {
   }
 
   /**
+   * Parse a serialized descriptor set from a byte array and return the list of
+   * FileDescriptor instances including all dependencies.  This variant avoids
+   * reading from the filesystem at executor runtime.  It is used when
+   * the descriptor file is read on the driver and passed to executors as a
+   * byte array.
+   */
+  private[backport] def parseFileDescriptorSet(descBytes: Array[Byte]): List[Descriptors.FileDescriptor] = {
+    val fileDescriptorSet = DescriptorProtos.FileDescriptorSet.parseFrom(descBytes)
+    val fileDescriptorProtoIndex = createDescriptorProtoMap(fileDescriptorSet)
+    fileDescriptorSet.getFileList.asScala.map { fileDescriptorProto =>
+      buildFileDescriptor(fileDescriptorProto, fileDescriptorProtoIndex)
+    }.toList
+  }
+
+  /**
+   * Build a Protobuf message descriptor from a serialized FileDescriptorSet.  The
+   * descriptor corresponding to `messageName` is searched among all messages in
+   * the descriptor set.  Throws if the message is not found.
+   *
+   * @param descBytes the serialized FileDescriptorSet (as produced by protoc)
+   * @param messageName the message name or fully qualified name to locate
+   */
+  private[backport] def buildDescriptorFromBytes(descBytes: Array[Byte], messageName: String): Descriptor = {
+    val fileDescriptors = parseFileDescriptorSet(descBytes)
+    val messageDescOpt = fileDescriptors.iterator.flatMap { fileDesc =>
+      fileDesc.getMessageTypes.asScala.find { desc =>
+        desc.getName == messageName || desc.getFullName == messageName
+      }
+    }.toStream.headOption
+    messageDescOpt.getOrElse {
+      throw QueryCompilationErrors.unableToLocateProtobufMessageError(messageName)
+    }
+  }
+
+  /**
    * Recursively constructs file descriptors for all dependencies for the given FileDescriptorProto.
    */
   private def buildFileDescriptor(

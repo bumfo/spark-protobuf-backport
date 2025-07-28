@@ -18,10 +18,26 @@ libraryDependencies ++= Seq(
 )
 
 // Enable sbt-assembly for creating a single fat jar.  See
-// project/plugins.sbt and project/assembly.sbt for details.
+// Bring in the sbt-assembly plugin settings at the root level.  The
+// shading rules and merge strategies are defined here rather than
+// in project/assembly.sbt to avoid build‑loading issues.  See
+// project/plugins.sbt for enabling the plugin.
+import sbtassembly.AssemblyPlugin.autoImport._
+
 lazy val root = (project in file(".")).settings(
   name := "spark-protobuf-backport",
-  // Use assembly/skip in tests to avoid packaging test code
+  // Skip tests when running assembly; no test sources are provided
   test := {},
-  publishArtifact := false
+  publishArtifact := false,
+  // Merge strategy discards META‑INF files to avoid duplicate resource issues
+  assembly / assemblyMergeStrategy := {
+    case PathList("META-INF", _ @ _*) => MergeStrategy.discard
+    case x => MergeStrategy.first
+  },
+  // Shade all Protobuf classes to avoid version conflicts with Spark's own protobuf dependency
+  assemblyShadeRules ++= Seq(
+    ShadeRule.rename("com.google.protobuf.**" -> "org.sparkproject.spark.protobuf311.@1").inAll
+  ),
+  // Skip running tests during assembly; no test sources are included
+  assembly / test := {}
 )

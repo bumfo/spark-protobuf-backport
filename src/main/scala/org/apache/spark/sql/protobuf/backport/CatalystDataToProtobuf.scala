@@ -33,13 +33,23 @@ private[backport] case class CatalystDataToProtobuf(
     child: Expression,
     messageName: String,
     descFilePath: Option[String] = None,
-    options: Map[String, String] = Map.empty)
+    options: Map[String, String] = Map.empty,
+    /**
+     * Optional binary descriptor set.  If defined, this descriptor will be used
+     * to build the message descriptor instead of reading from a file.  This
+     * allows the descriptor to be serialized with the expression and avoids
+     * requiring the descriptor file to be present on executors.
+     */
+    binaryDescriptorSet: Option[Array[Byte]] = None)
     extends UnaryExpression {
 
   override def dataType: DataType = BinaryType
 
-  @transient private lazy val protoDescriptor =
-    ProtobufUtils.buildDescriptor(messageName, descFilePathOpt = descFilePath)
+  @transient private lazy val protoDescriptor: com.google.protobuf.Descriptors.Descriptor =
+    binaryDescriptorSet match {
+      case Some(bytes) => ProtobufUtils.buildDescriptorFromBytes(bytes, messageName)
+      case None => ProtobufUtils.buildDescriptor(messageName, descFilePath)
+    }
 
   @transient private lazy val serializer =
     new ProtobufSerializer(child.dataType, protoDescriptor, child.nullable)

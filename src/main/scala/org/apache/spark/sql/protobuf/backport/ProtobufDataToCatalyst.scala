@@ -39,7 +39,14 @@ private[backport] case class ProtobufDataToCatalyst(
     child: Expression,
     messageName: String,
     descFilePath: Option[String] = None,
-    options: Map[String, String] = Map.empty)
+    options: Map[String, String] = Map.empty,
+    /**
+     * Optional binary descriptor set.  If defined, this descriptor will be used
+     * to build the message descriptor instead of reading from a file on the
+     * executors.  This allows the descriptor to be serialized with the
+     * expression and avoids file availability issues.
+     */
+    binaryDescriptorSet: Option[Array[Byte]] = None)
     extends UnaryExpression
     with ExpectsInputTypes {
 
@@ -52,8 +59,11 @@ private[backport] case class ProtobufDataToCatalyst(
 
   private lazy val protobufOptions = ProtobufOptions(options)
 
-  @transient private lazy val messageDescriptor =
-    ProtobufUtils.buildDescriptor(messageName, descFilePath)
+  @transient private lazy val messageDescriptor: com.google.protobuf.Descriptors.Descriptor =
+    binaryDescriptorSet match {
+      case Some(bytes) => ProtobufUtils.buildDescriptorFromBytes(bytes, messageName)
+      case None => ProtobufUtils.buildDescriptor(messageName, descFilePath)
+    }
 
   @transient private lazy val fieldsNumbers =
     messageDescriptor.getFields.asScala.map(f => f.getNumber).toSet
@@ -84,12 +94,15 @@ private[backport] case class ProtobufDataToCatalyst(
     val binary = input.asInstanceOf[Array[Byte]]
     try {
       result = DynamicMessage.parseFrom(messageDescriptor, binary)
-      // Check for unknown fields that clash with known fields; this indicates
-      // mismatch between writer and reader schemas.
+      // Check for unknown fields that clash with known field numbers; this indicates
+      // a mismatch between writer and reader schemas.  Use findFieldByNumber
+      // instead of indexing into getFields by number, because Protobuf field
+      // numbers are 1‑based and may not align with the list index.
       result.getUnknownFields.asMap().keySet().asScala.find(fieldsNumbers.contains(_)) match {
         case Some(number) =>
-          throw QueryCompilationErrors.protobufFieldTypeMismatchError(
-            messageDescriptor.getFields.get(number).toString)
+          val conflictingField = Option(messageDescriptor.findFieldByNumber(number))
+            .getOrElse(messageDescriptor.getFields.get(number - 1))
+          throw QueryCompilationErrors.protobufFieldTypeMismatchError(conflictingField.toString)
         case None => // no clash
       }
       val deserialized = deserializer.deserialize(result)

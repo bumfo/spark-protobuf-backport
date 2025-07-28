@@ -25,7 +25,8 @@ import org.apache.spark.sql.catalyst.util.{CaseInsensitiveMap, FailFastMode, Par
  */
 private[backport] class ProtobufOptions(
     @transient val parameters: CaseInsensitiveMap[String],
-    @transient val conf: Configuration) {
+    @transient val conf: Configuration)
+    extends Serializable {
 
   def this(parameters: Map[String, String], conf: Configuration) = {
     this(CaseInsensitiveMap(parameters), conf)
