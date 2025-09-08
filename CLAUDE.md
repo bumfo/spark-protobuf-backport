@@ -10,6 +10,13 @@ The project includes two key optimizations:
 1. **Compiled message support**: When `messageName` refers to a compiled Java class, uses generated `RowConverter` via Janino for direct conversion to `UnsafeRow`, avoiding `DynamicMessage` overhead
 2. **Binary descriptor sets**: Allows passing descriptor bytes directly to avoid file distribution issues on executors
 
+## Project Structure
+
+- **`core/`** - Scala implementation of the protobuf backport (see `core/CLAUDE.md`)
+- **`python/`** - PySpark wrapper with comprehensive testing (see `python/CLAUDE.md`) 
+- **`shaded/`** - Shaded protobuf dependencies for conflict avoidance
+- **`uber/`** - Assembled JAR with all dependencies
+
 ## Build Commands
 
 ```bash
@@ -19,8 +26,8 @@ sbt compile
 # Run tests
 sbt --error test
 
-# Run performance benchmarks
-sbt "testOnly *ProtobufConversionBenchmark*"
+# Run performance benchmarks (excluded from regular tests)
+sbt "core/testOnly benchmark.ProtobufConversionBenchmark -- -n benchmark.Benchmark"
 
 # Build shaded JAR with all dependencies
 sbt assembly
@@ -31,62 +38,23 @@ sbt clean
 
 The assembled JAR includes shaded protobuf dependencies to avoid conflicts with Spark's own protobuf runtime.
 
-## Architecture
+## Module Documentation
 
-### Core Components
+For detailed implementation and development information:
 
-**Expression Layer** (`src/main/scala/org/apache/spark/sql/protobuf/backport/`):
-- `ProtobufDataToCatalyst` - Deserializes protobuf binary → Catalyst rows (`from_protobuf`)
-- `CatalystDataToProtobuf` - Serializes Catalyst rows → protobuf binary (`to_protobuf`) 
-- `functions` - DataFrame API entry points for both functions
-- `ProtobufExtensions` - SQL function registration via SparkSessionExtensions
+- **Core Scala Implementation**: See `core/CLAUDE.md` for architecture, performance benchmarks, and development notes
+- **PySpark Support**: See `python/CLAUDE.md` for Python wrapper implementation and testing
 
-**Schema & Utilities** (`utils/` subdirectory):
-- `SchemaConverters` - Converts protobuf descriptors → Spark SQL schemas
-- `ProtobufUtils` - Message descriptor loading (from files, classes, or binary descriptor sets)
-- `ProtobufOptions` - Parse mode and recursion depth configuration
+## Usage Patterns
 
-**Serialization Logic**:
-- `ProtobufSerializer` - Converts Catalyst values to protobuf messages using `DynamicMessage`
-- `ProtobufDeserializer` - Converts `DynamicMessage` to Catalyst rows
+The backport supports three protobuf usage patterns:
 
-**Fast Proto Integration** (`src/main/scala/fastproto/`):
-- `ProtoToRowGenerator` - Generates optimized `RowConverter` implementations using Janino
-- `RowConverter` - Interface for direct protobuf message → `UnsafeRow` conversion
+1. **Compiled Java class**: `from_protobuf(col("data"), "com.example.MyMessage")`
+2. **Descriptor file**: `from_protobuf(col("data"), "MyMessage", "/path/to/schema.desc")`  
+3. **Binary descriptor set**: `from_protobuf(col("data"), "MyMessage", descriptor_bytes)`
 
-**Spark Compatibility Shims** (`shims/` subdirectory):
-- Error handling and query compilation compatibility layer for Spark 3.2.1
-
-### Key Design Patterns
-
-1. **Dual execution paths**: Compiled classes use generated converters; descriptor-only uses `DynamicMessage`
-2. **Binary descriptor set support**: Eliminates executor file access requirements
-3. **Schema inference caching**: Lazy computation of Spark schemas from protobuf descriptors
-4. **Parse mode handling**: Supports both permissive (null on error) and fail-fast modes
-
-## Development Notes
-
-- **Scala version**: 2.12.15 (matches Spark 3.2.1)
-- **Spark version**: 3.2.1 (provided dependency)
-- **Protobuf version**: 3.11.4 (shaded to avoid conflicts)
-- **Test approach**: Comprehensive ScalaTest suite in `ProtobufBackportSpec.scala` using `google.protobuf.Type`
-- **Performance benchmarks**: Performance comparison tests in `ProtobufConversionBenchmark.scala` comparing codegen vs DynamicMessage paths
-- **Shading**: All protobuf classes shaded under `org.sparkproject.spark.protobuf311.*`
-
-The tests verify three usage patterns: compiled class, descriptor file, and binary descriptor set approaches. 
-
-## Performance Benchmarking
-
-The benchmark in `ProtobufConversionBenchmark.scala` compares performance between the three conversion approaches:
-
-- **Compiled class path**: Uses generated `RowConverter` via Janino for direct `UnsafeRow` conversion
-- **Descriptor file path**: Uses `DynamicMessage` parsing with descriptor file lookup
-- **Binary descriptor set path**: Uses `DynamicMessage` parsing with embedded descriptor bytes
-
-**Current findings**: Benchmark results show that DynamicMessage paths are currently 2-3x faster than the codegen path in DataFrame operations. This reveals optimization opportunities for:
-- Janino compilation caching to avoid runtime overhead
-- Generated code efficiency improvements  
-- Better utilization of JVM optimizations
-- Performance gains may be more apparent with larger batch sizes
-
-The benchmark provides a foundation for measuring and tracking performance improvements as the codebase evolves.
+# important-instruction-reminders
+Do what has been asked; nothing more, nothing less.
+NEVER create files unless they're absolutely necessary for achieving your goal.
+ALWAYS prefer editing an existing file to creating a new one.
+NEVER proactively create documentation files (*.md) or README files. Only create documentation files if explicitly requested by the User.

@@ -44,6 +44,14 @@ lazy val core = project
   .settings(
     name := "spark-protobuf-backport",
     publishArtifact := true,
+    // Redefine test task using testOnly with args to exclude benchmarks
+    Test / test := {
+      (Test / testOnly).toTask(" * -- -l benchmark.Benchmark").value
+    },
+    // Add a benchmark task that runs benchmarks only
+    TaskKey[Unit]("benchmark") := {
+      (Test / testOnly).toTask(" benchmark.* -- -n benchmark.Benchmark").value
+    },
     libraryDependencies ++= commonDependencies ++ Seq(
       // Protobuf as provided for compilation
       "com.google.protobuf" % "protobuf-java" % protobufVersion % Provided

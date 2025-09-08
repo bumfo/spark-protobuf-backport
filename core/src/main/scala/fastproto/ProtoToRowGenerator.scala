@@ -8,6 +8,7 @@ import org.apache.spark.sql.types._
 import org.codehaus.janino.SimpleCompiler
 
 import scala.collection.JavaConverters._
+import java.util.concurrent.ConcurrentHashMap
 
 /**
  * Factory object for generating [[RowConverter]] instances on the fly.  Given a
@@ -21,6 +22,14 @@ import scala.collection.JavaConverters._
  * `null` placeholders and can be extended with recursive conversion logic.
  */
 object ProtoToRowGenerator {
+
+  // Thread-safe cache for generated converters to avoid redundant compilation
+  private val converterCache: ConcurrentHashMap[String, RowConverter[_ <: Message]] = 
+    new ConcurrentHashMap()
+
+  // Thread-safe cache for computed schemas to avoid redundant schema generation
+  private val schemaCache: ConcurrentHashMap[String, StructType] = 
+    new ConcurrentHashMap()
 
   /**
    * Compute the accessor method suffix for a given field descriptor.  This
@@ -37,16 +46,31 @@ object ProtoToRowGenerator {
   }
 
   /**
+   * Get a cached schema for the given descriptor, computing it if necessary.
+   * This avoids redundant schema generation for the same descriptors.
+   *
+   * @param descriptor the Protobuf descriptor
+   * @return a cached [[StructType]] representing the schema
+   */
+  private def getCachedSchema(descriptor: Descriptor): StructType = {
+    val key = descriptor.getFullName
+    schemaCache.computeIfAbsent(key, _ => buildStructTypeInternal(descriptor))
+  }
+
+  /**
    * Recursively build a Spark SQL [[StructType]] corresponding to the
    * structure of a Protobuf message.  Primitive fields are mapped to
    * appropriate Catalyst types; repeated fields become [[ArrayType]] and
    * Protobuf map entries become [[MapType]].  Nested message types are
    * converted into nested [[StructType]]s.
    *
+   * This is the internal implementation that should be called through
+   * getCachedSchema for better performance.
+   *
    * @param descriptor the root Protobuf descriptor
    * @return a [[StructType]] representing the schema
    */
-  private def buildStructType(descriptor: Descriptor): StructType = {
+  private def buildStructTypeInternal(descriptor: Descriptor): StructType = {
     val fields = descriptor.getFields.asScala.map { fd =>
       val dt = fieldToDataType(fd)
       // Proto3 fields are optional by default; mark field nullable unless explicitly required
@@ -73,7 +97,7 @@ object ProtoToRowGenerator {
     // MapData at runtime.
     if (fd.isRepeated && fd.getType == FieldDescriptor.Type.MESSAGE && fd.getMessageType.getOptions.hasMapEntry) {
       // Build a StructType for the map entry (with key and value fields) and wrap it in an ArrayType.
-      val entryType = buildStructType(fd.getMessageType)
+      val entryType = getCachedSchema(fd.getMessageType)
       ArrayType(entryType, containsNull = false)
     } else if (fd.isRepeated) {
       // Repeated (array) field
@@ -86,7 +110,7 @@ object ProtoToRowGenerator {
         case STRING => StringType
         case BYTE_STRING => BinaryType
         case ENUM => StringType
-        case MESSAGE => buildStructType(fd.getMessageType)
+        case MESSAGE => getCachedSchema(fd.getMessageType)
       }
       ArrayType(elementType, containsNull = false)
     } else {
@@ -99,13 +123,15 @@ object ProtoToRowGenerator {
         case STRING => StringType
         case BYTE_STRING => BinaryType
         case ENUM => StringType
-        case MESSAGE => buildStructType(fd.getMessageType)
+        case MESSAGE => getCachedSchema(fd.getMessageType)
       }
     }
   }
 
   /**
    * Generate a concrete [[RowConverter]] for the given Protobuf message type.
+   * Uses internal caching to avoid redundant Janino compilation for the same 
+   * descriptor and message class combinations.
    *
    * @param descriptor   the Protobuf descriptor describing the message schema
    * @param messageClass the compiled Protobuf Java class
@@ -115,8 +141,25 @@ object ProtoToRowGenerator {
    */
   def generateConverter[T <: Message](descriptor: Descriptor,
                                       messageClass: Class[T]): RowConverter[T] = {
+    val key = s"${messageClass.getName}_${descriptor.getFullName}"
+    converterCache.computeIfAbsent(key, _ => generateConverterInternal(descriptor, messageClass))
+      .asInstanceOf[RowConverter[T]]
+  }
+
+  /**
+   * Internal method that performs the actual converter generation and compilation.
+   * This should not be called directly - use generateConverter instead.
+   *
+   * @param descriptor   the Protobuf descriptor describing the message schema
+   * @param messageClass the compiled Protobuf Java class
+   * @tparam T the concrete type of the message
+   * @return a [[RowConverter]] capable of converting the message into an
+   *         [[org.apache.spark.sql.catalyst.InternalRow]]
+   */
+  private def generateConverterInternal[T <: Message](descriptor: Descriptor,
+                                                      messageClass: Class[T]): RowConverter[T] = {
     // Build the Spark SQL schema corresponding to this descriptor
-    val schema: StructType = buildStructType(descriptor)
+    val schema: StructType = getCachedSchema(descriptor)
 
     // Precompute nested converters for message fields (both single and repeated) and map fields
     case class NestedInfo(field: FieldDescriptor, converter: RowConverter[_ <: Message])
