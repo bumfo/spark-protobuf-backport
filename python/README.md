@@ -5,13 +5,12 @@ This directory contains the complete PySpark support for the Spark protobuf back
 ## 🚀 Quick Start
 
 ```bash
-# Build JAR and test (from project root)
+# Build JAR (from project root)
 sbt uberJar/assembly
 
-# Run the core functionality test
+# Run the automated test (finds venv automatically)
 cd python
-source .venv/bin/activate
-python test_pyspark_protobuf.py
+./run_test.sh
 ```
 
 ## 📁 Directory Structure
@@ -19,7 +18,8 @@ python test_pyspark_protobuf.py
 ```
 python/
 ├── setup.py                    # Package installation
-├── test_pyspark_protobuf.py    # Core functionality test
+├── run_test.sh                 # Automated test runner (finds venv automatically)
+├── test_pyspark_protobuf.py    # Functional test suite
 ├── examples/                   # Usage examples
 │   └── protobuf_example.py
 └── spark_protobuf/             # Python package
@@ -29,28 +29,31 @@ python/
 
 ## 🎯 Key Files
 
-- **`functions.py`** - Main PySpark wrapper functions
-- **`test_pyspark_protobuf.py`** - Core functionality test
+- **`run_test.sh`** - Automated test runner (finds venv, checks prerequisites)
+- **`functions.py`** - Main PySpark wrapper functions  
+- **`test_pyspark_protobuf.py`** - Functional test suite with real protobuf data
 
 ## ⚡ Usage
 
-### 1. Build JAR and Test
+### 1. Automated Test
 ```bash
-# Build the shaded JAR (from project root)
-sbt uberJar/assembly
+# The automated test runner handles everything
+./run_test.sh
+```
 
-# Run the core functionality test
-cd python
+### 2. Manual Test  
+```bash
+# If you prefer manual control
 source .venv/bin/activate
 python test_pyspark_protobuf.py
 ```
 
-### 2. Manual Installation
+### 3. Manual Installation
 ```bash
 pip install -e .
 ```
 
-### 3. Interactive PySpark
+### 4. Interactive PySpark
 ```bash
 pyspark \
     --jars ../uber/target/scala-2.12/spark-protobuf-backport-shaded-0.1.0-SNAPSHOT.jar \
@@ -58,7 +61,7 @@ pyspark \
     --conf spark.sql.extensions=org.apache.spark.sql.protobuf.backport.ProtobufExtensions
 ```
 
-### 4. Use Functions
+### 5. Use Functions
 ```python
 # Import the functions
 from spark_protobuf.functions import from_protobuf, to_protobuf
