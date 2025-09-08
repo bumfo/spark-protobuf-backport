@@ -40,3 +40,7 @@ htmlcov/
 # Temporary files
 *.tmp
 *.temp
+
+/*.md
+!README.md
+!CLAUDE.md
