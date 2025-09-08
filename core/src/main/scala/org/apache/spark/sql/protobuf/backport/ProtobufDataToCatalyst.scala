@@ -239,7 +239,7 @@ private[backport] case class ProtobufDataToCatalyst(
         // Use runtime message class name instead of hardcoded one
         val messageClassName = messageClassOpt match {
           case Some(clazz) => clazz.getName
-          case None => "com.google.protobuf.Message" // fallback, though this shouldn't happen when rowConverterOpt is Some
+          case None => classOf[PbMessage].getName // fallback, though this shouldn't happen when rowConverterOpt is Some
         }
         
         nullSafeCodeGen(

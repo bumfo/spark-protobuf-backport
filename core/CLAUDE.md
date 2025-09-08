@@ -80,4 +80,24 @@ The `ProtobufDataToCatalyst.doGenCode` method has been enhanced to generate two 
 
 2. **When `rowConverterOpt` is `None`**: Falls back to calling `nullSafeEval()`
 
+### Class Name Handling
+
+The generated code uses **runtime-determined class names** instead of hardcoded ones:
+
+- **Primary path**: Uses `messageClassOpt.get.getName` to get the actual protobuf class name
+- **Fallback path**: Uses `classOf[PbMessage].getName` which automatically resolves based on runtime classpath:
+  - **Non-shaded**: `com.google.protobuf.Message`  
+  - **Shaded**: `org.sparkproject.spark_protobuf.protobuf.Message`
+- **Generated code**: Casts to specific message type for better JIT optimization potential
+
+**Example generated code**:
+```java
+// Before: com.google.protobuf.Message parsedMsg = (com.google.protobuf.Message) msg.get();
+// After:  com.example.MyMessage parsedMsg = (com.example.MyMessage) msg.get();
+```
+
+This approach eliminates hardcoded class assumptions and **automatically supports both shaded and non-shaded protobuf usage** based on the runtime classpath.
+
+**Note**: The fallback case (`None`) should theoretically never occur when `rowConverterOpt` is `Some`, but is included for defensive programming.
+
 This provides better performance potential when Spark actually executes generated code (vs pre-computed paths).
