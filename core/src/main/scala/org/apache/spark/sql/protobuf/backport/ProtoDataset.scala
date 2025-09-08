@@ -37,8 +37,8 @@ object ProtoDataset {
     // Build a descriptor from the message class name.  This handles class
     // loading and shaded Protobuf classes via ProtobufUtils.
     val descriptor = ProtobufUtils.buildDescriptorFromJavaClass(clazz.getName)
-    // Generate a converter using our simplified reflection-based implementation
-    val converter = ProtoToRowGenerator.generateConverter(descriptor, clazz)
+    // Generate a converter using our cached implementation for better performance
+    val converter = ProtoToRowGenerator.getCachedConverter(descriptor, clazz)
     val schema = converter.schema
     val rows: RDD[org.apache.spark.sql.catalyst.InternalRow] = ds.rdd.map { msg =>
       converter.convert(msg)
