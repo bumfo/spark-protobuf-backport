@@ -9,12 +9,12 @@ ThisBuild / version          := "0.1.0-SNAPSHOT"
 // `spark-core` and `spark-sql` jars at runtime.  Note that the
 // protobuf runtime is shaded via sbt‑assembly; see assembly.sbt.
 lazy val sparkVersion         = "3.2.1"
+lazy val protobufVersion      = "3.21.7"
 
-libraryDependencies ++= Seq(
+// Common dependencies for both projects
+lazy val commonDependencies = Seq(
   "org.apache.spark" %% "spark-sql" % sparkVersion % Provided,
   "org.apache.spark" %% "spark-core" % sparkVersion % Provided,
-  // Bring in the same protobuf runtime version as used by Spark 3.2.x
-  "com.google.protobuf" % "protobuf-java" % "3.11.4",
   // Test dependencies
   "org.scalatest" %% "scalatest" % "3.2.15" % Test
 )
@@ -26,23 +26,70 @@ libraryDependencies ++= Seq(
 // project/plugins.sbt for enabling the plugin.
 import sbtassembly.AssemblyPlugin.autoImport._
 
-lazy val root = (project in file(".")).settings(
-  name := "spark-protobuf-backport",
-  publishArtifact := false,
+// Base project with common settings
+lazy val commonSettings = Seq(
+  scalaVersion := "2.12.15",
+  version := "0.1.0-SNAPSHOT",
   // Add JVM options for test execution to handle Java module access
   Test / javaOptions ++= Seq(
     "--add-exports", "java.base/sun.nio.ch=ALL-UNNAMED"
   ),
-  Test / fork := true,
-  // Merge strategy discards META‑INF files to avoid duplicate resource issues
-  assembly / assemblyMergeStrategy := {
-    case PathList("META-INF", _ @ _*) => MergeStrategy.discard
-    case x => MergeStrategy.first
-  },
-  // Shade all Protobuf classes to avoid version conflicts with Spark's own protobuf dependency
-  assemblyShadeRules ++= Seq(
-    ShadeRule.rename("com.google.protobuf.**" -> "org.sparkproject.spark.protobuf311.@1").inAll
-  ),
-  // Skip running tests during assembly to avoid dependency conflicts
-  assembly / test := {}
+  Test / fork := true
 )
+
+// Root project - core with source code, protobuf provided
+lazy val core = project
+  .disablePlugins(AssemblyPlugin)
+  .settings(commonSettings)
+  .settings(
+    name := "spark-protobuf-backport",
+    publishArtifact := true,
+    libraryDependencies ++= commonDependencies ++ Seq(
+      // Protobuf as provided for compilation
+      "com.google.protobuf" % "protobuf-java" % protobufVersion % Provided
+    )
+  )
+
+// UberJar project - builds the assembly JAR with all dependencies
+lazy val uberJar = (project in file("uber"))
+  .enablePlugins(AssemblyPlugin)
+  .dependsOn(core)
+  .settings(commonSettings)
+  .settings(
+    name := "spark-protobuf-backport-uber",
+    publish / skip := true,
+    libraryDependencies ++= commonDependencies ++ Seq(
+      // Protobuf as compile dependency - will be shaded and included
+      "com.google.protobuf" % "protobuf-java" % protobufVersion
+    ),
+    
+    // Assembly settings
+    assembly / assemblyMergeStrategy := {
+      case PathList("META-INF", _ @ _*) => MergeStrategy.discard
+      case x => MergeStrategy.first
+    },
+    assembly / test := {},
+    assembly / assemblyJarName := "spark-protobuf-backport-shaded-" + version.value + ".jar",
+    assembly / assemblyOption := (assembly / assemblyOption).value.withIncludeScala(false),
+    
+    // Shade protobuf to match Spark's expected shading pattern
+    assemblyShadeRules ++= Seq(
+      ShadeRule.rename("com.google.protobuf.**" -> "org.sparkproject.spark_protobuf.protobuf.@1").inAll
+    )
+  )
+
+// Shaded cosmetic project - publishes the assembly JAR as main artifact
+lazy val shaded = project
+  .disablePlugins(AssemblyPlugin)
+  .settings(
+    name := "spark-protobuf-backport-shaded",
+    // Use the assembly JAR from uberJar project as our main artifact
+    Compile / packageBin := (uberJar / assembly).value
+  )
+  
+lazy val root = (project in file("."))
+  .disablePlugins(AssemblyPlugin)
+  .aggregate(core, uberJar, shaded)
+  .settings(
+    publish / skip := true,
+  )
