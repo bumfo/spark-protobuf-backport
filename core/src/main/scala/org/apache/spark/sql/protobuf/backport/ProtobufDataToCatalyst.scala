@@ -235,6 +235,13 @@ private[backport] case class ProtobufDataToCatalyst(
         // Generate optimized code path using the RowConverter directly
         val expr = ctx.addReferenceObj("this", this)
         val converterRef = ctx.addReferenceObj("rowConverter", converter)
+        
+        // Use runtime message class name instead of hardcoded one
+        val messageClassName = messageClassOpt match {
+          case Some(clazz) => clazz.getName
+          case None => "com.google.protobuf.Message" // fallback, though this shouldn't happen when rowConverterOpt is Some
+        }
+        
         nullSafeCodeGen(
           ctx,
           ev,
@@ -243,11 +250,11 @@ private[backport] case class ProtobufDataToCatalyst(
             val msg = ctx.freshName("msg")
             val dt = CodeGenerator.boxedType(dataType)
             s"""
-               |// Optimized codegen path using RowConverter
+               |// Optimized codegen path using RowConverter with runtime message class: $messageClassName
                |try {
                |  scala.Option $msg = $expr.parseCompiled($eval);
                |  if ($msg.isDefined()) {
-               |    com.google.protobuf.Message parsedMsg = (com.google.protobuf.Message) $msg.get();
+               |    $messageClassName parsedMsg = ($messageClassName) $msg.get();
                |    $dt $result = ($dt) $converterRef.convert(parsedMsg);
                |    ${ev.value} = $result;
                |  } else {
