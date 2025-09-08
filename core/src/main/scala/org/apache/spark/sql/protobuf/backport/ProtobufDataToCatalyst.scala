@@ -132,7 +132,7 @@ private[backport] case class ProtobufDataToCatalyst(
     // is a supertype of all generated protobuf classes.
     val desc: com.google.protobuf.Descriptors.Descriptor = messageDescriptor
     ProtoToRowGenerator
-      .getCachedConverter(desc, cls.asInstanceOf[Class[PbMessage]])
+      .generateConverter(desc, cls.asInstanceOf[Class[PbMessage]])
       .asInstanceOf[RowConverter[PbMessage]]
   }
 

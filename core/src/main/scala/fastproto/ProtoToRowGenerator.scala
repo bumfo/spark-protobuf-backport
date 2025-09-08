@@ -129,25 +129,9 @@ object ProtoToRowGenerator {
   }
 
   /**
-   * Get a cached converter for the given Protobuf message type, generating it if necessary.
-   * This avoids redundant Janino compilation for the same descriptor and message class combinations.
-   *
-   * @param descriptor   the Protobuf descriptor describing the message schema
-   * @param messageClass the compiled Protobuf Java class
-   * @tparam T the concrete type of the message
-   * @return a cached [[RowConverter]] capable of converting the message into an
-   *         [[org.apache.spark.sql.catalyst.InternalRow]]
-   */
-  def getCachedConverter[T <: Message](descriptor: Descriptor,
-                                       messageClass: Class[T]): RowConverter[T] = {
-    val key = s"${messageClass.getName}_${descriptor.getFullName}"
-    converterCache.computeIfAbsent(key, _ => generateConverterInternal(descriptor, messageClass))
-      .asInstanceOf[RowConverter[T]]
-  }
-
-  /**
    * Generate a concrete [[RowConverter]] for the given Protobuf message type.
-   * This is the public API that delegates to getCachedConverter for better performance.
+   * Uses internal caching to avoid redundant Janino compilation for the same 
+   * descriptor and message class combinations.
    *
    * @param descriptor   the Protobuf descriptor describing the message schema
    * @param messageClass the compiled Protobuf Java class
@@ -157,12 +141,14 @@ object ProtoToRowGenerator {
    */
   def generateConverter[T <: Message](descriptor: Descriptor,
                                       messageClass: Class[T]): RowConverter[T] = {
-    getCachedConverter(descriptor, messageClass)
+    val key = s"${messageClass.getName}_${descriptor.getFullName}"
+    converterCache.computeIfAbsent(key, _ => generateConverterInternal(descriptor, messageClass))
+      .asInstanceOf[RowConverter[T]]
   }
 
   /**
    * Internal method that performs the actual converter generation and compilation.
-   * This should not be called directly - use getCachedConverter or generateConverter instead.
+   * This should not be called directly - use generateConverter instead.
    *
    * @param descriptor   the Protobuf descriptor describing the message schema
    * @param messageClass the compiled Protobuf Java class
@@ -200,7 +186,7 @@ object ProtoToRowGenerator {
             val m = messageClass.getMethod(s"get${accessor}")
             m.getReturnType.asInstanceOf[Class[_ <: Message]]
           }
-        val nestedConverter = getCachedConverter(fd.getMessageType, nestedClass)
+        val nestedConverter = generateConverter(fd.getMessageType, nestedClass)
         nestedInfos += NestedInfo(fd, nestedConverter)
       }
     }
