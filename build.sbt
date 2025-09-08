@@ -34,15 +34,21 @@ lazy val root = (project in file(".")).settings(
     "--add-exports", "java.base/sun.nio.ch=ALL-UNNAMED"
   ),
   Test / fork := true,
-  // Merge strategy discards META‑INF files to avoid duplicate resource issues
+  
+  // Common merge strategy for both assemblies
   assembly / assemblyMergeStrategy := {
     case PathList("META-INF", _ @ _*) => MergeStrategy.discard
     case x => MergeStrategy.first
   },
-  // Shade all Protobuf classes to avoid version conflicts with Spark's own protobuf dependency
+  
+  // Shade protobuf to match Spark's expected shading pattern
   assemblyShadeRules ++= Seq(
-    ShadeRule.rename("com.google.protobuf.**" -> "org.sparkproject.spark.protobuf311.@1").inAll
+    ShadeRule.rename("com.google.protobuf.**" -> "org.sparkproject.spark_protobuf.protobuf.@1").inAll
   ),
+  
   // Skip running tests during assembly to avoid dependency conflicts
-  assembly / test := {}
+  assembly / test := {},
+  
+  // Create second assembly task with different shading
+  assembly / assemblyJarName := "spark-protobuf-backport-assembly-" + version.value + ".jar"
 )
