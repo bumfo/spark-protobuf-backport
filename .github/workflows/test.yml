@@ -45,7 +45,7 @@ jobs:
       run: sbt compile
     
     - name: Run tests
-      run: sbt --error test
+      run: sbt test
     
     - name: Build assembly
       run: sbt assembly
