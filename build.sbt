@@ -50,29 +50,38 @@ lazy val root = (project in file("."))
     )
   )
 
-// Shaded project - protobuf compiled and shaded
-lazy val shaded = (project in file("shaded"))
+// UberJar project - builds the assembly JAR with all dependencies
+lazy val uberJar = (project in file("uber"))
+  .enablePlugins(AssemblyPlugin)
   .dependsOn(root)
   .settings(commonSettings)
   .settings(
-    name := "spark-protobuf-backport-shaded", 
-    publishArtifact := true,
+    name := "spark-protobuf-backport-uber",
+    publish / skip := true,
     libraryDependencies ++= commonDependencies ++ Seq(
       // Protobuf as compile dependency - will be shaded and included
       "com.google.protobuf" % "protobuf-java" % protobufVersion
     ),
     
-    // Assembly settings for shaded project only
+    // Assembly settings
     assembly / assemblyMergeStrategy := {
       case PathList("META-INF", _ @ _*) => MergeStrategy.discard
       case x => MergeStrategy.first
     },
     assembly / test := {},
+    assembly / assemblyJarName := "spark-protobuf-backport-shaded-" + version.value + ".jar",
+    assembly / assemblyOption := (assembly / assemblyOption).value.withIncludeScala(false),
     
     // Shade protobuf to match Spark's expected shading pattern
     assemblyShadeRules ++= Seq(
       ShadeRule.rename("com.google.protobuf.**" -> "org.sparkproject.spark_protobuf.protobuf.@1").inAll
-    ),
-    
-    assembly / assemblyJarName := "spark-protobuf-backport-shaded-" + version.value + ".jar"
+    )
+  )
+
+// Shaded cosmetic project - publishes the assembly JAR as main artifact
+lazy val shaded = (project in file("shaded"))
+  .settings(
+    name := "spark-protobuf-backport-shaded",
+    // Use the assembly JAR from uberJar project as our main artifact
+    Compile / packageBin := (uberJar / assembly).value
   )
