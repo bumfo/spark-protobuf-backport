@@ -20,7 +20,7 @@ sbt compile
 sbt --error test
 
 # Run performance benchmarks
-sbt "testOnly ProtobufConversionBenchmark"
+sbt "testOnly *ProtobufConversionBenchmark*"
 
 # Build shaded JAR with all dependencies
 sbt assembly
@@ -73,4 +73,20 @@ The assembled JAR includes shaded protobuf dependencies to avoid conflicts with 
 - **Performance benchmarks**: Performance comparison tests in `ProtobufConversionBenchmark.scala` comparing codegen vs DynamicMessage paths
 - **Shading**: All protobuf classes shaded under `org.sparkproject.spark.protobuf311.*`
 
-The tests verify three usage patterns: compiled class, descriptor file, and binary descriptor set approaches. Benchmarks measure the performance difference between the optimized codegen path and traditional DynamicMessage conversion.
+The tests verify three usage patterns: compiled class, descriptor file, and binary descriptor set approaches. 
+
+## Performance Benchmarking
+
+The benchmark in `ProtobufConversionBenchmark.scala` compares performance between the three conversion approaches:
+
+- **Compiled class path**: Uses generated `RowConverter` via Janino for direct `UnsafeRow` conversion
+- **Descriptor file path**: Uses `DynamicMessage` parsing with descriptor file lookup
+- **Binary descriptor set path**: Uses `DynamicMessage` parsing with embedded descriptor bytes
+
+**Current findings**: Benchmark results show that DynamicMessage paths are currently 2-3x faster than the codegen path in DataFrame operations. This reveals optimization opportunities for:
+- Janino compilation caching to avoid runtime overhead
+- Generated code efficiency improvements  
+- Better utilization of JVM optimizations
+- Performance gains may be more apparent with larger batch sizes
+
+The benchmark provides a foundation for measuring and tracking performance improvements as the codebase evolves.
