@@ -14,7 +14,9 @@ libraryDependencies ++= Seq(
   "org.apache.spark" %% "spark-sql" % sparkVersion % Provided,
   "org.apache.spark" %% "spark-core" % sparkVersion % Provided,
   // Bring in the same protobuf runtime version as used by Spark 3.2.x
-  "com.google.protobuf" % "protobuf-java" % "3.11.4"
+  "com.google.protobuf" % "protobuf-java" % "3.11.4",
+  // Test dependencies
+  "org.scalatest" %% "scalatest" % "3.2.15" % Test
 )
 
 // Enable sbt-assembly for creating a single fat jar.  See
@@ -26,9 +28,12 @@ import sbtassembly.AssemblyPlugin.autoImport._
 
 lazy val root = (project in file(".")).settings(
   name := "spark-protobuf-backport",
-  // Skip tests when running assembly; no test sources are provided
-  test := {},
   publishArtifact := false,
+  // Add JVM options for test execution to handle Java module access
+  Test / javaOptions ++= Seq(
+    "--add-exports", "java.base/sun.nio.ch=ALL-UNNAMED"
+  ),
+  Test / fork := true,
   // Merge strategy discards META‑INF files to avoid duplicate resource issues
   assembly / assemblyMergeStrategy := {
     case PathList("META-INF", _ @ _*) => MergeStrategy.discard
@@ -38,6 +43,6 @@ lazy val root = (project in file(".")).settings(
   assemblyShadeRules ++= Seq(
     ShadeRule.rename("com.google.protobuf.**" -> "org.sparkproject.spark.protobuf311.@1").inAll
   ),
-  // Skip running tests during assembly; no test sources are included
+  // Skip running tests during assembly to avoid dependency conflicts
   assembly / test := {}
 )

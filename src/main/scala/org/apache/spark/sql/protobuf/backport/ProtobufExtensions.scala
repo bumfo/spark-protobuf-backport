@@ -10,9 +10,9 @@
 
 package org.apache.spark.sql.protobuf.backport
 
-import org.apache.spark.sql.{AnalysisException, SparkSessionExtensions}
 import org.apache.spark.sql.catalyst.FunctionIdentifier
 import org.apache.spark.sql.catalyst.expressions.{Expression, ExpressionInfo, Literal}
+import org.apache.spark.sql.{AnalysisException, SparkSessionExtensions}
 
 import scala.collection.Seq
 
