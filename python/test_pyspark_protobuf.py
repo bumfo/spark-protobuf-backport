@@ -19,11 +19,11 @@ from pyspark.sql.functions import col, lit, expr
 
 def create_spark_session():
     """Create Spark session with protobuf backport JAR."""
-    jar_path = "../shaded/target/scala-2.12/spark-protobuf-backport-shaded-0.1.0-SNAPSHOT.jar"
+    jar_path = "../uber/target/scala-2.12/spark-protobuf-backport-shaded-0.1.0-SNAPSHOT.jar"
     
     if not os.path.exists(jar_path):
         print(f"❌ JAR not found: {jar_path}")
-        print("   Run: cd .. && sbt assembly")
+        print("   Run: cd .. && sbt uberJar/assembly")
         return None
     
     return SparkSession.builder \
