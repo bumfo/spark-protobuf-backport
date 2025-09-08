@@ -44,11 +44,13 @@ lazy val core = project
   .settings(
     name := "spark-protobuf-backport",
     publishArtifact := true,
-    // Exclude benchmark tests from regular test runs only
-    Test / testOptions := Seq(Tests.Argument(TestFrameworks.ScalaTest, "-l", "benchmark.Benchmark")),
-    // Add a benchmark task that bypasses tag filtering
+    // Redefine test task using testOnly with args to exclude benchmarks
+    Test / test := {
+      (Test / testOnly).toTask(" * -- -l benchmark.Benchmark").value
+    },
+    // Add a benchmark task that runs benchmarks only
     TaskKey[Unit]("benchmark") := {
-      (Test / testOnly).toTask(" benchmark.ProtobufConversionBenchmark").value
+      (Test / testOnly).toTask(" benchmark.* -- -n benchmark.Benchmark").value
     },
     libraryDependencies ++= commonDependencies ++ Seq(
       // Protobuf as provided for compilation
