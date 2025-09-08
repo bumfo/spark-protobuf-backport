@@ -38,7 +38,7 @@ lazy val commonSettings = Seq(
 )
 
 // Root project - core with source code, protobuf provided
-lazy val root = (project in file("."))
+lazy val core = project
   .disablePlugins(AssemblyPlugin)
   .settings(commonSettings)
   .settings(
@@ -53,7 +53,7 @@ lazy val root = (project in file("."))
 // UberJar project - builds the assembly JAR with all dependencies
 lazy val uberJar = (project in file("uber"))
   .enablePlugins(AssemblyPlugin)
-  .dependsOn(root)
+  .dependsOn(core)
   .settings(commonSettings)
   .settings(
     name := "spark-protobuf-backport-uber",
@@ -79,9 +79,14 @@ lazy val uberJar = (project in file("uber"))
   )
 
 // Shaded cosmetic project - publishes the assembly JAR as main artifact
-lazy val shaded = (project in file("shaded"))
+lazy val shaded = project
+  .disablePlugins(AssemblyPlugin)
   .settings(
     name := "spark-protobuf-backport-shaded",
     // Use the assembly JAR from uberJar project as our main artifact
     Compile / packageBin := (uberJar / assembly).value
   )
+  
+lazy val root = (project in file("."))
+  .disablePlugins(AssemblyPlugin)
+  .aggregate(core, uberJar, shaded)
