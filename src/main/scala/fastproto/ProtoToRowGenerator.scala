@@ -3,6 +3,7 @@ package fastproto
 // Use JavaConverters for Scala 2.12 compatibility
 
 import com.google.protobuf.Descriptors.{Descriptor, FieldDescriptor}
+import com.google.protobuf.{ByteString, Message, ProtocolMessageEnum}
 import org.apache.spark.sql.types._
 import org.codehaus.janino.SimpleCompiler
 
@@ -112,13 +113,13 @@ object ProtoToRowGenerator {
    * @return a [[RowConverter]] capable of converting the message into an
    *         [[org.apache.spark.sql.catalyst.InternalRow]]
    */
-  def generateConverter[T <: com.google.protobuf.Message](descriptor: Descriptor,
-      messageClass: Class[T]): RowConverter[T] = {
+  def generateConverter[T <: Message](descriptor: Descriptor,
+                                      messageClass: Class[T]): RowConverter[T] = {
     // Build the Spark SQL schema corresponding to this descriptor
     val schema: StructType = buildStructType(descriptor)
 
     // Precompute nested converters for message fields (both single and repeated) and map fields
-    case class NestedInfo(field: FieldDescriptor, converter: RowConverter[_ <: com.google.protobuf.Message])
+    case class NestedInfo(field: FieldDescriptor, converter: RowConverter[_ <: Message])
     val nestedInfos = scala.collection.mutable.ArrayBuffer[NestedInfo]()
 
     // Inspect each field to detect nested message types that require their own converter
@@ -134,13 +135,13 @@ object ProtoToRowGenerator {
         // converting underscores, reflection would look for a method like
         // getSource_context() instead of getSourceContext(), which does not exist.
         val accessor = accessorName(fd)
-        val nestedClass: Class[_ <: com.google.protobuf.Message] =
+        val nestedClass: Class[_ <: Message] =
           if (fd.isRepeated) {
             val m = messageClass.getMethod(s"get${accessor}", classOf[Int])
-            m.getReturnType.asInstanceOf[Class[_ <: com.google.protobuf.Message]]
+            m.getReturnType.asInstanceOf[Class[_ <: Message]]
           } else {
             val m = messageClass.getMethod(s"get${accessor}")
-            m.getReturnType.asInstanceOf[Class[_ <: com.google.protobuf.Message]]
+            m.getReturnType.asInstanceOf[Class[_ <: Message]]
           }
         val nestedConverter = generateConverter(fd.getMessageType, nestedClass)
         nestedInfos += NestedInfo(fd, nestedConverter)
@@ -312,12 +313,12 @@ object ProtoToRowGenerator {
             code ++= s"    org.apache.spark.sql.catalyst.expressions.codegen.UnsafeArrayWriter arrayWriter${idx} = new org.apache.spark.sql.catalyst.expressions.codegen.UnsafeArrayWriter(writer, 8);\n"
             code ++= s"    arrayWriter${idx}.initialize(size${idx});\n"
             code ++= s"    for (int i = 0; i < size${idx}; i++) {\n"
-            code ++= s"      com.google.protobuf.ByteString bs = msg.${indexGetterName}(i);\n"
+            code ++= s"      " + classOf[ByteString].getName + s" bs = msg.${indexGetterName}(i);\n"
             code ++= s"      if (bs == null) { arrayWriter${idx}.setNull(i); } else { arrayWriter${idx}.write(i, bs.toByteArray()); }\n"
             code ++= s"    }\n"
             code ++= s"    writer.setOffsetAndSizeFromPreviousCursor($idx, offset${idx});\n"
           } else {
-            code ++= s"    com.google.protobuf.ByteString b${idx} = msg.${getterName}();\n"
+            code ++= s"    " + classOf[ByteString].getName + s" b${idx} = msg.${getterName}();\n"
             code ++= s"    if (b${idx} == null) {\n"
             code ++= s"      writer.setNullAt($idx);\n"
             code ++= s"    } else {\n"
@@ -332,12 +333,12 @@ object ProtoToRowGenerator {
             code ++= s"    org.apache.spark.sql.catalyst.expressions.codegen.UnsafeArrayWriter arrayWriter${idx} = new org.apache.spark.sql.catalyst.expressions.codegen.UnsafeArrayWriter(writer, 8);\n"
             code ++= s"    arrayWriter${idx}.initialize(size${idx});\n"
             code ++= s"    for (int i = 0; i < size${idx}; i++) {\n"
-            code ++= s"      com.google.protobuf.ProtocolMessageEnum e = msg.${indexGetterName}(i);\n"
+            code ++= s"      " + classOf[ProtocolMessageEnum].getName + s" e = msg.${indexGetterName}(i);\n"
             code ++= s"      if (e == null) { arrayWriter${idx}.setNull(i); } else { arrayWriter${idx}.write(i, UTF8String.fromString(e.toString())); }\n"
             code ++= s"    }\n"
             code ++= s"    writer.setOffsetAndSizeFromPreviousCursor($idx, offset${idx});\n"
           } else {
-            code ++= s"    com.google.protobuf.ProtocolMessageEnum e${idx} = msg.${getterName}();\n"
+            code ++= s"    " + classOf[ProtocolMessageEnum].getName + s" e${idx} = msg.${getterName}();\n"
             code ++= s"    if (e${idx} == null) {\n"
             code ++= s"      writer.setNullAt($idx);\n"
             code ++= s"    } else {\n"
@@ -354,7 +355,7 @@ object ProtoToRowGenerator {
             code ++= s"    org.apache.spark.sql.catalyst.expressions.codegen.UnsafeArrayWriter arrayWriter${idx} = new org.apache.spark.sql.catalyst.expressions.codegen.UnsafeArrayWriter(writer, ${elemSize});\n"
             code ++= s"    arrayWriter${idx}.initialize(size${idx});\n"
             code ++= s"    for (int i = 0; i < size${idx}; i++) {\n"
-            code ++= s"      com.google.protobuf.Message element = (com.google.protobuf.Message) msg.${indexGetterName}(i);\n"
+            code ++= s"      " + classOf[Message].getName + s" element = (" + classOf[Message].getName + s") msg.${indexGetterName}(i);\n"
             code ++= s"      if (element == null) { arrayWriter${idx}.setNull(i); } else { arrayWriter${idx}.write(i, (org.apache.spark.sql.catalyst.expressions.UnsafeRow) ${nestedName}.convert(element)); }\n"
             code ++= s"    }\n"
             code ++= s"    writer.setOffsetAndSizeFromPreviousCursor($idx, offset${idx});\n"
@@ -366,11 +367,11 @@ object ProtoToRowGenerator {
                 code ++= s"    if (!msg.${method}()) {\n"
                 code ++= s"      writer.setNullAt($idx);\n"
                 code ++= s"    } else {\n"
-                code ++= s"      com.google.protobuf.Message v${idx} = (com.google.protobuf.Message) msg.${getterName}();\n"
+                code ++= s"      " + classOf[Message].getName + s" v${idx} = (" + classOf[Message].getName + s") msg.${getterName}();\n"
                 code ++= s"      writer.write($idx, (org.apache.spark.sql.catalyst.expressions.UnsafeRow) ${nestedName}.convert(v${idx}));\n"
                 code ++= s"    }\n"
               case None =>
-                code ++= s"    com.google.protobuf.Message v${idx} = (com.google.protobuf.Message) msg.${getterName}();\n"
+                code ++= s"    " + classOf[Message].getName + s" v${idx} = (" + classOf[Message].getName + s") msg.${getterName}();\n"
                 code ++= s"    if (v${idx} == null) {\n"
                 code ++= s"      writer.setNullAt($idx);\n"
                 code ++= s"    } else {\n"
@@ -409,7 +410,7 @@ object ProtoToRowGenerator {
     val generatedClass = compiler.getClassLoader.loadClass(className)
 
     // Collect nested converter instances in the order they appear in nestedNames
-    val nestedInstances: Seq[RowConverter[_ <: com.google.protobuf.Message]] = nestedInfos.map(_.converter).toSeq
+    val nestedInstances: Seq[RowConverter[_ <: Message]] = nestedInfos.map(_.converter).toSeq
 
     // Build constructor argument list: schema and nested converters (no projection needed now)
     val constructorArgs: Array[AnyRef] = {
