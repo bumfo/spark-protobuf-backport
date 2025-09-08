@@ -22,6 +22,14 @@ class ProtobufConversionBenchmark extends AnyFlatSpec with Matchers {
   private var descriptorFile: String = _
   private var binaryDescriptorSet: Array[Byte] = _
   
+  def getIterations(): Int = {
+    // Check system property first, then environment variable, default to 1000
+    scala.Option(System.getProperty("benchmark.iterations"))
+      .orElse(scala.Option(System.getenv("BENCHMARK_ITERATIONS")))
+      .map(_.toInt)
+      .getOrElse(1000)
+  }
+  
   def setup(): Unit = {
     // Suppress logging for cleaner benchmark output
     org.apache.log4j.Logger.getLogger("org.apache.spark").setLevel(org.apache.log4j.Level.ERROR)
@@ -90,7 +98,7 @@ class ProtobufConversionBenchmark extends AnyFlatSpec with Matchers {
     }
   }
   
-  def benchmarkConversion(name: String, iterations: Int = 100)(convertFunc: () => Array[org.apache.spark.sql.Row]): Long = {
+  def benchmarkConversion(name: String, iterations: Int = getIterations())(convertFunc: () => Array[org.apache.spark.sql.Row]): Long = {
     // Warmup - more iterations to allow JIT optimization and Janino compilation
     println(s"Warming up $name...")
     for (_ <- 1 to 20) convertFunc()
@@ -111,6 +119,9 @@ class ProtobufConversionBenchmark extends AnyFlatSpec with Matchers {
 
   "Performance comparison" should "show optimized codegen path is faster than DynamicMessage path" in {
     setup()
+    
+    val iterations = getIterations()
+    println(s"Running benchmark with $iterations iterations per test")
     
     try {
       val sparkImplicits = spark.implicits
