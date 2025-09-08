@@ -90,3 +90,6 @@ lazy val shaded = project
 lazy val root = (project in file("."))
   .disablePlugins(AssemblyPlugin)
   .aggregate(core, uberJar, shaded)
+  .settings(
+    publish / skip := true,
+  )
