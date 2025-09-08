@@ -258,22 +258,11 @@ private[backport] case class ProtobufDataToCatalyst(
                |    $dt $result = ($dt) $converterRef.convert(parsedMsg);
                |    ${ev.value} = $result;
                |  } else {
-               |    // Fallback to interpreted path when parseCompiled returns None
-               |    $dt $result = ($dt) $expr.nullSafeEval($eval);
-               |    if ($result == null) {
-               |      ${ev.isNull} = true;
-               |    } else {
-               |      ${ev.value} = $result;
-               |    }
+               |    ${ev.isNull} = true;
                |  }
                |} catch (java.lang.Exception e) {
-               |  // Fallback to interpreted path on any error
-               |  $dt $result = ($dt) $expr.nullSafeEval($eval);
-               |  if ($result == null) {
-               |    ${ev.isNull} = true;
-               |  } else {
-               |    ${ev.value} = $result;
-               |  }
+               |  $expr.handleException(e);
+               |  ${ev.isNull} = true;
                |}
                |""".stripMargin
           }
