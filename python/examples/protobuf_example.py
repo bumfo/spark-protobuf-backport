@@ -44,7 +44,7 @@ def create_spark_session_with_protobuf_jar():
     In a real application, you would specify the JAR path or use spark-submit --jars.
     """
     # Path to the assembled JAR - adjust as needed
-    jar_path = "../target/scala-2.12/spark-protobuf-backport-assembly-1.0.0.jar"
+    jar_path = "../shaded/target/scala-2.12/spark-protobuf-backport-shaded-0.1.0-SNAPSHOT.jar"
     
     return SparkSession.builder \
         .appName("PySpark Protobuf Backport Example") \
