@@ -19,6 +19,9 @@ sbt compile
 # Run tests
 sbt --error test
 
+# Run performance benchmarks
+sbt "testOnly ProtobufConversionBenchmark"
+
 # Build shaded JAR with all dependencies
 sbt assembly
 
@@ -66,7 +69,8 @@ The assembled JAR includes shaded protobuf dependencies to avoid conflicts with 
 - **Scala version**: 2.12.15 (matches Spark 3.2.1)
 - **Spark version**: 3.2.1 (provided dependency)
 - **Protobuf version**: 3.11.4 (shaded to avoid conflicts)
-- **Test approach**: Single comprehensive test in `TestProtobufBackport.scala` using `google.protobuf.Type`
+- **Test approach**: Comprehensive ScalaTest suite in `ProtobufBackportSpec.scala` using `google.protobuf.Type`
+- **Performance benchmarks**: Performance comparison tests in `ProtobufConversionBenchmark.scala` comparing codegen vs DynamicMessage paths
 - **Shading**: All protobuf classes shaded under `org.sparkproject.spark.protobuf311.*`
 
-The test verifies three usage patterns: compiled class, descriptor file, and binary descriptor set approaches.
+The tests verify three usage patterns: compiled class, descriptor file, and binary descriptor set approaches. Benchmarks measure the performance difference between the optimized codegen path and traditional DynamicMessage conversion.
