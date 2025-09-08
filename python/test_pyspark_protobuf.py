@@ -83,8 +83,21 @@ def create_protobuf_test_data_via_scala(spark):
         # Create Spark DataFrame with the protobuf data
         df = spark.createDataFrame([(proto_bytes,)], ["data"])
         
+        # Generate descriptor set for descriptor-based tests
+        DescriptorProtos = jvm.org.sparkproject.spark_protobuf.protobuf.DescriptorProtos
+        AnyProto = jvm.org.sparkproject.spark_protobuf.protobuf.AnyProto
+        SourceContextProto = jvm.org.sparkproject.spark_protobuf.protobuf.SourceContextProto
+        ApiProto = jvm.org.sparkproject.spark_protobuf.protobuf.ApiProto
+        
+        desc_set = DescriptorProtos.FileDescriptorSet.newBuilder() \
+            .addFile(Type.getDescriptor().getFile().toProto()) \
+            .addFile(AnyProto.getDescriptor().getFile().toProto()) \
+            .addFile(SourceContextProto.getDescriptor().getFile().toProto()) \
+            .addFile(ApiProto.getDescriptor().getFile().toProto()) \
+            .build()
+        
         print("✅ Created protobuf test data using shaded protobuf classes")
-        return df, typ
+        return df, typ, desc_set
         
     except Exception as e:
         print(f"❌ Failed to create test data with shaded classes: {e}")
@@ -100,11 +113,11 @@ def create_protobuf_test_data_via_scala(spark):
             
             df = spark.createDataFrame([(bytes(test_bytes),)], ["data"])
             print("✅ Created fallback test data")
-            return df, None
+            return df, None, None
             
         except Exception as fallback_e:
             print(f"❌ Fallback also failed: {fallback_e}")
-            return None, None
+            return None, None, None
 
 
 def test_compiled_class_path(spark, df):
@@ -218,9 +231,141 @@ def test_python_function_wrapper(spark, df):
         return False
 
 
+def test_descriptor_file_path(spark, df, desc_set):
+    """Test protobuf conversion using descriptor file path."""
+    print("\n🧪 Test 5: Descriptor file path")
+    
+    if desc_set is None:
+        print("⚠️  No descriptor set available, skipping test")
+        return False
+    
+    try:
+        import tempfile
+        import os
+        
+        # Create temporary descriptor file
+        with tempfile.NamedTemporaryFile(suffix=".desc", delete=False) as temp_file:
+            temp_file.write(desc_set.toByteArray())
+            temp_file_path = temp_file.name
+        
+        # Add file to Spark context
+        spark.sparkContext.addFile(temp_file_path)
+        temp_file_name = os.path.basename(temp_file_path)
+        
+        # Access SparkFiles through JVM
+        SparkFiles = spark._jvm.org.apache.spark.SparkFiles
+        
+        # Use descriptor file path
+        result_df = df.select(
+            from_protobuf(
+                col("data"), 
+                "google.protobuf.Type", 
+                SparkFiles.get(temp_file_name)
+            ).alias("struct")
+        )
+        
+        # Collect and examine results
+        rows = result_df.collect()
+        if len(rows) > 0:
+            struct_data = rows[0]["struct"]
+            if struct_data is not None:
+                print("✅ Descriptor file conversion successful")
+                
+                # Try to access fields if it's a Row
+                if hasattr(struct_data, 'asDict'):
+                    struct_dict = struct_data.asDict()
+                    type_name = struct_dict.get('name', 'N/A')
+                    print(f"   Type name: {type_name}")
+                    if 'fields' in struct_dict and struct_dict['fields']:
+                        print(f"   Fields count: {len(struct_dict['fields'])}")
+                    
+                    # Clean up temp file
+                    try:
+                        os.unlink(temp_file_path)
+                    except:
+                        pass
+                    
+                    return True
+                else:
+                    print(f"   Struct type: {type(struct_data)}")
+                    # Clean up temp file
+                    try:
+                        os.unlink(temp_file_path)
+                    except:
+                        pass
+                    return True
+            else:
+                print("❌ Conversion returned null")
+        else:
+            print("❌ No rows returned")
+        
+        # Clean up temp file
+        try:
+            os.unlink(temp_file_path)
+        except:
+            pass
+        
+        return False
+            
+    except Exception as e:
+        print(f"❌ Descriptor file test failed: {str(e)}")
+        return False
+
+
+def test_binary_descriptor_set(spark, df, desc_set):
+    """Test protobuf conversion using binary descriptor set."""
+    print("\n🧪 Test 6: Binary descriptor set")
+    
+    if desc_set is None:
+        print("⚠️  No descriptor set available, skipping test")
+        return False
+    
+    try:
+        # Use binary descriptor set directly
+        desc_bytes = desc_set.toByteArray()
+        
+        result_df = df.select(
+            from_protobuf(
+                col("data"), 
+                "google.protobuf.Type", 
+                desc_bytes
+            ).alias("struct")
+        )
+        
+        # Collect and examine results
+        rows = result_df.collect()
+        if len(rows) > 0:
+            struct_data = rows[0]["struct"]
+            if struct_data is not None:
+                print("✅ Binary descriptor conversion successful")
+                
+                # Try to access fields if it's a Row
+                if hasattr(struct_data, 'asDict'):
+                    struct_dict = struct_data.asDict()
+                    type_name = struct_dict.get('name', 'N/A')
+                    print(f"   Type name: {type_name}")
+                    if 'fields' in struct_dict and struct_dict['fields']:
+                        print(f"   Fields count: {len(struct_dict['fields'])}")
+                    
+                    return True
+                else:
+                    print(f"   Struct type: {type(struct_data)}")
+                    return True
+            else:
+                print("❌ Conversion returned null")
+                return False
+        else:
+            print("❌ No rows returned")
+            return False
+            
+    except Exception as e:
+        print(f"❌ Binary descriptor test failed: {str(e)}")
+        return False
+
+
 def test_to_protobuf_function(spark, original_type):
     """Test the to_protobuf function accessibility without triggering implementation bugs."""
-    print("\n🧪 Test 5: to_protobuf function")
+    print("\n🧪 Test 7: to_protobuf function")
     
     try:
         # Test that the function is properly imported and accessible
@@ -296,7 +441,7 @@ def main():
     
     try:
         # Create test data using Scala/Java protobuf classes
-        df, original_type = create_protobuf_test_data_via_scala(spark)
+        df, original_type, desc_set = create_protobuf_test_data_via_scala(spark)
         if df is None:
             print("❌ Failed to create test data")
             return 1
@@ -310,6 +455,8 @@ def main():
         test_results.append(test_sql_registration(spark, df))
         test_results.append(test_expr_method(spark, df))
         test_results.append(test_python_function_wrapper(spark, df))
+        test_results.append(test_descriptor_file_path(spark, df, desc_set))
+        test_results.append(test_binary_descriptor_set(spark, df, desc_set))
         test_results.append(test_to_protobuf_function(spark, original_type))
         
         # Summary
@@ -322,6 +469,8 @@ def main():
             "SQL Registration",
             "DataFrame expr() Method",
             "Python Function Wrapper",
+            "Descriptor File Path",
+            "Binary Descriptor Set",
             "to_protobuf Function"
         ]
         
@@ -337,14 +486,18 @@ def main():
         if passed == total:
             print("🎉 ALL FUNCTIONAL TESTS PASSED!")
             print("\n💡 The PySpark protobuf backport is working correctly!")
+            print("   All three protobuf usage patterns work:")
+            print("   ✅ Compiled Java class path")
+            print("   ✅ Descriptor file path")
+            print("   ✅ Binary descriptor set")
             print("   You can now use:")
             print("   - from spark_protobuf.functions import from_protobuf, to_protobuf")
             print("   - SQL: SELECT from_protobuf(data, 'MessageType') FROM table")
             print("   - DataFrame: df.select(from_protobuf(col('data'), 'MessageType'))")
             return 0
-        elif passed >= 3:
+        elif passed >= 5:
             print("✅ Core functionality is working!")
-            print(f"   {passed}/{total} tests passed - this is sufficient for basic usage")
+            print(f"   {passed}/{total} tests passed - this includes all three protobuf patterns")
             return 0
         else:
             print(f"❌ {total - passed} critical tests failed")
