@@ -16,8 +16,8 @@ The project includes two key optimizations:
 # Compile the project
 sbt compile
 
-# Run tests (uses the single test file in src/test/scala/)
-sbt test
+# Run tests
+sbt --error test
 
 # Build shaded JAR with all dependencies
 sbt assembly
