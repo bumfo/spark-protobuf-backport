@@ -1,0 +1,47 @@
+name: Test
+
+on:
+  push:
+    branches: [ master, proto-row-generator-integration ]
+  pull_request:
+    branches: [ master ]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    
+    strategy:
+      matrix:
+        java-version: [11, 17]
+        scala-version: [2.12.15]
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Set up JDK ${{ matrix.java-version }}
+      uses: actions/setup-java@v4
+      with:
+        java-version: ${{ matrix.java-version }}
+        distribution: 'temurin'
+    
+    - name: Cache SBT dependencies
+      uses: actions/cache@v4
+      with:
+        path: |
+          ~/.sbt
+          ~/.ivy2/cache
+          ~/.coursier/cache/v1
+          ~/.cache/coursier/v1
+        key: ${{ runner.os }}-sbt-${{ hashFiles('**/build.sbt', 'project/build.properties', 'project/plugins.sbt') }}
+        restore-keys: |
+          ${{ runner.os }}-sbt-
+    
+    - name: Compile
+      run: sbt compile
+    
+    - name: Run tests
+      run: sbt --error test
+    
+    - name: Build assembly
+      run: sbt assembly
+      if: matrix.java-version == '11' # Only build assembly once
