@@ -153,12 +153,17 @@ private[backport] case class ProtobufDataToCatalyst(
    * Handle an exception according to the configured parse mode.
    */
   private def handleException(e: Throwable): Any = {
-    parseMode match {
-      case PermissiveMode => null
-      case FailFastMode =>
-        throw QueryExecutionErrors.malformedProtobufMessageDetectedInMessageParsingError(e)
-      case _ =>
-        throw QueryCompilationErrors.parseModeUnsupportedError(prettyName, parseMode)
+    e match {
+      case _: org.codehaus.commons.compiler.CompileException =>
+        throw e
+      case NonFatal(_) =>
+        parseMode match {
+          case PermissiveMode => null
+          case FailFastMode =>
+            throw QueryExecutionErrors.malformedProtobufMessageDetectedInMessageParsingError(e)
+          case _ =>
+            throw QueryCompilationErrors.parseModeUnsupportedError(prettyName, parseMode)
+        }
     }
   }
 
