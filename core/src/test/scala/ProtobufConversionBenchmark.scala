@@ -38,6 +38,9 @@ class ProtobufConversionBenchmark extends AnyFlatSpec with Matchers {
       .config("spark.sql.warehouse.dir", "file:///tmp/spark-warehouse")
       .config("spark.hadoop.yarn.timeline-service.enabled", "false")
       .config("spark.hadoop.mapreduce.fileoutputcommitter.algorithm.version", "1")
+      // Enable code generation for testing the optimized path
+      .config("spark.sql.codegen.wholeStage", "true")
+      .config("spark.sql.codegen.maxFields", "1000")
       .getOrCreate()
     
     spark.sparkContext.setLogLevel("ERROR")
@@ -117,6 +120,7 @@ class ProtobufConversionBenchmark extends AnyFlatSpec with Matchers {
       val df = Seq(testDataBytes).toDF("data")
       
       // Benchmark compiled class path (optimized RowConverter)
+      // Use the non-shaded class name to trigger rowConverterOpt path
       val compiledTime = benchmarkConversion("Compiled class (optimized)") { () =>
         df.select(
           functions.from_protobuf($"data", classOf[Type].getName).as("parsed")

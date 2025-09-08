@@ -141,7 +141,7 @@ private[backport] case class ProtobufDataToCatalyst(
    * available.  Uses reflection to call the static parseFrom(byte[]) method.
    * Returns [[Some]] when parsing succeeds, otherwise [[None]].
    */
-  private def parseCompiled(binary: Array[Byte]): Option[PbMessage] = {
+  def parseCompiled(binary: Array[Byte]): Option[PbMessage] = {
     messageClassOpt.map { cls =>
       val method = cls.getMethod("parseFrom", classOf[Array[Byte]])
       val msg = method.invoke(null, binary).asInstanceOf[PbMessage]
@@ -229,23 +229,68 @@ private[backport] case class ProtobufDataToCatalyst(
   override def prettyName: String = "from_protobuf"
 
   override protected def doGenCode(ctx: CodegenContext, ev: ExprCode): ExprCode = {
-    val expr = ctx.addReferenceObj("this", this)
-    nullSafeCodeGen(
-      ctx,
-      ev,
-      eval => {
-        val result = ctx.freshName("result")
-        val dt = CodeGenerator.boxedType(dataType)
-        s"""
-           |$dt $result = ($dt) $expr.nullSafeEval($eval);
-           |if ($result == null) {
-           |  ${ev.isNull} = true;
-           |} else {
-           |  ${ev.value} = $result;
-           |}
-           |""".stripMargin
-      },
-    )
+    // Check if we can generate optimized code using rowConverterOpt
+    rowConverterOpt match {
+      case Some(converter) =>
+        // Generate optimized code path using the RowConverter directly
+        val expr = ctx.addReferenceObj("this", this)
+        val converterRef = ctx.addReferenceObj("rowConverter", converter)
+        nullSafeCodeGen(
+          ctx,
+          ev,
+          eval => {
+            val result = ctx.freshName("result")
+            val msg = ctx.freshName("msg")
+            val dt = CodeGenerator.boxedType(dataType)
+            s"""
+               |// Optimized codegen path using RowConverter
+               |try {
+               |  scala.Option $msg = $expr.parseCompiled($eval);
+               |  if ($msg.isDefined()) {
+               |    com.google.protobuf.Message parsedMsg = (com.google.protobuf.Message) $msg.get();
+               |    $dt $result = ($dt) $converterRef.convert(parsedMsg);
+               |    ${ev.value} = $result;
+               |  } else {
+               |    // Fallback to interpreted path when parseCompiled returns None
+               |    $dt $result = ($dt) $expr.nullSafeEval($eval);
+               |    if ($result == null) {
+               |      ${ev.isNull} = true;
+               |    } else {
+               |      ${ev.value} = $result;
+               |    }
+               |  }
+               |} catch (java.lang.Exception e) {
+               |  // Fallback to interpreted path on any error
+               |  $dt $result = ($dt) $expr.nullSafeEval($eval);
+               |  if ($result == null) {
+               |    ${ev.isNull} = true;
+               |  } else {
+               |    ${ev.value} = $result;
+               |  }
+               |}
+               |""".stripMargin
+          }
+        )
+      case None =>
+        // Fallback to standard codegen path that calls nullSafeEval
+        val expr = ctx.addReferenceObj("this", this)
+        nullSafeCodeGen(
+          ctx,
+          ev,
+          eval => {
+            val result = ctx.freshName("result")
+            val dt = CodeGenerator.boxedType(dataType)
+            s"""
+               |$dt $result = ($dt) $expr.nullSafeEval($eval);
+               |if ($result == null) {
+               |  ${ev.isNull} = true;
+               |} else {
+               |  ${ev.value} = $result;
+               |}
+               |""".stripMargin
+          }
+        )
+    }
   }
 
   override protected def withNewChildInternal(newChild: Expression): ProtobufDataToCatalyst =
