@@ -26,8 +26,8 @@ sbt compile
 # Run tests
 sbt --error test
 
-# Run performance benchmarks
-sbt "testOnly *ProtobufConversionBenchmark*"
+# Run performance benchmarks (excluded from regular tests)
+sbt "core/testOnly benchmark.ProtobufConversionBenchmark -- -n benchmark.Benchmark"
 
 # Build shaded JAR with all dependencies
 sbt assembly

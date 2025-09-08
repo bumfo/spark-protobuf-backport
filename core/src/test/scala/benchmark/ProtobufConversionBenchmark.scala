@@ -1,9 +1,11 @@
-package org.apache.spark.sql.protobuf.backport
+package benchmark
 
 import com.google.protobuf._
 import org.apache.spark.sql.SparkSession
+import org.apache.spark.sql.protobuf.backport.functions
 import org.scalatest.flatspec.AnyFlatSpec
 import org.scalatest.matchers.should.Matchers
+import org.scalatest.Tag
 
 import java.io.File
 import java.nio.file.Files
@@ -13,8 +15,14 @@ import scala.collection.JavaConverters._
  * Performance comparison test for the optimized codegen path (compiled classes)
  * versus the traditional DynamicMessage path for protobuf conversion.
  *
- * Run with: sbt "testOnly ProtobufConversionBenchmark"
+ * This benchmark is excluded from regular test runs to avoid performance overhead.
+ * To run the benchmark:
+ *   sbt core/benchmark
+ * Or run directly with custom iterations:
+ *   BENCHMARK_ITERATIONS=50 sbt "testOnly benchmark.ProtobufConversionBenchmark"
  */
+object BenchmarkTag extends Tag("benchmark.Benchmark")
+
 class ProtobufConversionBenchmark extends AnyFlatSpec with Matchers {
 
   private var spark: SparkSession = _
@@ -118,7 +126,7 @@ class ProtobufConversionBenchmark extends AnyFlatSpec with Matchers {
     avgTime
   }
 
-  "Performance comparison" should "show optimized codegen path is faster than DynamicMessage path" in {
+  "Performance comparison" should "show optimized codegen path is faster than DynamicMessage path" taggedAs BenchmarkTag in {
     setup()
 
     val iterations = getIterations
