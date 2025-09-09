@@ -7,8 +7,8 @@ import com.google.protobuf.{ByteString, Message, ProtocolMessageEnum}
 import org.apache.spark.sql.types._
 import org.codehaus.janino.SimpleCompiler
 
-import scala.collection.JavaConverters._
 import java.util.concurrent.ConcurrentHashMap
+import scala.collection.JavaConverters._
 
 /**
  * Factory object for generating [[RowConverter]] instances on the fly.  Given a
@@ -24,11 +24,11 @@ import java.util.concurrent.ConcurrentHashMap
 object ProtoToRowGenerator {
 
   // Thread-safe cache for generated converters to avoid redundant compilation
-  private val converterCache: ConcurrentHashMap[String, RowConverter[_ <: Message]] = 
+  private val converterCache: ConcurrentHashMap[String, RowConverter] =
     new ConcurrentHashMap()
 
   // Thread-safe cache for computed schemas to avoid redundant schema generation
-  private val schemaCache: ConcurrentHashMap[String, StructType] = 
+  private val schemaCache: ConcurrentHashMap[String, StructType] =
     new ConcurrentHashMap()
 
   /**
@@ -129,7 +129,7 @@ object ProtoToRowGenerator {
   }
 
   /**
-   * Generate a concrete [[RowConverter]] for the given Protobuf message type.
+   * Generate a concrete [[MessageBasedConverter]] for the given Protobuf message type.
    * Uses internal caching to avoid redundant Janino compilation for the same 
    * descriptor and message class combinations. Handles recursive types by
    * creating converter graphs locally before updating the global cache.
@@ -137,35 +137,36 @@ object ProtoToRowGenerator {
    * @param descriptor   the Protobuf descriptor describing the message schema
    * @param messageClass the compiled Protobuf Java class
    * @tparam T the concrete type of the message
-   * @return a [[RowConverter]] capable of converting the message into an
+   * @return a [[MessageBasedConverter]] capable of converting the message into an
    *         [[org.apache.spark.sql.catalyst.InternalRow]]
    */
-  def generateConverter[T <: Message](descriptor: Descriptor,
-                                      messageClass: Class[T]): RowConverter[T] = {
+  def generateConverter[T <: Message](
+      descriptor: Descriptor,
+      messageClass: Class[T]): MessageBasedConverter[T] = {
     val key = s"${messageClass.getName}_${descriptor.getFullName}"
-    
+
     // Check global cache first
     converterCache.get(key) match {
-      case converter if converter != null => return converter.asInstanceOf[RowConverter[T]]
+      case converter if converter != null => return converter.asInstanceOf[MessageBasedConverter[T]]
       case _ => // Continue with generation
     }
-    
+
     // Local map to track converters being built (excludes already cached ones)
     // Map key -> (converter, neededTypeKeys)
-    val localConverters = scala.collection.mutable.Map[String, (RowConverter[_ <: Message], Set[String])]()
-    
+    val localConverters = scala.collection.mutable.Map[String, (RowConverter, Set[String])]()
+
     // Phase 1: Create converter graph with null dependencies
     val rootConverter = createConverterGraph(descriptor, messageClass, localConverters)
-    
+
     // Phase 2: Wire up dependencies
     wireDependencies(localConverters)
-    
+
     // Phase 3: Atomically update global cache
-    localConverters.foreach { case (k, (conv, _)) => 
+    localConverters.foreach { case (k, (conv, _)) =>
       converterCache.putIfAbsent(k, conv)
     }
-    
-    rootConverter.asInstanceOf[RowConverter[T]]
+
+    rootConverter.asInstanceOf[MessageBasedConverter[T]]
   }
 
   /**
@@ -173,20 +174,21 @@ object ProtoToRowGenerator {
    * building converters for nested types. Returns existing converters from
    * global cache when available to avoid duplication.
    */
-  private def createConverterGraph(descriptor: Descriptor, 
-                                   messageClass: Class[_ <: Message],
-                                   localConverters: scala.collection.mutable.Map[String, (RowConverter[_ <: Message], Set[String])]): RowConverter[_ <: Message] = {
+  private def createConverterGraph(
+      descriptor: Descriptor,
+      messageClass: Class[_ <: Message],
+      localConverters: scala.collection.mutable.Map[String, (RowConverter, Set[String])]): RowConverter = {
     val key = s"${messageClass.getName}_${descriptor.getFullName}"
-    
+
     // Check global cache FIRST (important optimization!)
     converterCache.get(key) match {
-      case converter if converter != null => return converter.asInstanceOf[RowConverter[_ <: Message]]
+      case converter if converter != null => return converter
       case _ => // Not cached globally
     }
-    
+
     // Check local map
     if (localConverters.contains(key)) return localConverters(key)._1
-    
+
     // Collect all nested message fields (per-field approach for now)
     val nestedFields = descriptor.getFields.asScala.filter(_.getJavaType == FieldDescriptor.JavaType.MESSAGE).toList
     val nestedTypes: Map[String, (Descriptor, Class[_ <: Message])] = nestedFields.map { fd =>
@@ -194,32 +196,32 @@ object ProtoToRowGenerator {
       val typeKey = s"${nestedClass.getName}_${fd.getMessageType.getFullName}"
       typeKey -> (fd.getMessageType, nestedClass)
     }.toMap
-    
+
     // Create converter with null dependencies initially
     val converter = generateConverterWithNullDeps(descriptor, messageClass, nestedTypes.size)
-    val neededTypeKeys = nestedTypes.map { case (typeKey, (desc, clazz)) => 
+    val neededTypeKeys = nestedTypes.map { case (typeKey, (desc, clazz)) =>
       s"${clazz.getName}_${desc.getFullName}"
     }.toSet
     localConverters(key) = (converter, neededTypeKeys)
-    
+
     // Recursively create converters for unique nested types
     nestedTypes.values.foreach { case (desc, clazz) =>
       createConverterGraph(desc, clazz, localConverters)
     }
-    
+
     converter
   }
 
   /**
    * Wire dependencies between converters after all have been created.
    */
-  private def wireDependencies(localConverters: scala.collection.mutable.Map[String, (RowConverter[_ <: Message], Set[String])]): Unit = {
+  private def wireDependencies(localConverters: scala.collection.mutable.Map[String, (RowConverter, Set[String])]): Unit = {
     localConverters.foreach { case (converterKey, (converter, neededTypes)) =>
       // Set dependencies on this converter
       val dependencies = neededTypes.toSeq.map { typeKey =>
         localConverters.get(typeKey) match {
           case Some((nestedConverter, _)) => nestedConverter
-          case None => converterCache.get(typeKey).asInstanceOf[RowConverter[_ <: Message]]
+          case None => converterCache.get(typeKey)
         }
       }
       setConverterDependencies(converter, dependencies)
@@ -244,13 +246,13 @@ object ProtoToRowGenerator {
    * Set dependencies on a converter using reflection (temporary - will be replaced
    * by proper generated setter methods).
    */
-  private def setConverterDependencies(converter: RowConverter[_ <: Message], dependencies: Seq[RowConverter[_ <: Message]]): Unit = {
+  private def setConverterDependencies(converter: RowConverter, dependencies: Seq[RowConverter]): Unit = {
     // For now, use reflection to set dependencies
     // This will be replaced by proper generated setter methods
     val converterClass = converter.getClass
     dependencies.zipWithIndex.foreach { case (dep, idx) =>
       try {
-        val setterMethod = converterClass.getMethod(s"setNestedConverter${idx}", classOf[RowConverter[_]])
+        val setterMethod = converterClass.getMethod(s"setNestedConverter${idx}", classOf[MessageBasedConverter[_]])
         setterMethod.invoke(converter, dep)
       } catch {
         case _: NoSuchMethodException => // Converter has no dependencies, ignore
@@ -263,23 +265,24 @@ object ProtoToRowGenerator {
    * with null dependencies initially. This allows recursive types to be handled
    * by deferring dependency injection until after all converters are created.
    *
-   * @param descriptor   the Protobuf descriptor describing the message schema
-   * @param messageClass the compiled Protobuf Java class
+   * @param descriptor     the Protobuf descriptor describing the message schema
+   * @param messageClass   the compiled Protobuf Java class
    * @param numNestedTypes the number of unique nested message types
    * @return a [[RowConverter]] capable of converting the message into an
    *         [[org.apache.spark.sql.catalyst.InternalRow]]
    */
-  private def generateConverterWithNullDeps(descriptor: Descriptor,
-                                            messageClass: Class[_ <: Message], 
-                                            numNestedTypes: Int): RowConverter[_ <: Message] = {
+  private def generateConverterWithNullDeps(
+      descriptor: Descriptor,
+      messageClass: Class[_ <: Message],
+      numNestedTypes: Int): RowConverter = {
     // Build the Spark SQL schema corresponding to this descriptor
     val schema: StructType = getCachedSchema(descriptor)
 
     // Create per-field converter indices for message fields
     val messageFields = descriptor.getFields.asScala.filter(_.getJavaType == FieldDescriptor.JavaType.MESSAGE).toList
-    
+
     // Verify we have the expected number of nested types
-    assert(messageFields.size == numNestedTypes, 
+    assert(messageFields.size == numNestedTypes,
       s"Expected $numNestedTypes nested types but found ${messageFields.size}")
 
     // Create field-to-converter-index mapping for code generation
@@ -296,18 +299,18 @@ object ProtoToRowGenerator {
     code ++= "import org.apache.spark.sql.catalyst.InternalRow;\n"
     code ++= "import org.apache.spark.sql.types.StructType;\n"
     code ++= "import org.apache.spark.unsafe.types.UTF8String;\n"
-    code ++= "import fastproto.RowConverter;\n"
-    
+    code ++= "import fastproto.MessageBasedConverter;\n"
+
     // Begin class declaration
-    code ++= s"public final class ${className} implements fastproto.RowConverter<${messageClass.getName}> {\n"
-    
+    code ++= s"public final class ${className} implements fastproto.MessageBasedConverter<${messageClass.getName}> {\n"
+
     // Declare fields: schema, writer, and nested converters (non-final for setter injection)
     code ++= "  private final StructType schema;\n"
     code ++= "  private final UnsafeRowWriter writer;\n"
     (0 until numNestedTypes).foreach { idx =>
-      code ++= s"  private fastproto.RowConverter nestedConv${idx}; // Non-final for dependency injection\n"
+      code ++= s"  private fastproto.MessageBasedConverter nestedConv${idx}; // Non-final for dependency injection\n"
     }
-    
+
     // Constructor with null nested converters initially
     code ++= s"  public ${className}(StructType schema) {\n"
     code ++= "    this.schema = schema;\n"
@@ -317,14 +320,208 @@ object ProtoToRowGenerator {
       code ++= s"    this.nestedConv${idx} = null; // Will be set via setter\n"
     }
     code ++= "  }\n"
-    
+
     // Generate setter methods for dependency injection
     (0 until numNestedTypes).foreach { idx =>
-      code ++= s"  public void setNestedConverter${idx}(fastproto.RowConverter conv) {\n"
+      code ++= s"  public void setNestedConverter${idx}(fastproto.MessageBasedConverter conv) {\n"
       code ++= "    if (this.nestedConv" + idx + " != null) throw new IllegalStateException(\"Converter " + idx + " already set\");\n"
       code ++= s"    this.nestedConv${idx} = conv;\n"
       code ++= s"  }\n"
     }
+
+    // Generate field-specific methods for complex fields
+    descriptor.getFields.asScala.zipWithIndex.foreach { case (fd, idx) =>
+      val fieldName = fd.getName
+      val accessor = accessorName(fd)
+      val countMethodName = s"get${accessor}Count"
+      val indexGetterName = s"get${accessor}"
+      val getBytesMethodName = s"get${accessor}Bytes"
+
+      // Generate methods for fields that have substantial code (8+ lines)
+      fd.getJavaType match {
+        case FieldDescriptor.JavaType.STRING if fd.isRepeated =>
+          // Generate method for repeated string field
+          code ++= s"  private void write${accessor}Field(UnsafeRowWriter writer, ${messageClass.getName} msg) {\n"
+          code ++= s"    int count = msg.${countMethodName}();\n"
+          code ++= s"    int offset = writer.cursor();\n"
+          code ++= s"    UnsafeArrayWriter arrayWriter = new UnsafeArrayWriter(writer, 8);\n"
+          code ++= s"    arrayWriter.initialize(count);\n"
+          code ++= s"    for (int i = 0; i < count; i++) {\n"
+          code ++= s"      com.google.protobuf.ByteString bs = msg.${getBytesMethodName}(i);\n"
+          code ++= s"      byte[] bytes = bs.toByteArray();\n"
+          code ++= s"      arrayWriter.write(i, bytes);\n"
+          code ++= s"    }\n"
+          code ++= s"    writer.setOffsetAndSizeFromPreviousCursor($idx, offset);\n"
+          code ++= s"  }\n\n"
+
+        case FieldDescriptor.JavaType.BYTE_STRING if fd.isRepeated =>
+          // Generate method for repeated ByteString field
+          code ++= s"  private void write${accessor}Field(UnsafeRowWriter writer, ${messageClass.getName} msg) {\n"
+          code ++= s"    int count = msg.${countMethodName}();\n"
+          code ++= s"    int offset = writer.cursor();\n"
+          code ++= s"    UnsafeArrayWriter arrayWriter = new UnsafeArrayWriter(writer, 8);\n"
+          code ++= s"    arrayWriter.initialize(count);\n"
+          code ++= s"    for (int i = 0; i < count; i++) {\n"
+          code ++= s"      " + classOf[ByteString].getName + s" bs = msg.${indexGetterName}(i);\n"
+          code ++= s"      if (bs == null) { arrayWriter.setNull(i); } else { arrayWriter.write(i, bs.toByteArray()); }\n"
+          code ++= s"    }\n"
+          code ++= s"    writer.setOffsetAndSizeFromPreviousCursor($idx, offset);\n"
+          code ++= s"  }\n\n"
+
+        case FieldDescriptor.JavaType.INT if fd.isRepeated =>
+          // Generate method for repeated int field
+          code ++= s"  private void write${accessor}Field(UnsafeRowWriter writer, ${messageClass.getName} msg) {\n"
+          code ++= s"    int count = msg.${countMethodName}();\n"
+          code ++= s"    int offset = writer.cursor();\n"
+          code ++= s"    UnsafeArrayWriter arrayWriter = new UnsafeArrayWriter(writer, 4);\n"
+          code ++= s"    arrayWriter.initialize(count);\n"
+          code ++= s"    for (int i = 0; i < count; i++) {\n"
+          code ++= s"      arrayWriter.write(i, msg.${indexGetterName}(i));\n"
+          code ++= s"    }\n"
+          code ++= s"    writer.setOffsetAndSizeFromPreviousCursor($idx, offset);\n"
+          code ++= s"  }\n\n"
+
+        case FieldDescriptor.JavaType.LONG if fd.isRepeated =>
+          // Generate method for repeated long field
+          code ++= s"  private void write${accessor}Field(UnsafeRowWriter writer, ${messageClass.getName} msg) {\n"
+          code ++= s"    int count = msg.${countMethodName}();\n"
+          code ++= s"    int offset = writer.cursor();\n"
+          code ++= s"    UnsafeArrayWriter arrayWriter = new UnsafeArrayWriter(writer, 8);\n"
+          code ++= s"    arrayWriter.initialize(count);\n"
+          code ++= s"    for (int i = 0; i < count; i++) {\n"
+          code ++= s"      arrayWriter.write(i, msg.${indexGetterName}(i));\n"
+          code ++= s"    }\n"
+          code ++= s"    writer.setOffsetAndSizeFromPreviousCursor($idx, offset);\n"
+          code ++= s"  }\n\n"
+
+        case FieldDescriptor.JavaType.FLOAT if fd.isRepeated =>
+          // Generate method for repeated float field
+          code ++= s"  private void write${accessor}Field(UnsafeRowWriter writer, ${messageClass.getName} msg) {\n"
+          code ++= s"    int count = msg.${countMethodName}();\n"
+          code ++= s"    int offset = writer.cursor();\n"
+          code ++= s"    UnsafeArrayWriter arrayWriter = new UnsafeArrayWriter(writer, 4);\n"
+          code ++= s"    arrayWriter.initialize(count);\n"
+          code ++= s"    for (int i = 0; i < count; i++) {\n"
+          code ++= s"      arrayWriter.write(i, msg.${indexGetterName}(i));\n"
+          code ++= s"    }\n"
+          code ++= s"    writer.setOffsetAndSizeFromPreviousCursor($idx, offset);\n"
+          code ++= s"  }\n\n"
+
+        case FieldDescriptor.JavaType.DOUBLE if fd.isRepeated =>
+          // Generate method for repeated double field
+          code ++= s"  private void write${accessor}Field(UnsafeRowWriter writer, ${messageClass.getName} msg) {\n"
+          code ++= s"    int count = msg.${countMethodName}();\n"
+          code ++= s"    int offset = writer.cursor();\n"
+          code ++= s"    UnsafeArrayWriter arrayWriter = new UnsafeArrayWriter(writer, 8);\n"
+          code ++= s"    arrayWriter.initialize(count);\n"
+          code ++= s"    for (int i = 0; i < count; i++) {\n"
+          code ++= s"      arrayWriter.write(i, msg.${indexGetterName}(i));\n"
+          code ++= s"    }\n"
+          code ++= s"    writer.setOffsetAndSizeFromPreviousCursor($idx, offset);\n"
+          code ++= s"  }\n\n"
+
+        case FieldDescriptor.JavaType.BOOLEAN if fd.isRepeated =>
+          // Generate method for repeated boolean field
+          code ++= s"  private void write${accessor}Field(UnsafeRowWriter writer, ${messageClass.getName} msg) {\n"
+          code ++= s"    int count = msg.${countMethodName}();\n"
+          code ++= s"    int offset = writer.cursor();\n"
+          code ++= s"    UnsafeArrayWriter arrayWriter = new UnsafeArrayWriter(writer, 1);\n"
+          code ++= s"    arrayWriter.initialize(count);\n"
+          code ++= s"    for (int i = 0; i < count; i++) {\n"
+          code ++= s"      arrayWriter.write(i, msg.${indexGetterName}(i));\n"
+          code ++= s"    }\n"
+          code ++= s"    writer.setOffsetAndSizeFromPreviousCursor($idx, offset);\n"
+          code ++= s"  }\n\n"
+
+        case FieldDescriptor.JavaType.ENUM if fd.isRepeated =>
+          // Generate method for repeated enum field
+          code ++= s"  private void write${accessor}Field(UnsafeRowWriter writer, ${messageClass.getName} msg) {\n"
+          code ++= s"    int count = msg.${countMethodName}();\n"
+          code ++= s"    int offset = writer.cursor();\n"
+          code ++= s"    UnsafeArrayWriter arrayWriter = new UnsafeArrayWriter(writer, 8);\n"
+          code ++= s"    arrayWriter.initialize(count);\n"
+          code ++= s"    for (int i = 0; i < count; i++) {\n"
+          code ++= s"      " + classOf[ProtocolMessageEnum].getName + s" e = msg.${indexGetterName}(i);\n"
+          code ++= s"      if (e == null) { arrayWriter.setNull(i); } else { arrayWriter.write(i, UTF8String.fromString(e.toString())); }\n"
+          code ++= s"    }\n"
+          code ++= s"    writer.setOffsetAndSizeFromPreviousCursor($idx, offset);\n"
+          code ++= s"  }\n\n"
+
+        case FieldDescriptor.JavaType.MESSAGE if fd.isRepeated =>
+          // Generate method for repeated message field
+          val converterIndex = fieldToConverterIndex(fd)
+          val nestedConverterName = s"nestedConv${converterIndex}"
+          code ++= s"  private void write${accessor}Field(UnsafeRowWriter writer, ${messageClass.getName} msg) {\n"
+          code ++= s"    int count = msg.${countMethodName}();\n"
+          code ++= s"    int offset = writer.cursor();\n"
+          code ++= s"    UnsafeArrayWriter arrayWriter = new UnsafeArrayWriter(writer, 8);\n"
+          code ++= s"    arrayWriter.initialize(count);\n"
+          code ++= s"    for (int i = 0; i < count; i++) {\n"
+          code ++= s"      " + classOf[Message].getName + s" element = (" + classOf[Message].getName + s") msg.${indexGetterName}(i);\n"
+          code ++= s"      if (element == null || ${nestedConverterName} == null) {\n"
+          code ++= s"        arrayWriter.setNull(i);\n"
+          code ++= s"      } else {\n"
+          code ++= s"        int elemOffset = arrayWriter.cursor();\n"
+          code ++= s"        ${nestedConverterName}.convert(element, writer);\n"
+          code ++= s"        arrayWriter.setOffsetAndSizeFromPreviousCursor(i, elemOffset);\n"
+          code ++= s"      }\n"
+          code ++= s"    }\n"
+          code ++= s"    writer.setOffsetAndSizeFromPreviousCursor($idx, offset);\n"
+          code ++= s"  }\n\n"
+
+        case FieldDescriptor.JavaType.MESSAGE if !fd.isRepeated =>
+          // Generate method for singular message field
+          val converterIndex = fieldToConverterIndex(fd)
+          val nestedConverterName = s"nestedConv${converterIndex}"
+          val getterName = indexGetterName
+          val hasMethodName = if (!(fd.getType == FieldDescriptor.Type.MESSAGE && fd.getMessageType.getOptions.hasMapEntry)) {
+            Some(s"has${accessor}")
+          } else {
+            None
+          }
+          code ++= s"  private void write${accessor}Field(UnsafeRowWriter writer, ${messageClass.getName} msg) {\n"
+          hasMethodName match {
+            case Some(method) =>
+              code ++= s"    if (!msg.${method}()) {\n"
+              code ++= s"      writer.setNullAt($idx);\n"
+              code ++= s"    } else {\n"
+              code ++= s"      " + classOf[Message].getName + s" v = (" + classOf[Message].getName + s") msg.${getterName}();\n"
+              code ++= s"      if (${nestedConverterName} == null) {\n"
+              code ++= s"        writer.setNullAt($idx);\n"
+              code ++= s"      } else {\n"
+              code ++= s"        int offset = writer.cursor();\n"
+              code ++= s"        ${nestedConverterName}.convert(v, writer);\n"
+              code ++= s"        writer.setOffsetAndSizeFromPreviousCursor($idx, offset);\n"
+              code ++= s"      }\n"
+              code ++= s"    }\n"
+            case None =>
+              code ++= s"    " + classOf[Message].getName + s" v = (" + classOf[Message].getName + s") msg.${getterName}();\n"
+              code ++= s"    if (v == null || ${nestedConverterName} == null) {\n"
+              code ++= s"      writer.setNullAt($idx);\n"
+              code ++= s"    } else {\n"
+              code ++= s"      int offset = writer.cursor();\n"
+              code ++= s"      ${nestedConverterName}.convert(v, writer);\n"
+              code ++= s"      writer.setOffsetAndSizeFromPreviousCursor($idx, offset);\n"
+              code ++= s"    }\n"
+          }
+          code ++= s"  }\n\n"
+
+        case _ => // No method generated for simple singular fields
+      }
+    }
+
+    // Generate binary conversion methods with inlined parseFrom (no reflection)
+    code ++= "  public org.apache.spark.sql.catalyst.InternalRow convert(byte[] binary, UnsafeWriter parentWriter) {\n"
+    code ++= "    try {\n"
+    code ++= "      // Direct parseFrom call - no reflection needed\n"
+    code ++= s"      ${messageClass.getName} message = ${messageClass.getName}.parseFrom(binary);\n"
+    code ++= "      return convert(message, parentWriter);\n"
+    code ++= "    } catch (Exception e) {\n"
+    code ++= "      throw new RuntimeException(\"Failed to parse protobuf binary\", e);\n"
+    code ++= "    }\n"
+    code ++= "  }\n"
+    code ++= "\n"
+
     // Generate the primary convert method - delegates to two-parameter version
     code ++= "  public UnsafeRow convert(" + messageClass.getName + " msg) {\n"
     code ++= "    return convert(msg, null);\n"
@@ -343,7 +540,7 @@ object ProtoToRowGenerator {
     code ++= "      writer = new UnsafeRowWriter(parentWriter, schema.length());\n"
     code ++= "      writer.resetRowWriter(); // Initialize null bytes but don't reset buffer\n"
     code ++= "    }\n"
-    
+
     // Generate per‑field extraction and writing logic using writer
     descriptor.getFields.asScala.zipWithIndex.foreach { case (fd, idx) =>
       // Insert a comment into the generated Java code to aid debugging.  This
@@ -353,192 +550,66 @@ object ProtoToRowGenerator {
       // generated code makes it easier to trace errors back to the original
       // descriptor.
       code ++= s"    // Field '${fd.getName}', JavaType=${fd.getJavaType}, repeated=${fd.isRepeated}\n"
-      // Build accessor method names.  For repeated fields, use getXCount() and getX(index)
-      val listGetterName = s"get${accessorName(fd)}List"
-      val countMethodName = s"get${accessorName(fd)}Count"
-      val indexGetterName = s"get${accessorName(fd)}"
-      val getterName = if (fd.isRepeated) listGetterName else indexGetterName
-      val hasMethodName = if (fd.getJavaType == FieldDescriptor.JavaType.MESSAGE && !fd.isRepeated && !(fd.getType == FieldDescriptor.Type.MESSAGE && fd.getMessageType.getOptions.hasMapEntry)) {
-        // For singular message fields there is a hasX() method
-        Some(s"has${accessorName(fd)}")
-      } else {
-        None
-      }
+      val accessor = accessorName(fd)
+      val getBytesMethodName = s"get${accessor}Bytes"
+      val getterName = s"get${accessor}"
       fd.getJavaType match {
+        // For complex fields (repeated and nested messages), call the generated methods
+        case FieldDescriptor.JavaType.STRING if fd.isRepeated =>
+          code ++= s"    write${accessor}Field(writer, msg);\n"
+        case FieldDescriptor.JavaType.BYTE_STRING if fd.isRepeated =>
+          code ++= s"    write${accessor}Field(writer, msg);\n"
+        case FieldDescriptor.JavaType.INT if fd.isRepeated =>
+          code ++= s"    write${accessor}Field(writer, msg);\n"
+        case FieldDescriptor.JavaType.LONG if fd.isRepeated =>
+          code ++= s"    write${accessor}Field(writer, msg);\n"
+        case FieldDescriptor.JavaType.FLOAT if fd.isRepeated =>
+          code ++= s"    write${accessor}Field(writer, msg);\n"
+        case FieldDescriptor.JavaType.DOUBLE if fd.isRepeated =>
+          code ++= s"    write${accessor}Field(writer, msg);\n"
+        case FieldDescriptor.JavaType.BOOLEAN if fd.isRepeated =>
+          code ++= s"    write${accessor}Field(writer, msg);\n"
+        case FieldDescriptor.JavaType.ENUM if fd.isRepeated =>
+          code ++= s"    write${accessor}Field(writer, msg);\n"
+        case FieldDescriptor.JavaType.MESSAGE if fd.isRepeated =>
+          code ++= s"    write${accessor}Field(writer, msg);\n"
+        case FieldDescriptor.JavaType.MESSAGE if !fd.isRepeated =>
+          code ++= s"    write${accessor}Field(writer, msg);\n"
+
+        // For simple singular fields, keep inline with optimized string handling
         case FieldDescriptor.JavaType.INT =>
-          if (fd.isRepeated) {
-            // Repeated int32: write using UnsafeArrayWriter (element size = 4 bytes)
-            code ++= s"    int size${idx} = msg.${countMethodName}();\n"
-            code ++= s"    int offset${idx} = writer.cursor();\n"
-            code ++= s"    org.apache.spark.sql.catalyst.expressions.codegen.UnsafeArrayWriter arrayWriter${idx} = new org.apache.spark.sql.catalyst.expressions.codegen.UnsafeArrayWriter(writer, 4);\n"
-            code ++= s"    arrayWriter${idx}.initialize(size${idx});\n"
-            code ++= s"    for (int i = 0; i < size${idx}; i++) { arrayWriter${idx}.write(i, msg.${indexGetterName}(i)); }\n"
-            code ++= s"    writer.setOffsetAndSizeFromPreviousCursor($idx, offset${idx});\n"
-          } else {
-            code ++= s"    writer.write($idx, msg.${getterName}());\n"
-          }
+          code ++= s"    writer.write($idx, msg.${getterName}());\n"
         case FieldDescriptor.JavaType.LONG =>
-          if (fd.isRepeated) {
-            // Repeated int64: element size = 8 bytes
-            code ++= s"    int size${idx} = msg.${countMethodName}();\n"
-            code ++= s"    int offset${idx} = writer.cursor();\n"
-            code ++= s"    org.apache.spark.sql.catalyst.expressions.codegen.UnsafeArrayWriter arrayWriter${idx} = new org.apache.spark.sql.catalyst.expressions.codegen.UnsafeArrayWriter(writer, 8);\n"
-            code ++= s"    arrayWriter${idx}.initialize(size${idx});\n"
-            code ++= s"    for (int i = 0; i < size${idx}; i++) { arrayWriter${idx}.write(i, msg.${indexGetterName}(i)); }\n"
-            code ++= s"    writer.setOffsetAndSizeFromPreviousCursor($idx, offset${idx});\n"
-          } else {
-            code ++= s"    writer.write($idx, msg.${getterName}());\n"
-          }
+          code ++= s"    writer.write($idx, msg.${getterName}());\n"
         case FieldDescriptor.JavaType.FLOAT =>
-          if (fd.isRepeated) {
-            // Repeated float: element size = 4 bytes
-            code ++= s"    int size${idx} = msg.${countMethodName}();\n"
-            code ++= s"    int offset${idx} = writer.cursor();\n"
-            code ++= s"    org.apache.spark.sql.catalyst.expressions.codegen.UnsafeArrayWriter arrayWriter${idx} = new org.apache.spark.sql.catalyst.expressions.codegen.UnsafeArrayWriter(writer, 4);\n"
-            code ++= s"    arrayWriter${idx}.initialize(size${idx});\n"
-            code ++= s"    for (int i = 0; i < size${idx}; i++) { arrayWriter${idx}.write(i, msg.${indexGetterName}(i)); }\n"
-            code ++= s"    writer.setOffsetAndSizeFromPreviousCursor($idx, offset${idx});\n"
-          } else {
-            code ++= s"    writer.write($idx, msg.${getterName}());\n"
-          }
+          code ++= s"    writer.write($idx, msg.${getterName}());\n"
         case FieldDescriptor.JavaType.DOUBLE =>
-          if (fd.isRepeated) {
-            // Repeated double: element size = 8 bytes
-            code ++= s"    int size${idx} = msg.${countMethodName}();\n"
-            code ++= s"    int offset${idx} = writer.cursor();\n"
-            code ++= s"    org.apache.spark.sql.catalyst.expressions.codegen.UnsafeArrayWriter arrayWriter${idx} = new org.apache.spark.sql.catalyst.expressions.codegen.UnsafeArrayWriter(writer, 8);\n"
-            code ++= s"    arrayWriter${idx}.initialize(size${idx});\n"
-            code ++= s"    for (int i = 0; i < size${idx}; i++) { arrayWriter${idx}.write(i, msg.${indexGetterName}(i)); }\n"
-            code ++= s"    writer.setOffsetAndSizeFromPreviousCursor($idx, offset${idx});\n"
-          } else {
-            code ++= s"    writer.write($idx, msg.${getterName}());\n"
-          }
+          code ++= s"    writer.write($idx, msg.${getterName}());\n"
         case FieldDescriptor.JavaType.BOOLEAN =>
-          if (fd.isRepeated) {
-            // Repeated boolean: element size = 1 byte (boolean is stored as byte)
-            code ++= s"    int size${idx} = msg.${countMethodName}();\n"
-            code ++= s"    int offset${idx} = writer.cursor();\n"
-            code ++= s"    org.apache.spark.sql.catalyst.expressions.codegen.UnsafeArrayWriter arrayWriter${idx} = new org.apache.spark.sql.catalyst.expressions.codegen.UnsafeArrayWriter(writer, 1);\n"
-            code ++= s"    arrayWriter${idx}.initialize(size${idx});\n"
-            code ++= s"    for (int i = 0; i < size${idx}; i++) { arrayWriter${idx}.write(i, msg.${indexGetterName}(i)); }\n"
-            code ++= s"    writer.setOffsetAndSizeFromPreviousCursor($idx, offset${idx});\n"
-          } else {
-            code ++= s"    writer.write($idx, msg.${getterName}());\n"
-          }
+          code ++= s"    writer.write($idx, msg.${getterName}());\n"
         case FieldDescriptor.JavaType.STRING =>
-          if (fd.isRepeated) {
-            // Repeated string: need to handle variable-length data
-            val elemSize = 8 // strings are variable-length; we store offset & length
-            code ++= s"    int size${idx} = msg.${countMethodName}();\n"
-            code ++= s"    int offset${idx} = writer.cursor();\n"
-            code ++= s"    org.apache.spark.sql.catalyst.expressions.codegen.UnsafeArrayWriter arrayWriter${idx} = new org.apache.spark.sql.catalyst.expressions.codegen.UnsafeArrayWriter(writer, ${elemSize});\n"
-            code ++= s"    arrayWriter${idx}.initialize(size${idx});\n"
-            code ++= s"    for (int i = 0; i < size${idx}; i++) {\n"
-            code ++= s"      String s = msg.${indexGetterName}(i);\n"
-            code ++= s"      if (s == null) { arrayWriter${idx}.setNull(i); } else { arrayWriter${idx}.write(i, UTF8String.fromString(s)); }\n"
-            code ++= s"    }\n"
-            code ++= s"    writer.setOffsetAndSizeFromPreviousCursor($idx, offset${idx});\n"
-          } else {
-            code ++= s"    String v${idx} = msg.${getterName}();\n"
-            code ++= s"    if (v${idx} == null) {\n"
-            code ++= s"      writer.setNullAt($idx);\n"
-            code ++= s"    } else {\n"
-            code ++= s"      writer.write($idx, UTF8String.fromString(v${idx}));\n"
-            code ++= s"    }\n"
-          }
+          // Optimized singular string: use direct bytes
+          code ++= s"    byte[] bytes${idx} = msg.${getBytesMethodName}().toByteArray();\n"
+          code ++= s"    writer.write($idx, bytes${idx});\n"
         case FieldDescriptor.JavaType.BYTE_STRING =>
-          if (fd.isRepeated) {
-            // Repeated ByteString: variable-length data
-            val elemSize = 8 // byte strings are variable-length; we store offset & length
-            code ++= s"    int size${idx} = msg.${countMethodName}();\n"
-            code ++= s"    int offset${idx} = writer.cursor();\n"
-            code ++= s"    org.apache.spark.sql.catalyst.expressions.codegen.UnsafeArrayWriter arrayWriter${idx} = new org.apache.spark.sql.catalyst.expressions.codegen.UnsafeArrayWriter(writer, ${elemSize});\n"
-            code ++= s"    arrayWriter${idx}.initialize(size${idx});\n"
-            code ++= s"    for (int i = 0; i < size${idx}; i++) {\n"
-            code ++= s"      " + classOf[ByteString].getName + s" bs = msg.${indexGetterName}(i);\n"
-            code ++= s"      if (bs == null) { arrayWriter${idx}.setNull(i); } else { arrayWriter${idx}.write(i, bs.toByteArray()); }\n"
-            code ++= s"    }\n"
-            code ++= s"    writer.setOffsetAndSizeFromPreviousCursor($idx, offset${idx});\n"
-          } else {
-            code ++= s"    " + classOf[ByteString].getName + s" b${idx} = msg.${getterName}();\n"
-            code ++= s"    if (b${idx} == null) {\n"
-            code ++= s"      writer.setNullAt($idx);\n"
-            code ++= s"    } else {\n"
-            code ++= s"      writer.write($idx, b${idx}.toByteArray());\n"
-            code ++= s"    }\n"
-          }
+          // Singular ByteString: already optimized in original code
+          code ++= s"    " + classOf[ByteString].getName + s" b${idx} = msg.${getterName}();\n"
+          code ++= s"    if (b${idx} == null) {\n"
+          code ++= s"      writer.setNullAt($idx);\n"
+          code ++= s"    } else {\n"
+          code ++= s"      writer.write($idx, b${idx}.toByteArray());\n"
+          code ++= s"    }\n"
         case FieldDescriptor.JavaType.ENUM =>
-          if (fd.isRepeated) {
-            // Repeated enum: convert to strings (variable-length data)
-            val elemSize = 8 // enums converted to strings are variable-length
-            code ++= s"    int size${idx} = msg.${countMethodName}();\n"
-            code ++= s"    int offset${idx} = writer.cursor();\n"
-            code ++= s"    org.apache.spark.sql.catalyst.expressions.codegen.UnsafeArrayWriter arrayWriter${idx} = new org.apache.spark.sql.catalyst.expressions.codegen.UnsafeArrayWriter(writer, ${elemSize});\n"
-            code ++= s"    arrayWriter${idx}.initialize(size${idx});\n"
-            code ++= s"    for (int i = 0; i < size${idx}; i++) {\n"
-            code ++= s"      " + classOf[ProtocolMessageEnum].getName + s" e = msg.${indexGetterName}(i);\n"
-            code ++= s"      if (e == null) { arrayWriter${idx}.setNull(i); } else { arrayWriter${idx}.write(i, UTF8String.fromString(e.toString())); }\n"
-            code ++= s"    }\n"
-            code ++= s"    writer.setOffsetAndSizeFromPreviousCursor($idx, offset${idx});\n"
-          } else {
-            code ++= s"    " + classOf[ProtocolMessageEnum].getName + s" e${idx} = msg.${getterName}();\n"
-            code ++= s"    if (e${idx} == null) {\n"
-            code ++= s"      writer.setNullAt($idx);\n"
-            code ++= s"    } else {\n"
-            code ++= s"      writer.write($idx, UTF8String.fromString(e${idx}.toString()));\n"
-            code ++= s"    }\n"
-          }
-        case FieldDescriptor.JavaType.MESSAGE =>
-          val converterIndex = fieldToConverterIndex(fd)
-          val nestedConverterName = s"nestedConv${converterIndex}"
-          if (fd.isRepeated) {
-            // Repeated message: use nested converter for each element
-            val elemSize = 8 // nested structs are variable-length; we store offset & length (8 bytes)
-            code ++= s"    int size${idx} = msg.${countMethodName}();\n"
-            code ++= s"    int offset${idx} = writer.cursor();\n"
-            code ++= s"    org.apache.spark.sql.catalyst.expressions.codegen.UnsafeArrayWriter arrayWriter${idx} = new org.apache.spark.sql.catalyst.expressions.codegen.UnsafeArrayWriter(writer, ${elemSize});\n"
-            code ++= s"    arrayWriter${idx}.initialize(size${idx});\n"
-            code ++= s"    for (int i = 0; i < size${idx}; i++) {\n"
-            code ++= s"      " + classOf[Message].getName + s" element = (" + classOf[Message].getName + s") msg.${indexGetterName}(i);\n"
-            code ++= s"      if (element == null || ${nestedConverterName} == null) { \n"
-            code ++= s"        arrayWriter${idx}.setNull(i); \n"
-            code ++= s"      } else { \n"
-            code ++= s"        int elemOffset = arrayWriter${idx}.cursor();\n"
-            code ++= s"        ${nestedConverterName}.convert(element, writer);\n"
-            code ++= s"        arrayWriter${idx}.setOffsetAndSizeFromPreviousCursor(i, elemOffset);\n"
-            code ++= s"      }\n"
-            code ++= s"    }\n"
-            code ++= s"    writer.setOffsetAndSizeFromPreviousCursor($idx, offset${idx});\n"
-          } else {
-            // Singular message: use nested converter, handle nullability
-            hasMethodName match {
-              case Some(method) =>
-                code ++= s"    if (!msg.${method}()) {\n"
-                code ++= s"      writer.setNullAt($idx);\n"
-                code ++= s"    } else {\n"
-                code ++= s"      " + classOf[Message].getName + s" v${idx} = (" + classOf[Message].getName + s") msg.${getterName}();\n"
-                code ++= s"      if (${nestedConverterName} == null) {\n"
-                code ++= s"        writer.setNullAt($idx);\n"
-                code ++= s"      } else {\n"
-                code ++= s"        int offset${idx} = writer.cursor();\n"
-                code ++= s"        ${nestedConverterName}.convert(v${idx}, writer);\n"
-                code ++= s"        writer.setOffsetAndSizeFromPreviousCursor($idx, offset${idx});\n"
-                code ++= s"      }\n"
-                code ++= s"    }\n"
-              case None =>
-                code ++= s"    " + classOf[Message].getName + s" v${idx} = (" + classOf[Message].getName + s") msg.${getterName}();\n"
-                code ++= s"    if (v${idx} == null || ${nestedConverterName} == null) {\n"
-                code ++= s"      writer.setNullAt($idx);\n"
-                code ++= s"    } else {\n"
-                code ++= s"      int offset${idx} = writer.cursor();\n"
-                code ++= s"      ${nestedConverterName}.convert(v${idx}, writer);\n"
-                code ++= s"      writer.setOffsetAndSizeFromPreviousCursor($idx, offset${idx});\n"
-                code ++= s"    }\n"
-            }
-          }
+          // Singular enum: convert to string (keep UTF8String for now, could be optimized later)
+          code ++= s"    " + classOf[ProtocolMessageEnum].getName + s" e${idx} = msg.${getterName}();\n"
+          code ++= s"    if (e${idx} == null) {\n"
+          code ++= s"      writer.setNullAt($idx);\n"
+          code ++= s"    } else {\n"
+          code ++= s"      writer.write($idx, UTF8String.fromString(e${idx}.toString()));\n"
+          code ++= s"    }\n"
       }
     }
-    
+
     code ++= "    if (parentWriter != null) {\n"
     code ++= "      // When using shared writer, data is written to parent buffer; return null\n"
     code ++= "      return null;\n"
@@ -547,13 +618,13 @@ object ProtoToRowGenerator {
     code ++= "      return writer.getRow();\n"
     code ++= "    }\n"
     code ++= "  }\n" // End of convert(T, UnsafeWriter) method
-    
+
     // Bridge method with @Override for Object signature
     code ++= "  @Override\n"
     code ++= "  public org.apache.spark.sql.catalyst.InternalRow convert(Object obj) {\n"
     code ++= s"    return convert((${messageClass.getName}) obj);\n"
     code ++= "  }\n"
-    
+
     // Bridge method with @Override for Object, UnsafeWriter signature
     code ++= "  @Override\n"
     code ++= "  public org.apache.spark.sql.catalyst.InternalRow convert(Object obj, org.apache.spark.sql.catalyst.expressions.codegen.UnsafeWriter parentWriter) {\n"
@@ -576,6 +647,6 @@ object ProtoToRowGenerator {
 
     // Create converter with just schema - dependencies will be set via setters
     val constructor = generatedClass.getConstructor(classOf[StructType])
-    constructor.newInstance(schema).asInstanceOf[RowConverter[_ <: Message]]
+    constructor.newInstance(schema).asInstanceOf[RowConverter]
   }
 }

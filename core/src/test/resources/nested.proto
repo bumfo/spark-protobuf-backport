@@ -1,0 +1,17 @@
+syntax = "proto3";
+
+package example;
+
+message Foo {
+  string name = 1;
+  int32 id = 2;
+  Bar nested_bar = 3;
+  repeated float scores = 4;
+}
+
+message Bar {
+  string value = 1;
+  bool active = 2;
+  Foo parent_foo = 3;  // Recursive reference back to Foo
+  repeated float measurements = 4;
+}
