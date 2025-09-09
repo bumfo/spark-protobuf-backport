@@ -250,7 +250,7 @@ object ProtoToRowGenerator {
     val converterClass = converter.getClass
     dependencies.zipWithIndex.foreach { case (dep, idx) =>
       try {
-        val setterMethod = converterClass.getMethod(s"setNestedConverter${idx}", classOf[RowConverter])
+        val setterMethod = converterClass.getMethod(s"setNestedConverter${idx}", Class.forName("fastproto.MessageBasedConverter"))
         setterMethod.invoke(converter, dep)
       } catch {
         case _: NoSuchMethodException => // Converter has no dependencies, ignore
@@ -320,9 +320,9 @@ object ProtoToRowGenerator {
     
     // Generate setter methods for dependency injection
     (0 until numNestedTypes).foreach { idx =>
-      code ++= s"  public void setNestedConverter${idx}(fastproto.RowConverter conv) {\n"
+      code ++= s"  public void setNestedConverter${idx}(fastproto.MessageBasedConverter conv) {\n"
       code ++= "    if (this.nestedConv" + idx + " != null) throw new IllegalStateException(\"Converter " + idx + " already set\");\n"
-      code ++= s"    this.nestedConv${idx} = (fastproto.MessageBasedConverter) conv;\n"
+      code ++= s"    this.nestedConv${idx} = conv;\n"
       code ++= s"  }\n"
     }
     
