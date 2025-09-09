@@ -279,11 +279,22 @@ object ProtoToRowGenerator {
     // Create a unique class name to avoid collisions when multiple converters are generated
     val className = s"GeneratedConverter_${descriptor.getName}_${System.nanoTime()}"
 
-    val code = generateConverterInternal(className, descriptor, messageClass, numNestedTypes)
-    cook(code, className, descriptor)
+    val sourceCode = generateConverterSourceCode(className, descriptor, messageClass, numNestedTypes)
+    compileAndInstantiate(sourceCode, className, descriptor)
   }
 
-  def generateConverterInternal(
+  /**
+   * Generate Java source code for a MessageBasedConverter implementation.
+   * This method creates the complete Java class source code including imports,
+   * class declaration, fields, constructor, and conversion methods.
+   *
+   * @param className the name of the generated Java class
+   * @param descriptor the Protobuf descriptor for the message
+   * @param messageClass the compiled Java class for the message
+   * @param numNestedTypes the number of nested message types
+   * @return StringBuilder containing the complete Java source code
+   */
+  def generateConverterSourceCode(
       className: String,
       descriptor: Descriptor,
       messageClass: Class[_ <: Message],
@@ -650,14 +661,22 @@ object ProtoToRowGenerator {
     code
   }
 
-  private def cook(code: StringBuilder, className: String, descriptor: Descriptor) = {
+  /**
+   * Compile the generated Java source code using Janino and instantiate the converter.
+   *
+   * @param sourceCode the complete Java source code
+   * @param className the name of the generated class
+   * @param descriptor the Protobuf descriptor (used for schema generation)
+   * @return a compiled and instantiated RowConverter
+   */
+  private def compileAndInstantiate(sourceCode: StringBuilder, className: String, descriptor: Descriptor): RowConverter = {
     // Build the Spark SQL schema corresponding to this descriptor
     val schema: StructType = getCachedSchema(descriptor)
 
     // Compile the generated Java code using Janino
     val compiler = new SimpleCompiler()
     compiler.setParentClassLoader(this.getClass.getClassLoader)
-    compiler.cook(code.toString)
+    compiler.cook(sourceCode.toString)
     val generatedClass = compiler.getClassLoader.loadClass(className)
 
     // Create converter with just schema - dependencies will be set via setters
