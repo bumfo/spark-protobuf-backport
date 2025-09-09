@@ -305,7 +305,7 @@ object ProtoToRowGenerator {
     code ++= "  private final StructType schema;\n"
     code ++= "  private final UnsafeRowWriter writer;\n"
     (0 until numNestedTypes).foreach { idx =>
-      code ++= s"  private fastproto.RowConverter nestedConv${idx}; // Non-final for dependency injection\n"
+      code ++= s"  private fastproto.MessageBasedConverter nestedConv${idx}; // Non-final for dependency injection\n"
     }
     
     // Constructor with null nested converters initially
@@ -322,7 +322,7 @@ object ProtoToRowGenerator {
     (0 until numNestedTypes).foreach { idx =>
       code ++= s"  public void setNestedConverter${idx}(fastproto.RowConverter conv) {\n"
       code ++= "    if (this.nestedConv" + idx + " != null) throw new IllegalStateException(\"Converter " + idx + " already set\");\n"
-      code ++= s"    this.nestedConv${idx} = conv;\n"
+      code ++= s"    this.nestedConv${idx} = (fastproto.MessageBasedConverter) conv;\n"
       code ++= s"  }\n"
     }
     
@@ -459,7 +459,7 @@ object ProtoToRowGenerator {
           code ++= s"        arrayWriter.setNull(i);\n"
           code ++= s"      } else {\n"
           code ++= s"        int elemOffset = arrayWriter.cursor();\n"
-          code ++= s"        ((fastproto.MessageBasedConverter)${nestedConverterName}).convert(element, writer);\n"
+          code ++= s"        ${nestedConverterName}.convert(element, writer);\n"
           code ++= s"        arrayWriter.setOffsetAndSizeFromPreviousCursor(i, elemOffset);\n"
           code ++= s"      }\n"
           code ++= s"    }\n"
@@ -487,7 +487,7 @@ object ProtoToRowGenerator {
               code ++= s"        writer.setNullAt($idx);\n"
               code ++= s"      } else {\n"
               code ++= s"        int offset = writer.cursor();\n"
-              code ++= s"        ((fastproto.MessageBasedConverter)${nestedConverterName}).convert(v, writer);\n"
+              code ++= s"        ${nestedConverterName}.convert(v, writer);\n"
               code ++= s"        writer.setOffsetAndSizeFromPreviousCursor($idx, offset);\n"
               code ++= s"      }\n"
               code ++= s"    }\n"
