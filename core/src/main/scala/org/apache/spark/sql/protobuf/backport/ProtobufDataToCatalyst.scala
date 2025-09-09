@@ -16,7 +16,7 @@
 package org.apache.spark.sql.protobuf.backport
 
 import com.google.protobuf.{DynamicMessage, Message => PbMessage}
-import fastproto.{MessageBasedConverter, ProtoToRowGenerator, RowConverter}
+import fastproto.{ProtoToRowGenerator, RowConverter}
 import org.apache.spark.sql.catalyst.expressions.codegen.{CodeGenerator, CodegenContext, ExprCode}
 import org.apache.spark.sql.catalyst.expressions.{ExpectsInputTypes, Expression, UnaryExpression}
 import org.apache.spark.sql.catalyst.util.{FailFastMode, ParseMode, PermissiveMode}
@@ -137,19 +137,6 @@ private[backport] case class ProtobufDataToCatalyst(
   }
 
   /**
-   * Parse a Protobuf binary into a compiled message if the message class is
-   * available.  Uses reflection to call the static parseFrom(byte[]) method.
-   * Returns [[Some]] when parsing succeeds, otherwise [[None]].
-   */
-  def parseCompiled(binary: Array[Byte]): Option[PbMessage] = {
-    messageClassOpt.map { cls =>
-      val method = cls.getMethod("parseFrom", classOf[Array[Byte]])
-      val msg = method.invoke(null, binary).asInstanceOf[PbMessage]
-      msg
-    }
-  }
-
-  /**
    * Handle an exception according to the configured parse mode.
    */
   private def handleException(e: Throwable): Any = {
@@ -229,31 +216,22 @@ private[backport] case class ProtobufDataToCatalyst(
       case Some(converter) =>
         // Generate optimized code path using the RowConverter directly
         val expr = ctx.addReferenceObj("this", this)
-        val converterRef = ctx.addReferenceObj("rowConverter", converter.asInstanceOf[MessageBasedConverter[_ <: PbMessage]])
-
-        // Use runtime message class name instead of hardcoded one
-        val messageClassName = messageClassOpt match {
-          case Some(clazz) => clazz.getName
-          case None => classOf[PbMessage].getName // fallback, though this shouldn't happen when rowConverterOpt is Some
-        }
+        val converterRef = ctx.addReferenceObj("rowConverter", converter)
 
         nullSafeCodeGen(
           ctx,
           ev,
           eval => {
             val result = ctx.freshName("result")
-            val msg = ctx.freshName("msg")
             val dt = CodeGenerator.boxedType(dataType)
             s"""
-               |// Optimized codegen path using RowConverter
+               |// Optimized codegen path using RowConverter with direct binary conversion
                |try {
-               |  scala.Option $msg = $expr.parseCompiled($eval);
-               |  if ($msg.isDefined()) {
-               |    $messageClassName parsedMsg = ($messageClassName) $msg.get();
-               |    $dt $result = ($dt) $converterRef.convert(parsedMsg);
-               |    ${ev.value} = $result;
-               |  } else {
+               |  $dt $result = ($dt) $converterRef.convert($eval);
+               |  if ($result == null) {
                |    ${ev.isNull} = true;
+               |  } else {
+               |    ${ev.value} = $result;
                |  }
                |} catch (java.lang.Exception e) {
                |  $expr.handleException(e);
