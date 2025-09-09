@@ -260,6 +260,7 @@ object ProtoToRowGenerator {
     }
   }
 
+
   /**
    * Internal method that performs the actual converter generation and compilation
    * with null dependencies initially. This allows recursive types to be handled
@@ -275,9 +276,18 @@ object ProtoToRowGenerator {
       descriptor: Descriptor,
       messageClass: Class[_ <: Message],
       numNestedTypes: Int): RowConverter = {
-    // Build the Spark SQL schema corresponding to this descriptor
-    val schema: StructType = getCachedSchema(descriptor)
+    // Create a unique class name to avoid collisions when multiple converters are generated
+    val className = s"GeneratedConverter_${descriptor.getName}_${System.nanoTime()}"
 
+    val code = generateConverterInternal(className, descriptor, messageClass, numNestedTypes)
+    cook(code, className, descriptor)
+  }
+
+  def generateConverterInternal(
+      className: String,
+      descriptor: Descriptor,
+      messageClass: Class[_ <: Message],
+      numNestedTypes: Int): StringBuilder = {
     // Create per-field converter indices for message fields
     val messageFields = descriptor.getFields.asScala.filter(_.getJavaType == FieldDescriptor.JavaType.MESSAGE).toList
 
@@ -288,8 +298,6 @@ object ProtoToRowGenerator {
     // Create field-to-converter-index mapping for code generation
     val fieldToConverterIndex: Map[FieldDescriptor, Int] = messageFields.zipWithIndex.toMap
 
-    // Create a unique class name to avoid collisions when multiple converters are generated
-    val className = s"GeneratedConverter_${descriptor.getName}_${System.nanoTime()}"
     val code = new StringBuilder
     // Imports required by the generated Java source
     code ++= "import org.apache.spark.sql.catalyst.expressions.UnsafeRow;\n"
@@ -638,6 +646,13 @@ object ProtoToRowGenerator {
     code ++= "    return this.schema;\n"
     code ++= "  }\n"
     code ++= "}\n" // End of class
+
+    code
+  }
+
+  private def cook(code: StringBuilder, className: String, descriptor: Descriptor) = {
+    // Build the Spark SQL schema corresponding to this descriptor
+    val schema: StructType = getCachedSchema(descriptor)
 
     // Compile the generated Java code using Janino
     val compiler = new SimpleCompiler()
