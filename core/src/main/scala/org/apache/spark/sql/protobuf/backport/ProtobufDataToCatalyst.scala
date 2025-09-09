@@ -215,7 +215,6 @@ private[backport] case class ProtobufDataToCatalyst(
     rowConverterOpt match {
       case Some(converter) =>
         // Generate optimized code path using the RowConverter directly
-        val expr = ctx.addReferenceObj("this", this)
         val converterRef = ctx.addReferenceObj("rowConverter", converter)
 
         nullSafeCodeGen(
@@ -234,8 +233,7 @@ private[backport] case class ProtobufDataToCatalyst(
                |    ${ev.value} = $result;
                |  }
                |} catch (java.lang.Exception e) {
-               |  $expr.handleException(e);
-               |  ${ev.isNull} = true;
+               |  throw new RuntimeException("Failed to convert protobuf binary", e);
                |}
                |""".stripMargin
           }

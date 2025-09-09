@@ -459,7 +459,7 @@ object ProtoToRowGenerator {
           code ++= s"        arrayWriter.setNull(i);\n"
           code ++= s"      } else {\n"
           code ++= s"        int elemOffset = arrayWriter.cursor();\n"
-          code ++= s"        ${nestedConverterName}.convert(element, writer);\n"
+          code ++= s"        ((fastproto.MessageBasedConverter)${nestedConverterName}).convert(element, writer);\n"
           code ++= s"        arrayWriter.setOffsetAndSizeFromPreviousCursor(i, elemOffset);\n"
           code ++= s"      }\n"
           code ++= s"    }\n"
@@ -487,7 +487,7 @@ object ProtoToRowGenerator {
               code ++= s"        writer.setNullAt($idx);\n"
               code ++= s"      } else {\n"
               code ++= s"        int offset = writer.cursor();\n"
-              code ++= s"        ${nestedConverterName}.convert(v, writer);\n"
+              code ++= s"        ((fastproto.MessageBasedConverter)${nestedConverterName}).convert(v, writer);\n"
               code ++= s"        writer.setOffsetAndSizeFromPreviousCursor($idx, offset);\n"
               code ++= s"      }\n"
               code ++= s"    }\n"
@@ -520,12 +520,12 @@ object ProtoToRowGenerator {
     code ++= "\n"
 
     // Generate the primary convert method - delegates to two-parameter version
-    code ++= "  public UnsafeRow convert(" + messageClass.getName + " msg) {\n"
+    code ++= "  public org.apache.spark.sql.catalyst.InternalRow convert(" + messageClass.getName + " msg) {\n"
     code ++= "    return convert(msg, null);\n"
     code ++= "  }\n"
     code ++= "\n"
     // Generate the convert method with parentWriter parameter for BufferHolder sharing  
-    code ++= "  public UnsafeRow convert(" + messageClass.getName + " msg, UnsafeWriter parentWriter) {\n"
+    code ++= "  public org.apache.spark.sql.catalyst.InternalRow convert(" + messageClass.getName + " msg, UnsafeWriter parentWriter) {\n"
     code ++= "    UnsafeRowWriter writer;\n"
     code ++= "    if (parentWriter == null) {\n"
     code ++= "      // Use instance writer and reset it\n"
