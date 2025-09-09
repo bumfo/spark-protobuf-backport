@@ -100,4 +100,5 @@ lazy val root = (project in file("."))
   .aggregate(core, uberJar, shaded)
   .settings(
     publish / skip := true,
+    sourcesInBase := false
   )
