@@ -4,8 +4,12 @@ import java.io.File
 import scala.sys.process._
 
 /**
- * Simple task runner that compiles protobuf to descriptor and generates converter code.
+ * Simple task runner that generates converter code from pre-compiled protobuf descriptor.
  * This avoids complex SBT task syntax issues.
+ * 
+ * Prerequisites: 
+ * Generate nested.desc from nested.proto using:
+ *   cd core/src/test/resources && protoc --descriptor_set_out=nested.desc --include_imports nested.proto
  */
 object GenerateConvertersTask {
   
