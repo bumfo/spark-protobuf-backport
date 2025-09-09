@@ -129,7 +129,7 @@ object ProtoToRowGenerator {
   }
 
   /**
-   * Generate a concrete [[RowConverter]] for the given Protobuf message type.
+   * Generate a concrete [[MessageBasedConverter]] for the given Protobuf message type.
    * Uses internal caching to avoid redundant Janino compilation for the same 
    * descriptor and message class combinations. Handles recursive types by
    * creating converter graphs locally before updating the global cache.
@@ -137,17 +137,17 @@ object ProtoToRowGenerator {
    * @param descriptor   the Protobuf descriptor describing the message schema
    * @param messageClass the compiled Protobuf Java class
    * @tparam T the concrete type of the message
-   * @return a [[RowConverter]] capable of converting the message into an
+   * @return a [[MessageBasedConverter]] capable of converting the message into an
    *         [[org.apache.spark.sql.catalyst.InternalRow]]
    */
   def generateConverter[T <: Message](
       descriptor: Descriptor,
-      messageClass: Class[T]): RowConverter = {
+      messageClass: Class[T]): MessageBasedConverter[T] = {
     val key = s"${messageClass.getName}_${descriptor.getFullName}"
 
     // Check global cache first
     converterCache.get(key) match {
-      case converter if converter != null => return converter
+      case converter if converter != null => return converter.asInstanceOf[MessageBasedConverter[T]]
       case _ => // Continue with generation
     }
 
@@ -166,7 +166,7 @@ object ProtoToRowGenerator {
       converterCache.putIfAbsent(k, conv)
     }
 
-    rootConverter
+    rootConverter.asInstanceOf[MessageBasedConverter[T]]
   }
 
   /**
