@@ -131,7 +131,8 @@ object ProtoToRowGenerator {
   /**
    * Generate a concrete [[RowConverter]] for the given Protobuf message type.
    * Uses internal caching to avoid redundant Janino compilation for the same 
-   * descriptor and message class combinations.
+   * descriptor and message class combinations. Handles recursive types by
+   * creating converter graphs locally before updating the global cache.
    *
    * @param descriptor   the Protobuf descriptor describing the message schema
    * @param messageClass the compiled Protobuf Java class
@@ -142,112 +143,208 @@ object ProtoToRowGenerator {
   def generateConverter[T <: Message](descriptor: Descriptor,
                                       messageClass: Class[T]): RowConverter[T] = {
     val key = s"${messageClass.getName}_${descriptor.getFullName}"
-    converterCache.computeIfAbsent(key, _ => generateConverterInternal(descriptor, messageClass))
-      .asInstanceOf[RowConverter[T]]
+    
+    // Check global cache first
+    converterCache.get(key) match {
+      case converter if converter != null => return converter.asInstanceOf[RowConverter[T]]
+      case _ => // Continue with generation
+    }
+    
+    // Local map to track converters being built (excludes already cached ones)
+    // Map key -> (converter, neededTypeKeys)
+    val localConverters = scala.collection.mutable.Map[String, (RowConverter[_ <: Message], Set[String])]()
+    
+    // Phase 1: Create converter graph with null dependencies
+    val rootConverter = createConverterGraph(descriptor, messageClass, localConverters)
+    
+    // Phase 2: Wire up dependencies
+    wireDependencies(localConverters)
+    
+    // Phase 3: Atomically update global cache
+    localConverters.foreach { case (k, (conv, _)) => 
+      converterCache.putIfAbsent(k, conv)
+    }
+    
+    rootConverter.asInstanceOf[RowConverter[T]]
   }
 
   /**
-   * Internal method that performs the actual converter generation and compilation.
-   * This should not be called directly - use generateConverter instead.
+   * Create a converter graph for the given descriptor and class, recursively
+   * building converters for nested types. Returns existing converters from
+   * global cache when available to avoid duplication.
+   */
+  private def createConverterGraph(descriptor: Descriptor, 
+                                   messageClass: Class[_ <: Message],
+                                   localConverters: scala.collection.mutable.Map[String, (RowConverter[_ <: Message], Set[String])]): RowConverter[_ <: Message] = {
+    val key = s"${messageClass.getName}_${descriptor.getFullName}"
+    
+    // Check global cache FIRST (important optimization!)
+    converterCache.get(key) match {
+      case converter if converter != null => return converter.asInstanceOf[RowConverter[_ <: Message]]
+      case _ => // Not cached globally
+    }
+    
+    // Check local map
+    if (localConverters.contains(key)) return localConverters(key)._1
+    
+    // Collect all nested message fields (per-field approach for now)
+    val nestedFields = descriptor.getFields.asScala.filter(_.getJavaType == FieldDescriptor.JavaType.MESSAGE).toList
+    val nestedTypes: Map[String, (Descriptor, Class[_ <: Message])] = nestedFields.map { fd =>
+      val nestedClass = getNestedMessageClass(fd, messageClass)
+      val typeKey = s"${nestedClass.getName}_${fd.getMessageType.getFullName}"
+      typeKey -> (fd.getMessageType, nestedClass)
+    }.toMap
+    
+    // Create converter with null dependencies initially
+    val converter = generateConverterWithNullDeps(descriptor, messageClass, nestedTypes.size)
+    val neededTypeKeys = nestedTypes.map { case (typeKey, (desc, clazz)) => 
+      s"${clazz.getName}_${desc.getFullName}"
+    }.toSet
+    localConverters(key) = (converter, neededTypeKeys)
+    
+    // Recursively create converters for unique nested types
+    nestedTypes.values.foreach { case (desc, clazz) =>
+      createConverterGraph(desc, clazz, localConverters)
+    }
+    
+    converter
+  }
+
+  /**
+   * Wire dependencies between converters after all have been created.
+   */
+  private def wireDependencies(localConverters: scala.collection.mutable.Map[String, (RowConverter[_ <: Message], Set[String])]): Unit = {
+    localConverters.foreach { case (converterKey, (converter, neededTypes)) =>
+      // Set dependencies on this converter
+      val dependencies = neededTypes.toSeq.map { typeKey =>
+        localConverters.get(typeKey) match {
+          case Some((nestedConverter, _)) => nestedConverter
+          case None => converterCache.get(typeKey).asInstanceOf[RowConverter[_ <: Message]]
+        }
+      }
+      setConverterDependencies(converter, dependencies)
+    }
+  }
+
+  /**
+   * Extract nested message class from field descriptor using reflection.
+   */
+  private def getNestedMessageClass(fd: FieldDescriptor, messageClass: Class[_ <: Message]): Class[_ <: Message] = {
+    val accessor = accessorName(fd)
+    if (fd.isRepeated) {
+      val m = messageClass.getMethod(s"get${accessor}", classOf[Int])
+      m.getReturnType.asInstanceOf[Class[_ <: Message]]
+    } else {
+      val m = messageClass.getMethod(s"get${accessor}")
+      m.getReturnType.asInstanceOf[Class[_ <: Message]]
+    }
+  }
+
+  /**
+   * Set dependencies on a converter using reflection (temporary - will be replaced
+   * by proper generated setter methods).
+   */
+  private def setConverterDependencies(converter: RowConverter[_ <: Message], dependencies: Seq[RowConverter[_ <: Message]]): Unit = {
+    // For now, use reflection to set dependencies
+    // This will be replaced by proper generated setter methods
+    val converterClass = converter.getClass
+    dependencies.zipWithIndex.foreach { case (dep, idx) =>
+      try {
+        val setterMethod = converterClass.getMethod(s"setNestedConverter${idx}", classOf[RowConverter[_]])
+        setterMethod.invoke(converter, dep)
+      } catch {
+        case _: NoSuchMethodException => // Converter has no dependencies, ignore
+      }
+    }
+  }
+
+  /**
+   * Internal method that performs the actual converter generation and compilation
+   * with null dependencies initially. This allows recursive types to be handled
+   * by deferring dependency injection until after all converters are created.
    *
    * @param descriptor   the Protobuf descriptor describing the message schema
    * @param messageClass the compiled Protobuf Java class
-   * @tparam T the concrete type of the message
+   * @param numNestedTypes the number of unique nested message types
    * @return a [[RowConverter]] capable of converting the message into an
    *         [[org.apache.spark.sql.catalyst.InternalRow]]
    */
-  private def generateConverterInternal[T <: Message](descriptor: Descriptor,
-                                                      messageClass: Class[T]): RowConverter[T] = {
+  private def generateConverterWithNullDeps(descriptor: Descriptor,
+                                            messageClass: Class[_ <: Message], 
+                                            numNestedTypes: Int): RowConverter[_ <: Message] = {
     // Build the Spark SQL schema corresponding to this descriptor
     val schema: StructType = getCachedSchema(descriptor)
 
-    // Precompute nested converters for message fields (both single and repeated) and map fields
-    case class NestedInfo(field: FieldDescriptor, converter: RowConverter[_ <: Message])
-    val nestedInfos = scala.collection.mutable.ArrayBuffer[NestedInfo]()
+    // Create per-field converter indices for message fields
+    val messageFields = descriptor.getFields.asScala.filter(_.getJavaType == FieldDescriptor.JavaType.MESSAGE).toList
+    
+    // Verify we have the expected number of nested types
+    assert(messageFields.size == numNestedTypes, 
+      s"Expected $numNestedTypes nested types but found ${messageFields.size}")
 
-    // Inspect each field to detect nested message types that require their own converter
-    descriptor.getFields.asScala.foreach { fd =>
-      if (fd.getJavaType == FieldDescriptor.JavaType.MESSAGE) {
-        // Determine the compiled Java class for the nested message by inspecting the
-        // return type of the generated getter.  For singular nested fields, the
-        // getter has signature `getX()`.  For repeated nested fields, the getter
-        // for an individual element has signature `getX(int index)`.  This
-        // approach relies solely on generated getter methods and does not depend
-        // on inner class naming conventions or generic lists.
-        // Compute the accessor method name using CamelCase conversion.  Without
-        // converting underscores, reflection would look for a method like
-        // getSource_context() instead of getSourceContext(), which does not exist.
-        val accessor = accessorName(fd)
-        val nestedClass: Class[_ <: Message] =
-          if (fd.isRepeated) {
-            val m = messageClass.getMethod(s"get${accessor}", classOf[Int])
-            m.getReturnType.asInstanceOf[Class[_ <: Message]]
-          } else {
-            val m = messageClass.getMethod(s"get${accessor}")
-            m.getReturnType.asInstanceOf[Class[_ <: Message]]
-          }
-        val nestedConverter = generateConverter(fd.getMessageType, nestedClass)
-        nestedInfos += NestedInfo(fd, nestedConverter)
-      }
-    }
-
-    // Assign variable names for nested converters in the generated code
-    val nestedNames: Map[FieldDescriptor, String] = nestedInfos.zipWithIndex.map { case (info, idx) =>
-      info.field -> s"nestedConv${idx}"
-    }.toMap
+    // Create field-to-converter-index mapping for code generation
+    val fieldToConverterIndex: Map[FieldDescriptor, Int] = messageFields.zipWithIndex.toMap
 
     // Create a unique class name to avoid collisions when multiple converters are generated
     val className = s"GeneratedConverter_${descriptor.getName}_${System.nanoTime()}"
     val code = new StringBuilder
     // Imports required by the generated Java source
     code ++= "import org.apache.spark.sql.catalyst.expressions.UnsafeRow;\n"
-    // We avoid importing BufferHolder because it is package‑private and cannot be referenced
-    // directly from outside its package.  UnsafeRowWriter handles BufferHolder internally.
     code ++= "import org.apache.spark.sql.catalyst.expressions.codegen.UnsafeRowWriter;\n"
-    // Import UnsafeArrayWriter for writing repeated fields directly into the row buffer
+    code ++= "import org.apache.spark.sql.catalyst.expressions.codegen.UnsafeWriter;\n"
     code ++= "import org.apache.spark.sql.catalyst.expressions.codegen.UnsafeArrayWriter;\n"
-    // Note: ArrayData and GenericArrayData are no longer imported because arrays are written using UnsafeArrayWriter
+    code ++= "import org.apache.spark.sql.catalyst.InternalRow;\n"
     code ++= "import org.apache.spark.sql.types.StructType;\n"
-    code ++= "import org.apache.spark.sql.types.ArrayType;\n"
-    code ++= "import org.apache.spark.sql.types.StructField;\n"
-    code ++= "import org.apache.spark.sql.types.DataType;\n"
     code ++= "import org.apache.spark.unsafe.types.UTF8String;\n"
     code ++= "import fastproto.RowConverter;\n"
+    
     // Begin class declaration
     code ++= s"public final class ${className} implements fastproto.RowConverter<${messageClass.getName}> {\n"
-    // Declare fields: schema, writer, and nested converters.  We avoid referencing
-    // BufferHolder or UnsafeRow directly because BufferHolder is package‑private.
+    
+    // Declare fields: schema, writer, and nested converters (non-final for setter injection)
     code ++= "  private final StructType schema;\n"
     code ++= "  private final UnsafeRowWriter writer;\n"
-    nestedNames.values.foreach { name =>
-      code ++= s"  private final fastproto.RowConverter ${name};\n"
+    (0 until numNestedTypes).foreach { idx =>
+      code ++= s"  private fastproto.RowConverter nestedConv${idx}; // Non-final for dependency injection\n"
     }
-    // Constructor signature
-    code ++= s"  public ${className}(StructType schema"
-    nestedNames.values.foreach { name =>
-      code ++= s", fastproto.RowConverter ${name}"
-    }
-    code ++= ") {\n"
-    // Assign constructor parameters and initialise writer
+    
+    // Constructor with null nested converters initially
+    code ++= s"  public ${className}(StructType schema) {\n"
     code ++= "    this.schema = schema;\n"
     code ++= "    int numFields = schema.length();\n"
     code ++= "    this.writer = new UnsafeRowWriter(numFields);\n"
-    nestedNames.values.foreach { name =>
-      code ++= s"    this.${name} = ${name};\n"
+    (0 until numNestedTypes).foreach { idx =>
+      code ++= s"    this.nestedConv${idx} = null; // Will be set via setter\n"
     }
     code ++= "  }\n"
-    // Generate the typed convert method.  We intentionally omit the @Override
-    // annotation here because the Scala trait's erased bridge method is what
-    // Janino sees.  Adding @Override on this generic method can lead to
-    // spurious errors about missing supertype methods.  The bridge method
-    // defined below will carry the override annotation.
+    
+    // Generate setter methods for dependency injection
+    (0 until numNestedTypes).foreach { idx =>
+      code ++= s"  public void setNestedConverter${idx}(fastproto.RowConverter conv) {\n"
+      code ++= "    if (this.nestedConv" + idx + " != null) throw new IllegalStateException(\"Converter " + idx + " already set\");\n"
+      code ++= s"    this.nestedConv${idx} = conv;\n"
+      code ++= s"  }\n"
+    }
+    // Generate the primary convert method - delegates to two-parameter version
     code ++= "  public UnsafeRow convert(" + messageClass.getName + " msg) {\n"
-    // Reset the writer for each conversion.  Calling reset() clears the buffer and
-    // zeroOutNullBytes() clears the null bitset.  This prepares the writer for
-    // writing a new row.
-    code ++= "    writer.reset();\n"
-    code ++= "    writer.zeroOutNullBytes();\n"
-    // Generate per‑field extraction and writing logic
+    code ++= "    return convert(msg, null);\n"
+    code ++= "  }\n"
+    code ++= "\n"
+    // Generate the convert method with parentWriter parameter for BufferHolder sharing  
+    code ++= "  public UnsafeRow convert(" + messageClass.getName + " msg, UnsafeWriter parentWriter) {\n"
+    code ++= "    UnsafeRowWriter writer;\n"
+    code ++= "    if (parentWriter == null) {\n"
+    code ++= "      // Use instance writer and reset it\n"
+    code ++= "      writer = this.writer;\n"
+    code ++= "      writer.reset();\n"
+    code ++= "      writer.zeroOutNullBytes();\n"
+    code ++= "    } else {\n"
+    code ++= "      // Create new writer that shares BufferHolder with parent\n"
+    code ++= "      writer = new UnsafeRowWriter(parentWriter, schema.length());\n"
+    code ++= "      writer.resetRowWriter(); // Initialize null bytes but don't reset buffer\n"
+    code ++= "    }\n"
+    
+    // Generate per‑field extraction and writing logic using writer
     descriptor.getFields.asScala.zipWithIndex.foreach { case (fd, idx) =>
       // Insert a comment into the generated Java code to aid debugging.  This
       // comment identifies the Protobuf field being processed along with
@@ -318,7 +415,7 @@ object ProtoToRowGenerator {
           }
         case FieldDescriptor.JavaType.BOOLEAN =>
           if (fd.isRepeated) {
-            // Repeated boolean: element size = 1 byte
+            // Repeated boolean: element size = 1 byte (boolean is stored as byte)
             code ++= s"    int size${idx} = msg.${countMethodName}();\n"
             code ++= s"    int offset${idx} = writer.cursor();\n"
             code ++= s"    org.apache.spark.sql.catalyst.expressions.codegen.UnsafeArrayWriter arrayWriter${idx} = new org.apache.spark.sql.catalyst.expressions.codegen.UnsafeArrayWriter(writer, 1);\n"
@@ -330,10 +427,11 @@ object ProtoToRowGenerator {
           }
         case FieldDescriptor.JavaType.STRING =>
           if (fd.isRepeated) {
-            // Repeated strings: element size = 8 bytes (offset & length)
+            // Repeated string: need to handle variable-length data
+            val elemSize = 8 // strings are variable-length; we store offset & length
             code ++= s"    int size${idx} = msg.${countMethodName}();\n"
             code ++= s"    int offset${idx} = writer.cursor();\n"
-            code ++= s"    org.apache.spark.sql.catalyst.expressions.codegen.UnsafeArrayWriter arrayWriter${idx} = new org.apache.spark.sql.catalyst.expressions.codegen.UnsafeArrayWriter(writer, 8);\n"
+            code ++= s"    org.apache.spark.sql.catalyst.expressions.codegen.UnsafeArrayWriter arrayWriter${idx} = new org.apache.spark.sql.catalyst.expressions.codegen.UnsafeArrayWriter(writer, ${elemSize});\n"
             code ++= s"    arrayWriter${idx}.initialize(size${idx});\n"
             code ++= s"    for (int i = 0; i < size${idx}; i++) {\n"
             code ++= s"      String s = msg.${indexGetterName}(i);\n"
@@ -350,10 +448,11 @@ object ProtoToRowGenerator {
           }
         case FieldDescriptor.JavaType.BYTE_STRING =>
           if (fd.isRepeated) {
-            // Repeated ByteString: element size = 8 bytes
+            // Repeated ByteString: variable-length data
+            val elemSize = 8 // byte strings are variable-length; we store offset & length
             code ++= s"    int size${idx} = msg.${countMethodName}();\n"
             code ++= s"    int offset${idx} = writer.cursor();\n"
-            code ++= s"    org.apache.spark.sql.catalyst.expressions.codegen.UnsafeArrayWriter arrayWriter${idx} = new org.apache.spark.sql.catalyst.expressions.codegen.UnsafeArrayWriter(writer, 8);\n"
+            code ++= s"    org.apache.spark.sql.catalyst.expressions.codegen.UnsafeArrayWriter arrayWriter${idx} = new org.apache.spark.sql.catalyst.expressions.codegen.UnsafeArrayWriter(writer, ${elemSize});\n"
             code ++= s"    arrayWriter${idx}.initialize(size${idx});\n"
             code ++= s"    for (int i = 0; i < size${idx}; i++) {\n"
             code ++= s"      " + classOf[ByteString].getName + s" bs = msg.${indexGetterName}(i);\n"
@@ -370,10 +469,11 @@ object ProtoToRowGenerator {
           }
         case FieldDescriptor.JavaType.ENUM =>
           if (fd.isRepeated) {
-            // Repeated enums: element size = 8 bytes (strings)
+            // Repeated enum: convert to strings (variable-length data)
+            val elemSize = 8 // enums converted to strings are variable-length
             code ++= s"    int size${idx} = msg.${countMethodName}();\n"
             code ++= s"    int offset${idx} = writer.cursor();\n"
-            code ++= s"    org.apache.spark.sql.catalyst.expressions.codegen.UnsafeArrayWriter arrayWriter${idx} = new org.apache.spark.sql.catalyst.expressions.codegen.UnsafeArrayWriter(writer, 8);\n"
+            code ++= s"    org.apache.spark.sql.catalyst.expressions.codegen.UnsafeArrayWriter arrayWriter${idx} = new org.apache.spark.sql.catalyst.expressions.codegen.UnsafeArrayWriter(writer, ${elemSize});\n"
             code ++= s"    arrayWriter${idx}.initialize(size${idx});\n"
             code ++= s"    for (int i = 0; i < size${idx}; i++) {\n"
             code ++= s"      " + classOf[ProtocolMessageEnum].getName + s" e = msg.${indexGetterName}(i);\n"
@@ -389,9 +489,10 @@ object ProtoToRowGenerator {
             code ++= s"    }\n"
           }
         case FieldDescriptor.JavaType.MESSAGE =>
+          val converterIndex = fieldToConverterIndex(fd)
+          val nestedConverterName = s"nestedConv${converterIndex}"
           if (fd.isRepeated) {
-            // Repeated message (including map entries): write array of UnsafeRows using UnsafeArrayWriter
-            val nestedName = nestedNames(fd)
+            // Repeated message: use nested converter for each element
             val elemSize = 8 // nested structs are variable-length; we store offset & length (8 bytes)
             code ++= s"    int size${idx} = msg.${countMethodName}();\n"
             code ++= s"    int offset${idx} = writer.cursor();\n"
@@ -399,43 +500,64 @@ object ProtoToRowGenerator {
             code ++= s"    arrayWriter${idx}.initialize(size${idx});\n"
             code ++= s"    for (int i = 0; i < size${idx}; i++) {\n"
             code ++= s"      " + classOf[Message].getName + s" element = (" + classOf[Message].getName + s") msg.${indexGetterName}(i);\n"
-            code ++= s"      if (element == null) { arrayWriter${idx}.setNull(i); } else { arrayWriter${idx}.write(i, (org.apache.spark.sql.catalyst.expressions.UnsafeRow) ${nestedName}.convert(element)); }\n"
+            code ++= s"      if (element == null || ${nestedConverterName} == null) { \n"
+            code ++= s"        arrayWriter${idx}.setNull(i); \n"
+            code ++= s"      } else { \n"
+            code ++= s"        int elemOffset = arrayWriter${idx}.cursor();\n"
+            code ++= s"        ${nestedConverterName}.convert(element, writer);\n"
+            code ++= s"        arrayWriter${idx}.setOffsetAndSizeFromPreviousCursor(i, elemOffset);\n"
+            code ++= s"      }\n"
             code ++= s"    }\n"
             code ++= s"    writer.setOffsetAndSizeFromPreviousCursor($idx, offset${idx});\n"
           } else {
             // Singular message: use nested converter, handle nullability
-            val nestedName = nestedNames(fd)
             hasMethodName match {
               case Some(method) =>
                 code ++= s"    if (!msg.${method}()) {\n"
                 code ++= s"      writer.setNullAt($idx);\n"
                 code ++= s"    } else {\n"
                 code ++= s"      " + classOf[Message].getName + s" v${idx} = (" + classOf[Message].getName + s") msg.${getterName}();\n"
-                code ++= s"      writer.write($idx, (org.apache.spark.sql.catalyst.expressions.UnsafeRow) ${nestedName}.convert(v${idx}));\n"
+                code ++= s"      if (${nestedConverterName} == null) {\n"
+                code ++= s"        writer.setNullAt($idx);\n"
+                code ++= s"      } else {\n"
+                code ++= s"        int offset${idx} = writer.cursor();\n"
+                code ++= s"        ${nestedConverterName}.convert(v${idx}, writer);\n"
+                code ++= s"        writer.setOffsetAndSizeFromPreviousCursor($idx, offset${idx});\n"
+                code ++= s"      }\n"
                 code ++= s"    }\n"
               case None =>
                 code ++= s"    " + classOf[Message].getName + s" v${idx} = (" + classOf[Message].getName + s") msg.${getterName}();\n"
-                code ++= s"    if (v${idx} == null) {\n"
+                code ++= s"    if (v${idx} == null || ${nestedConverterName} == null) {\n"
                 code ++= s"      writer.setNullAt($idx);\n"
                 code ++= s"    } else {\n"
-                code ++= s"      writer.write($idx, (org.apache.spark.sql.catalyst.expressions.UnsafeRow) ${nestedName}.convert(v${idx}));\n"
+                code ++= s"      int offset${idx} = writer.cursor();\n"
+                code ++= s"      ${nestedConverterName}.convert(v${idx}, writer);\n"
+                code ++= s"      writer.setOffsetAndSizeFromPreviousCursor($idx, offset${idx});\n"
                 code ++= s"    }\n"
             }
           }
       }
     }
-    // After all fields have been written, finalise row size and return
-    // the UnsafeRow.  Calling writer.getRow() will set the total size and
-    // return the row object.  We avoid directly manipulating BufferHolder.
-    code ++= "    return writer.getRow();\n"
-    code ++= "  }\n" // End of convert(T) method
-    // Add bridge method to satisfy the generic RowConverter interface.  This
-    // method simply casts the object to the expected message type and
-    // delegates to the typed convert method.  It overrides the erased
-    // signature defined on the Scala trait.
+    
+    code ++= "    if (parentWriter != null) {\n"
+    code ++= "      // When using shared writer, data is written to parent buffer; return null\n"
+    code ++= "      return null;\n"
+    code ++= "    } else {\n"
+    code ++= "      // Root conversion - return the constructed row\n"
+    code ++= "      return writer.getRow();\n"
+    code ++= "    }\n"
+    code ++= "  }\n" // End of convert(T, UnsafeWriter) method
+    
+    // Bridge method with @Override for Object signature
     code ++= "  @Override\n"
     code ++= "  public org.apache.spark.sql.catalyst.InternalRow convert(Object obj) {\n"
-    code ++= s"    return this.convert((${messageClass.getName}) obj);\n"
+    code ++= s"    return convert((${messageClass.getName}) obj);\n"
+    code ++= "  }\n"
+    
+    // Bridge method with @Override for Object, UnsafeWriter signature
+    code ++= "  @Override\n"
+    code ++= "  public org.apache.spark.sql.catalyst.InternalRow convert(Object obj, org.apache.spark.sql.catalyst.expressions.codegen.UnsafeWriter parentWriter) {\n"
+    code ++= s"    return convert((${messageClass.getName}) obj, parentWriter);\n"
     code ++= "  }\n"
     // Implement the schema() accessor defined on RowConverter.  Returning the
     // stored StructType allows callers to inspect the Catalyst schema used
@@ -452,15 +574,8 @@ object ProtoToRowGenerator {
     compiler.cook(code.toString)
     val generatedClass = compiler.getClassLoader.loadClass(className)
 
-    // Collect nested converter instances in the order they appear in nestedNames
-    val nestedInstances: Seq[RowConverter[_ <: Message]] = nestedInfos.map(_.converter).toSeq
-
-    // Build constructor argument list: schema and nested converters (no projection needed now)
-    val constructorArgs: Array[AnyRef] = {
-      val base: Seq[AnyRef] = Seq(schema)
-      (base ++ nestedInstances).map(_.asInstanceOf[AnyRef]).toArray
-    }
-    val constructor = generatedClass.getConstructors.head
-    constructor.newInstance(constructorArgs: _*).asInstanceOf[RowConverter[T]]
+    // Create converter with just schema - dependencies will be set via setters
+    val constructor = generatedClass.getConstructor(classOf[StructType])
+    constructor.newInstance(schema).asInstanceOf[RowConverter[_ <: Message]]
   }
 }
