@@ -28,6 +28,23 @@ trait RowConverter[T] extends Serializable {
   def convert(message: T): InternalRow
 
   /**
+   * Convert a message using a shared UnsafeWriter for BufferHolder sharing.
+   * This method enables efficient nested conversions by sharing the underlying
+   * buffer across the entire row tree, reducing memory allocations.
+   * 
+   * When parentWriter is provided, the implementation should create a new
+   * UnsafeRowWriter that shares the BufferHolder from the parent writer.
+   *
+   * @param message the compiled Protobuf message instance
+   * @param parentWriter the parent UnsafeWriter to share BufferHolder with, can be null
+   * @return an [[InternalRow]] containing the extracted field values
+   */
+  def convert(message: T, parentWriter: org.apache.spark.sql.catalyst.expressions.codegen.UnsafeWriter): InternalRow = {
+    // Default implementation for backward compatibility - just delegates to single-arg version
+    convert(message)
+  }
+
+  /**
    * The Catalyst schema corresponding to this converter.  This schema
    * describes the structure of the [[InternalRow]] produced by [[convert]].
    * Implementations should return the [[StructType]] used to build the

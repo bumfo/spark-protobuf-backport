@@ -250,7 +250,7 @@ private[backport] case class ProtobufDataToCatalyst(
             val msg = ctx.freshName("msg")
             val dt = CodeGenerator.boxedType(dataType)
             s"""
-               |// Optimized codegen path using RowConverter with runtime message class: $messageClassName
+               |// Optimized codegen path using RowConverter
                |try {
                |  scala.Option $msg = $expr.parseCompiled($eval);
                |  if ($msg.isDefined()) {
