@@ -520,12 +520,12 @@ object ProtoToRowGenerator {
     code ++= "\n"
 
     // Generate the primary convert method - delegates to two-parameter version
-    code ++= "  public org.apache.spark.sql.catalyst.InternalRow convert(" + messageClass.getName + " msg) {\n"
+    code ++= "  public UnsafeRow convert(" + messageClass.getName + " msg) {\n"
     code ++= "    return convert(msg, null);\n"
     code ++= "  }\n"
     code ++= "\n"
     // Generate the convert method with parentWriter parameter for BufferHolder sharing  
-    code ++= "  public org.apache.spark.sql.catalyst.InternalRow convert(" + messageClass.getName + " msg, UnsafeWriter parentWriter) {\n"
+    code ++= "  public UnsafeRow convert(" + messageClass.getName + " msg, UnsafeWriter parentWriter) {\n"
     code ++= "    UnsafeRowWriter writer;\n"
     code ++= "    if (parentWriter == null) {\n"
     code ++= "      // Use instance writer and reset it\n"
