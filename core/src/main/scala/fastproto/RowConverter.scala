@@ -4,45 +4,40 @@ import org.apache.spark.sql.catalyst.InternalRow
 import org.apache.spark.sql.types.StructType
 
 /**
- * A simple interface for converting compiled Protobuf messages into Spark's
- * [[org.apache.spark.sql.catalyst.InternalRow]].  Implementations of this
- * trait are usually generated at runtime by the [[fastproto.ProtoToRowGenerator]]
- * using Janino.  The generic type parameter `T` must correspond to a
- * generated Java class extending `com.google.protobuf.Message`.  The
- * conversion should populate a new [[InternalRow]] with values extracted
- * directly from the message using its accessor methods.
- *
- * @tparam T the type of the compiled Protobuf message
+ * Base interface for converting protobuf binary data into Spark's
+ * [[org.apache.spark.sql.catalyst.InternalRow]]. This interface supports
+ * both direct binary conversion and message-based conversion through
+ * its sub-interfaces.
+ * 
+ * Implementations are usually generated at runtime by the 
+ * [[fastproto.ProtoToRowGenerator]] using Janino compilation.
  */
-trait RowConverter[T] extends Serializable {
+trait RowConverter extends Serializable {
   /**
-   * Convert a single message into Spark's internal row representation.  The
-   * returned [[InternalRow]] should have one entry per field defined in the
-   * message descriptor.  Consumers can subsequently turn the returned row
-   * into an [[org.apache.spark.sql.catalyst.expressions.UnsafeRow]] using
-   * [[org.apache.spark.sql.catalyst.expressions.codegen.UnsafeProjection]].
+   * Convert protobuf binary data into Spark's internal row representation.
+   * This is the primary conversion method that takes raw protobuf bytes
+   * and produces an [[InternalRow]].
    *
-   * @param message the compiled Protobuf message instance
+   * @param binary the protobuf binary data to convert
    * @return an [[InternalRow]] containing the extracted field values
    */
-  def convert(message: T): InternalRow
+  def convert(binary: Array[Byte]): InternalRow = {
+    convert(binary, null)
+  }
 
   /**
-   * Convert a message using a shared UnsafeWriter for BufferHolder sharing.
+   * Convert protobuf binary data using a shared UnsafeWriter for BufferHolder sharing.
    * This method enables efficient nested conversions by sharing the underlying
    * buffer across the entire row tree, reducing memory allocations.
    * 
    * When parentWriter is provided, the implementation should create a new
    * UnsafeRowWriter that shares the BufferHolder from the parent writer.
    *
-   * @param message the compiled Protobuf message instance
+   * @param binary the protobuf binary data to convert
    * @param parentWriter the parent UnsafeWriter to share BufferHolder with, can be null
    * @return an [[InternalRow]] containing the extracted field values
    */
-  def convert(message: T, parentWriter: org.apache.spark.sql.catalyst.expressions.codegen.UnsafeWriter): InternalRow = {
-    // Default implementation for backward compatibility - just delegates to single-arg version
-    convert(message)
-  }
+  def convert(binary: Array[Byte], parentWriter: org.apache.spark.sql.catalyst.expressions.codegen.UnsafeWriter): InternalRow
 
   /**
    * The Catalyst schema corresponding to this converter.  This schema

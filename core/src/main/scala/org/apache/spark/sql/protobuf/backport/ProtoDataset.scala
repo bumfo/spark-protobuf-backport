@@ -41,7 +41,8 @@ object ProtoDataset {
     val converter = ProtoToRowGenerator.generateConverter(descriptor, clazz)
     val schema = converter.schema
     val rows: RDD[org.apache.spark.sql.catalyst.InternalRow] = ds.rdd.map { msg =>
-      converter.convert(msg)
+      // Cast to MessageBasedConverter to access message conversion methods
+      converter.asInstanceOf[fastproto.MessageBasedConverter[T]].convert(msg)
     }
     // Use internalCreateDataFrame to avoid schema inference.  This helper is
     // defined in the same package as SparkSession so that it can call the

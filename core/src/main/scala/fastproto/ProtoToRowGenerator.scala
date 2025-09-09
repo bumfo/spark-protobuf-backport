@@ -24,7 +24,7 @@ import java.util.concurrent.ConcurrentHashMap
 object ProtoToRowGenerator {
 
   // Thread-safe cache for generated converters to avoid redundant compilation
-  private val converterCache: ConcurrentHashMap[String, RowConverter[_ <: Message]] = 
+  private val converterCache: ConcurrentHashMap[String, RowConverter] = 
     new ConcurrentHashMap()
 
   // Thread-safe cache for computed schemas to avoid redundant schema generation
@@ -141,18 +141,18 @@ object ProtoToRowGenerator {
    *         [[org.apache.spark.sql.catalyst.InternalRow]]
    */
   def generateConverter[T <: Message](descriptor: Descriptor,
-                                      messageClass: Class[T]): RowConverter[T] = {
+                                      messageClass: Class[T]): RowConverter = {
     val key = s"${messageClass.getName}_${descriptor.getFullName}"
     
     // Check global cache first
     converterCache.get(key) match {
-      case converter if converter != null => return converter.asInstanceOf[RowConverter[T]]
+      case converter if converter != null => return converter
       case _ => // Continue with generation
     }
     
     // Local map to track converters being built (excludes already cached ones)
     // Map key -> (converter, neededTypeKeys)
-    val localConverters = scala.collection.mutable.Map[String, (RowConverter[_ <: Message], Set[String])]()
+    val localConverters = scala.collection.mutable.Map[String, (RowConverter, Set[String])]()
     
     // Phase 1: Create converter graph with null dependencies
     val rootConverter = createConverterGraph(descriptor, messageClass, localConverters)
@@ -165,7 +165,7 @@ object ProtoToRowGenerator {
       converterCache.putIfAbsent(k, conv)
     }
     
-    rootConverter.asInstanceOf[RowConverter[T]]
+    rootConverter
   }
 
   /**
@@ -175,12 +175,12 @@ object ProtoToRowGenerator {
    */
   private def createConverterGraph(descriptor: Descriptor, 
                                    messageClass: Class[_ <: Message],
-                                   localConverters: scala.collection.mutable.Map[String, (RowConverter[_ <: Message], Set[String])]): RowConverter[_ <: Message] = {
+                                   localConverters: scala.collection.mutable.Map[String, (RowConverter, Set[String])]): RowConverter = {
     val key = s"${messageClass.getName}_${descriptor.getFullName}"
     
     // Check global cache FIRST (important optimization!)
     converterCache.get(key) match {
-      case converter if converter != null => return converter.asInstanceOf[RowConverter[_ <: Message]]
+      case converter if converter != null => return converter
       case _ => // Not cached globally
     }
     
@@ -213,13 +213,13 @@ object ProtoToRowGenerator {
   /**
    * Wire dependencies between converters after all have been created.
    */
-  private def wireDependencies(localConverters: scala.collection.mutable.Map[String, (RowConverter[_ <: Message], Set[String])]): Unit = {
+  private def wireDependencies(localConverters: scala.collection.mutable.Map[String, (RowConverter, Set[String])]): Unit = {
     localConverters.foreach { case (converterKey, (converter, neededTypes)) =>
       // Set dependencies on this converter
       val dependencies = neededTypes.toSeq.map { typeKey =>
         localConverters.get(typeKey) match {
           case Some((nestedConverter, _)) => nestedConverter
-          case None => converterCache.get(typeKey).asInstanceOf[RowConverter[_ <: Message]]
+          case None => converterCache.get(typeKey)
         }
       }
       setConverterDependencies(converter, dependencies)
@@ -244,13 +244,13 @@ object ProtoToRowGenerator {
    * Set dependencies on a converter using reflection (temporary - will be replaced
    * by proper generated setter methods).
    */
-  private def setConverterDependencies(converter: RowConverter[_ <: Message], dependencies: Seq[RowConverter[_ <: Message]]): Unit = {
+  private def setConverterDependencies(converter: RowConverter, dependencies: Seq[RowConverter]): Unit = {
     // For now, use reflection to set dependencies
     // This will be replaced by proper generated setter methods
     val converterClass = converter.getClass
     dependencies.zipWithIndex.foreach { case (dep, idx) =>
       try {
-        val setterMethod = converterClass.getMethod(s"setNestedConverter${idx}", classOf[RowConverter[_]])
+        val setterMethod = converterClass.getMethod(s"setNestedConverter${idx}", classOf[RowConverter])
         setterMethod.invoke(converter, dep)
       } catch {
         case _: NoSuchMethodException => // Converter has no dependencies, ignore
@@ -271,7 +271,7 @@ object ProtoToRowGenerator {
    */
   private def generateConverterWithNullDeps(descriptor: Descriptor,
                                             messageClass: Class[_ <: Message], 
-                                            numNestedTypes: Int): RowConverter[_ <: Message] = {
+                                            numNestedTypes: Int): RowConverter = {
     // Build the Spark SQL schema corresponding to this descriptor
     val schema: StructType = getCachedSchema(descriptor)
 
@@ -296,10 +296,10 @@ object ProtoToRowGenerator {
     code ++= "import org.apache.spark.sql.catalyst.InternalRow;\n"
     code ++= "import org.apache.spark.sql.types.StructType;\n"
     code ++= "import org.apache.spark.unsafe.types.UTF8String;\n"
-    code ++= "import fastproto.RowConverter;\n"
+    code ++= "import fastproto.MessageBasedConverter;\n"
     
     // Begin class declaration
-    code ++= s"public final class ${className} implements fastproto.RowConverter<${messageClass.getName}> {\n"
+    code ++= s"public final class ${className} implements fastproto.MessageBasedConverter<${messageClass.getName}> {\n"
     
     // Declare fields: schema, writer, and nested converters (non-final for setter injection)
     code ++= "  private final StructType schema;\n"
@@ -507,13 +507,25 @@ object ProtoToRowGenerator {
       }
     }
 
+    // Generate binary conversion methods with inlined parseFrom (no reflection)
+    code ++= "  public org.apache.spark.sql.catalyst.InternalRow convert(byte[] binary, UnsafeWriter parentWriter) {\n"
+    code ++= "    try {\n"
+    code ++= "      // Direct parseFrom call - no reflection needed\n"
+    code ++= s"      ${messageClass.getName} message = ${messageClass.getName}.parseFrom(binary);\n"
+    code ++= "      return convert(message, parentWriter);\n"
+    code ++= "    } catch (Exception e) {\n"
+    code ++= "      throw new RuntimeException(\"Failed to parse protobuf binary\", e);\n"
+    code ++= "    }\n"
+    code ++= "  }\n"
+    code ++= "\n"
+
     // Generate the primary convert method - delegates to two-parameter version
-    code ++= "  public UnsafeRow convert(" + messageClass.getName + " msg) {\n"
+    code ++= "  public org.apache.spark.sql.catalyst.InternalRow convert(" + messageClass.getName + " msg) {\n"
     code ++= "    return convert(msg, null);\n"
     code ++= "  }\n"
     code ++= "\n"
     // Generate the convert method with parentWriter parameter for BufferHolder sharing  
-    code ++= "  public UnsafeRow convert(" + messageClass.getName + " msg, UnsafeWriter parentWriter) {\n"
+    code ++= "  public org.apache.spark.sql.catalyst.InternalRow convert(" + messageClass.getName + " msg, UnsafeWriter parentWriter) {\n"
     code ++= "    UnsafeRowWriter writer;\n"
     code ++= "    if (parentWriter == null) {\n"
     code ++= "      // Use instance writer and reset it\n"
@@ -632,6 +644,6 @@ object ProtoToRowGenerator {
 
     // Create converter with just schema - dependencies will be set via setters
     val constructor = generatedClass.getConstructor(classOf[StructType])
-    constructor.newInstance(schema).asInstanceOf[RowConverter[_ <: Message]]
+    constructor.newInstance(schema).asInstanceOf[RowConverter]
   }
 }
