@@ -60,7 +60,7 @@ private[backport] case class ProtobufDataToCatalyst(
     options: Map[String, String] = Map.empty,
     binaryDescriptorSet: Option[Array[Byte]] = None)
   extends UnaryExpression
-          with ExpectsInputTypes {
+    with ExpectsInputTypes {
 
   override def inputTypes: Seq[AbstractDataType] = Seq(BinaryType)
 
@@ -99,19 +99,18 @@ private[backport] case class ProtobufDataToCatalyst(
 
 
   /**
-   * Lazily create a [[fastproto.RowConverter]] for the compiled message class.
-   * The converter uses the descriptor corresponding to this expression (from
-   * either the provided binary descriptor set or `ProtobufUtils.buildDescriptor`)
-   * so that the schema matches the Catalyst data type. Only available when
-   * messageName refers to a compiled Java class and no descriptor file is provided.
+   * Lazily attempt to load the compiled Protobuf class if the messageName
+   * refers to a Java class.  Only do this when no descriptor file or binary
+   * descriptor set is provided, otherwise messageName refers to a descriptor
+   * symbol rather than a class.  Any errors during class loading are
+   * swallowed and result in [[None]], causing the DynamicMessage path to be
+   * used instead.
    */
-  @transient private lazy val rowConverterOpt: Option[RowConverter] = {
+  @transient private lazy val messageClassOpt: Option[Class[PbMessage]] = {
     (descFilePath, binaryDescriptorSet) match {
       case (None, None) =>
         try {
-          val messageClass = Class.forName(messageName).asInstanceOf[Class[PbMessage]]
-          val desc: com.google.protobuf.Descriptors.Descriptor = messageDescriptor
-          Some(ProtoToRowGenerator.generateConverter(desc, messageClass))
+          Some(Class.forName(messageName).asInstanceOf[Class[PbMessage]])
         } catch {
           case _: Throwable => None
         }
@@ -119,6 +118,23 @@ private[backport] case class ProtobufDataToCatalyst(
     }
   }
 
+  /**
+   * Lazily create a [[fastproto.RowConverter]] for the compiled message class.
+   * The converter uses the descriptor corresponding to this expression (from
+   * either the provided binary descriptor set or `ProtobufUtils.buildDescriptor`)
+   * so that the schema matches the Catalyst data type.  If the message class
+   * cannot be loaded this will be [[None]].
+   */
+  @transient private lazy val rowConverterOpt: Option[RowConverter] =
+  messageClassOpt.map { cls =>
+    // Use the descriptor used to compute the Catalyst schema so that
+    // the row converter's schema matches the Catalyst data type.  Cast
+    // the generated converter to RowConverter[PbMessage] since PbMessage
+    // is a supertype of all generated protobuf classes.
+    val desc: com.google.protobuf.Descriptors.Descriptor = messageDescriptor
+    ProtoToRowGenerator
+      .generateConverter(desc, cls)
+  }
 
   /**
    * Handle an exception according to the configured parse mode.
@@ -200,7 +216,7 @@ private[backport] case class ProtobufDataToCatalyst(
       case Some(converter) =>
         // Generate optimized code path using the RowConverter directly
         val converterRef = ctx.addReferenceObj("rowConverter", converter)
-        
+
         nullSafeCodeGen(
           ctx,
           ev,
