@@ -1,10 +1,8 @@
 package fastproto
 
-import com.google.protobuf.{CodedInputStream, WireFormat}
 import com.google.protobuf.Descriptors.{Descriptor, FieldDescriptor}
-import org.apache.spark.sql.catalyst.InternalRow
-import org.apache.spark.sql.catalyst.expressions.codegen.{UnsafeArrayWriter, UnsafeRowWriter, UnsafeWriter}
-import org.apache.spark.sql.catalyst.util.ArrayData
+import com.google.protobuf.{CodedInputStream, WireFormat}
+import org.apache.spark.sql.catalyst.expressions.codegen.{UnsafeArrayWriter, UnsafeRowWriter}
 import org.apache.spark.sql.types.{ArrayType, StructType}
 import org.apache.spark.unsafe.types.UTF8String
 
@@ -26,8 +24,8 @@ import scala.collection.mutable
  */
 class WireFormatConverter(
     descriptor: Descriptor,
-    override val schema: StructType
-) extends AbstractRowConverter(schema) {
+    override val schema: StructType)
+  extends AbstractRowConverter(schema) {
 
   import WireFormatConverter._
 
@@ -110,8 +108,7 @@ class WireFormatConverter(
       tag: Int,
       wireType: Int,
       mapping: FieldMapping,
-      writer: UnsafeRowWriter
-  ): Unit = {
+      writer: UnsafeRowWriter): Unit = {
     import FieldDescriptor.Type._
 
     if (mapping.isRepeated) {
@@ -180,8 +177,7 @@ class WireFormatConverter(
   private def parseNestedMessage(
       input: CodedInputStream,
       mapping: FieldMapping,
-      writer: UnsafeRowWriter
-  ): Unit = {
+      writer: UnsafeRowWriter): Unit = {
     val messageBytes = input.readBytes().toByteArray
     nestedConverters.get(mapping.fieldDescriptor.getNumber) match {
       case Some(converter) =>
@@ -328,6 +324,5 @@ object WireFormatConverter {
       fieldDescriptor: FieldDescriptor,
       rowOrdinal: Int,
       sparkDataType: org.apache.spark.sql.types.DataType,
-      isRepeated: Boolean
-  )
+      isRepeated: Boolean)
 }
