@@ -14,52 +14,44 @@ import scala.collection.mutable
 /**
  * A high-performance converter that reads protobuf binary data directly from wire format
  * using CodedInputStream, bypassing the need to materialize intermediate Message objects.
- * 
+ *
  * This converter provides significant performance improvements by:
  * - Eliminating Message object allocations
  * - Single-pass streaming parse to UnsafeRow
  * - Selective field parsing (skips unused fields)
  * - Direct byte copying for strings/bytes
- * 
+ *
  * @param descriptor the protobuf message descriptor
- * @param sparkSchema the corresponding Spark SQL schema
+ * @param schema     the corresponding Spark SQL schema
  */
 class WireFormatConverter(
-  descriptor: Descriptor,
-  sparkSchema: StructType
-) extends AbstractRowConverter(sparkSchema) {
+    descriptor: Descriptor,
+    override val schema: StructType
+) extends AbstractRowConverter(schema) {
 
   import WireFormatConverter._
 
   // Build field number → row ordinal mapping during construction
   private val fieldMapping: Map[Int, FieldMapping] = buildFieldMapping()
-  
+
   // Cache nested converters for message fields
   private val nestedConverters: Map[Int, WireFormatConverter] = buildNestedConverters()
-  
+
   // Track repeated field values during parsing
   private val repeatedFieldValues: mutable.Map[Int, mutable.ArrayBuffer[Any]] = mutable.Map.empty
 
-  override def convert(binary: Array[Byte], parentWriter: UnsafeWriter): InternalRow = {
+  override protected def writeData(binary: Array[Byte], writer: UnsafeRowWriter): Unit = {
     val input = CodedInputStream.newInstance(binary)
-    val writer = if (parentWriter != null) {
-      new UnsafeRowWriter(parentWriter, schema.length)
-    } else {
-      new UnsafeRowWriter(schema.length)
-    }
-    
-    // Initialize all fields to null
-    writer.resetRowWriter()
-    
+
     // Clear repeated field buffers for this conversion
     repeatedFieldValues.clear()
-    
+
     // Parse the wire format
     while (!input.isAtEnd()) {
       val tag = input.readTag()
       val fieldNumber = WireFormat.getTagFieldNumber(tag)
       val wireType = WireFormat.getTagWireType(tag)
-      
+
       fieldMapping.get(fieldNumber) match {
         case Some(mapping) =>
           parseField(input, tag, wireType, mapping, writer)
@@ -68,25 +60,17 @@ class WireFormatConverter(
           input.skipField(tag)
       }
     }
-    
+
     // Write accumulated repeated fields
     writeAccumulatedRepeatedFields(writer)
-    
-    writer.getRow()
-  }
-  
-  override protected def writeData(binary: Array[Byte], writer: UnsafeRowWriter): Unit = {
-    // This implementation delegates to the full convert method
-    // but since convert is overridden, this should not be called
-    throw new UnsupportedOperationException("Use convert method instead")
   }
 
   private def buildFieldMapping(): Map[Int, FieldMapping] = {
     val mapping = mutable.Map[Int, FieldMapping]()
-    
+
     descriptor.getFields.asScala.foreach { field =>
       // Find corresponding field in Spark schema by name
-      sparkSchema.fields.zipWithIndex.find(_._1.name == field.getName) match {
+      schema.fields.zipWithIndex.find(_._1.name == field.getName) match {
         case Some((sparkField, ordinal)) =>
           mapping(field.getNumber) = FieldMapping(
             fieldDescriptor = field,
@@ -95,55 +79,55 @@ class WireFormatConverter(
             isRepeated = field.isRepeated
           )
         case None =>
-          // Field exists in protobuf but not in Spark schema - skip it
+        // Field exists in protobuf but not in Spark schema - skip it
       }
     }
-    
+
     mapping.toMap
   }
 
   private def buildNestedConverters(): Map[Int, WireFormatConverter] = {
     val converters = mutable.Map[Int, WireFormatConverter]()
-    
+
     fieldMapping.foreach { case (fieldNumber, mapping) =>
       if (mapping.fieldDescriptor.getType == FieldDescriptor.Type.MESSAGE) {
         val nestedDescriptor = mapping.fieldDescriptor.getMessageType
         val nestedSchema = mapping.sparkDataType match {
           case struct: StructType => struct
-          case arrayType: ArrayType => 
+          case arrayType: ArrayType =>
             arrayType.elementType.asInstanceOf[StructType]
           case _ => throw new IllegalArgumentException(s"Expected StructType or ArrayType[StructType] for message field ${mapping.fieldDescriptor.getName}")
         }
         converters(fieldNumber) = new WireFormatConverter(nestedDescriptor, nestedSchema)
       }
     }
-    
+
     converters.toMap
   }
 
   private def parseField(
-    input: CodedInputStream,
-    tag: Int,
-    wireType: Int,
-    mapping: FieldMapping,
-    writer: UnsafeRowWriter
+      input: CodedInputStream,
+      tag: Int,
+      wireType: Int,
+      mapping: FieldMapping,
+      writer: UnsafeRowWriter
   ): Unit = {
     import FieldDescriptor.Type._
-    
+
     if (mapping.isRepeated) {
       // For repeated fields, accumulate values
       val fieldNumber = mapping.fieldDescriptor.getNumber
       val values = repeatedFieldValues.getOrElseUpdate(fieldNumber, mutable.ArrayBuffer.empty[Any])
-      
+
       // Handle packed repeated fields (length-delimited)
       if (wireType == WireFormat.WIRETYPE_LENGTH_DELIMITED && isPackable(mapping.fieldDescriptor.getType)) {
         val length = input.readRawVarint32()
         val oldLimit = input.pushLimit(length)
-        
+
         while (input.getBytesUntilLimit > 0) {
           values += readPackedValue(input, mapping.fieldDescriptor.getType)
         }
-        
+
         input.popLimit(oldLimit)
       } else {
         // Non-packed repeated field - read single value
@@ -194,16 +178,17 @@ class WireFormatConverter(
   }
 
   private def parseNestedMessage(
-    input: CodedInputStream,
-    mapping: FieldMapping,
-    writer: UnsafeRowWriter
+      input: CodedInputStream,
+      mapping: FieldMapping,
+      writer: UnsafeRowWriter
   ): Unit = {
     val messageBytes = input.readBytes().toByteArray
     nestedConverters.get(mapping.fieldDescriptor.getNumber) match {
       case Some(converter) =>
-        // Convert without sharing parent writer to avoid circular dependency
-        val nestedRow = converter.convert(messageBytes).asInstanceOf[org.apache.spark.sql.catalyst.expressions.UnsafeRow]
-        writer.write(mapping.rowOrdinal, nestedRow)
+        // Use writer sharing pattern like ProtoToRowGenerator
+        val offset = writer.cursor()
+        converter.convert(messageBytes, writer)
+        writer.setOffsetAndSizeFromPreviousCursor(mapping.rowOrdinal, offset)
       case None =>
         throw new IllegalStateException(s"No nested converter found for field ${mapping.fieldDescriptor.getName}")
     }
@@ -218,7 +203,7 @@ class WireFormatConverter(
       }
     }
   }
-  
+
   private def isPackable(fieldType: FieldDescriptor.Type): Boolean = {
     import FieldDescriptor.Type._
     fieldType match {
@@ -226,7 +211,7 @@ class WireFormatConverter(
       case _ => true
     }
   }
-  
+
   private def readPackedValue(input: CodedInputStream, fieldType: FieldDescriptor.Type): Any = {
     import FieldDescriptor.Type._
     fieldType match {
@@ -247,7 +232,7 @@ class WireFormatConverter(
       case _ => throw new IllegalArgumentException(s"Type $fieldType is not packable")
     }
   }
-  
+
   private def readSingleValue(input: CodedInputStream, fieldType: FieldDescriptor.Type, mapping: FieldMapping): Any = {
     import FieldDescriptor.Type._
     fieldType match {
@@ -270,27 +255,35 @@ class WireFormatConverter(
       case MESSAGE =>
         val messageBytes = input.readBytes().toByteArray
         nestedConverters.get(mapping.fieldDescriptor.getNumber) match {
-          case Some(converter) => converter.convert(messageBytes).asInstanceOf[org.apache.spark.sql.catalyst.expressions.UnsafeRow]
+          case Some(converter) =>
+            // For repeated nested messages, we can't share the writer easily since we accumulate values
+            // So we convert to UnsafeRow separately and will handle writer sharing during writeArray
+            val subWriter = new UnsafeRowWriter(converter.schema.length)
+            // subWriter.resetRowWriter()
+            subWriter.reset()
+            subWriter.zeroOutNullBytes()
+            converter.writeData(messageBytes, subWriter)
+            subWriter.getRow
           case None => throw new IllegalStateException(s"No nested converter found for field ${mapping.fieldDescriptor.getName}")
         }
       case GROUP => throw new UnsupportedOperationException("GROUP type is deprecated and not supported")
     }
   }
-  
+
   private def writeArray(values: Array[Any], mapping: FieldMapping, writer: UnsafeRowWriter): Unit = {
     val elementSize = getElementSize(mapping.fieldDescriptor.getType)
     val offset = writer.cursor()
     val arrayWriter = new UnsafeArrayWriter(writer, elementSize)
-    
+
     arrayWriter.initialize(values.length)
-    
+
     for (i <- values.indices) {
       writeArrayElement(arrayWriter, i, values(i), mapping.fieldDescriptor.getType)
     }
-    
+
     writer.setOffsetAndSizeFromPreviousCursor(mapping.rowOrdinal, offset)
   }
-  
+
   private def getElementSize(fieldType: FieldDescriptor.Type): Int = {
     import FieldDescriptor.Type._
     fieldType match {
@@ -301,7 +294,7 @@ class WireFormatConverter(
       case GROUP => throw new UnsupportedOperationException("GROUP type is deprecated and not supported")
     }
   }
-  
+
   private def writeArrayElement(arrayWriter: UnsafeArrayWriter, index: Int, value: Any, fieldType: FieldDescriptor.Type): Unit = {
     import FieldDescriptor.Type._
     fieldType match {
@@ -332,9 +325,9 @@ object WireFormatConverter {
    * Mapping information for a protobuf field to its corresponding Spark row position.
    */
   private case class FieldMapping(
-    fieldDescriptor: FieldDescriptor,
-    rowOrdinal: Int,
-    sparkDataType: org.apache.spark.sql.types.DataType,
-    isRepeated: Boolean
+      fieldDescriptor: FieldDescriptor,
+      rowOrdinal: Int,
+      sparkDataType: org.apache.spark.sql.types.DataType,
+      isRepeated: Boolean
   )
 }
