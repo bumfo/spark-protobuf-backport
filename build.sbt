@@ -11,6 +11,9 @@ ThisBuild / version          := "0.1.0-SNAPSHOT"
 lazy val sparkVersion         = "3.2.1"
 lazy val protobufVersion      = "3.21.7"
 
+// Task keys
+lazy val generateConverters = taskKey[Unit]("Generate converter code from protobuf files")
+
 // Common dependencies for both projects
 lazy val commonDependencies = Seq(
   "org.apache.spark" %% "spark-sql" % sparkVersion % Provided,
@@ -48,9 +51,14 @@ lazy val core = project
     Test / test := {
       (Test / testOnly).toTask(" * -- -l benchmark.Benchmark").value
     },
-    // Add a benchmark task that runs benchmarks only
+    // Add a benchmark task that runs benchmarks only  
     TaskKey[Unit]("benchmark") := {
       (Test / testOnly).toTask(" benchmark.* -- -n benchmark.Benchmark").value
+    },
+    // Simple task to run the converter code generator
+    generateConverters := {
+      println("Running converter code generation...")
+      (Test / runMain).toTask(" fastproto.GenerateConvertersTask").value
     },
     libraryDependencies ++= commonDependencies ++ Seq(
       // Protobuf as provided for compilation
