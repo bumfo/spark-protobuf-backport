@@ -86,15 +86,28 @@ class WireFormatConverterBenchmark extends AnyFlatSpec with Matchers {
       .addFile(ApiProto.getDescriptor.getFile.toProto)
       .build()
     
+    // Create a temporary descriptor file to force DynamicMessage path (not WireFormatConverter)
+    val tempDescFile = java.io.File.createTempFile("benchmark_descriptor", ".desc")
+    java.nio.file.Files.write(tempDescFile.toPath, descSet.toByteArray)
+    tempDescFile.deleteOnExit()
+    
     val binaryCol = new Column(Literal.create(binary, org.apache.spark.sql.types.BinaryType))
     val fromProtobufExpr = functions.from_protobuf(
       binaryCol,
       descriptor.getFullName,
-      descSet.toByteArray
+      tempDescFile.getAbsolutePath
     )
     
     // Compiled message path components  
     val compiledConverter = ProtoToRowGenerator.generateConverter(descriptor, classOf[com.google.protobuf.Type])
+    
+    // WireFormatConverter path with binary descriptor set (new default for binary descriptor sets)
+    val wireFormatBinaryDescCol = new Column(Literal.create(binary, org.apache.spark.sql.types.BinaryType))
+    val wireFormatBinaryDescExpr = functions.from_protobuf(
+      wireFormatBinaryDescCol,
+      descriptor.getFullName,
+      descSet.toByteArray // This will now use WireFormatConverter
+    )
 
     // Warm up JVM - test all conversion paths
     for (_ <- 1 to 100) {
@@ -103,6 +116,8 @@ class WireFormatConverterBenchmark extends AnyFlatSpec with Matchers {
       fromProtobufExpr.expr.eval(null)
       // Compiled path warmup  
       compiledConverter.convert(binary)
+      // WireFormatConverter with binary descriptor set warmup
+      wireFormatBinaryDescExpr.expr.eval(null)
     }
     
     // Benchmark WireFormatConverter
@@ -126,19 +141,30 @@ class WireFormatConverterBenchmark extends AnyFlatSpec with Matchers {
     }
     val compiledTime = System.nanoTime() - compiledStart
     
+    // Benchmark WireFormatConverter with binary descriptor set (new default path)
+    val wireFormatBinaryDescStart = System.nanoTime()
+    for (_ <- 1 to iterations) {
+      wireFormatBinaryDescExpr.expr.eval(null)
+    }
+    val wireFormatBinaryDescTime = System.nanoTime() - wireFormatBinaryDescStart
+    
     val wireFormatMs = wireFormatTime / 1e6
     val dynamicMs = dynamicTime / 1e6
     val compiledMs = compiledTime / 1e6
+    val wireFormatBinaryDescMs = wireFormatBinaryDescTime / 1e6
     
-    println(f"WireFormatConverter:    ${wireFormatMs}%.2f ms (${wireFormatTime / iterations}%.0f ns/op)")
-    println(f"DynamicMessage path:    ${dynamicMs}%.2f ms (${dynamicTime / iterations}%.0f ns/op)")
-    println(f"Compiled message path:  ${compiledMs}%.2f ms (${compiledTime / iterations}%.0f ns/op)")
+    println(f"WireFormatConverter (direct):       ${wireFormatMs}%.2f ms (${wireFormatTime / iterations}%.0f ns/op)")
+    println(f"DynamicMessage path (descriptor):   ${dynamicMs}%.2f ms (${dynamicTime / iterations}%.0f ns/op)")
+    println(f"Compiled message path:              ${compiledMs}%.2f ms (${compiledTime / iterations}%.0f ns/op)")
+    println(f"WireFormatConverter (binary desc):  ${wireFormatBinaryDescMs}%.2f ms (${wireFormatBinaryDescTime / iterations}%.0f ns/op)")
     
     val wireFormatSpeedup = dynamicTime.toDouble / wireFormatTime
     val compiledSpeedup = dynamicTime.toDouble / compiledTime
+    val wireFormatBinaryDescSpeedup = dynamicTime.toDouble / wireFormatBinaryDescTime
     
-    println(f"WireFormatConverter is ${wireFormatSpeedup}%.2fx vs DynamicMessage path")
+    println(f"WireFormatConverter (direct) is ${wireFormatSpeedup}%.2fx vs DynamicMessage path")
     println(f"Compiled message path is ${compiledSpeedup}%.2fx vs DynamicMessage path")
+    println(f"WireFormatConverter (binary desc) is ${wireFormatBinaryDescSpeedup}%.2fx vs DynamicMessage path")
     
     // Performance assertions - Now comparing fair end-to-end binary → InternalRow conversion
     // Compiled path should be fastest for complete conversion
@@ -199,17 +225,35 @@ class WireFormatConverterBenchmark extends AnyFlatSpec with Matchers {
       .addFile(ApiProto.getDescriptor.getFile.toProto)
       .build()
       
+    // Create a temporary descriptor file to force DynamicMessage path for complex benchmark
+    val complexTempDescFile = java.io.File.createTempFile("complex_benchmark_descriptor", ".desc")
+    java.nio.file.Files.write(complexTempDescFile.toPath, complexDescSet.toByteArray)
+    complexTempDescFile.deleteOnExit()
+    
     val complexBinaryCol = new Column(Literal.create(binary, org.apache.spark.sql.types.BinaryType))
     val complexFromProtobufExpr = functions.from_protobuf(
       complexBinaryCol,
       descriptor.getFullName,
-      complexDescSet.toByteArray
+      complexTempDescFile.getAbsolutePath
     )
+    
+    // WireFormatConverter path with binary descriptor set for complex structures
+    val complexWireFormatBinaryDescCol = new Column(Literal.create(binary, org.apache.spark.sql.types.BinaryType))
+    val complexWireFormatBinaryDescExpr = functions.from_protobuf(
+      complexWireFormatBinaryDescCol,
+      descriptor.getFullName,
+      complexDescSet.toByteArray // This will now use WireFormatConverter
+    )
+    
+    // Compiled message path components for complex structures
+    val complexCompiledConverter = ProtoToRowGenerator.generateConverter(descriptor, classOf[com.google.protobuf.Type])
     
     // Warm up
     for (_ <- 1 to 50) {
       converter.convert(binary)
       complexFromProtobufExpr.expr.eval(null)
+      complexCompiledConverter.convert(binary)
+      complexWireFormatBinaryDescExpr.expr.eval(null)
     }
     
     // Benchmark
@@ -225,18 +269,47 @@ class WireFormatConverterBenchmark extends AnyFlatSpec with Matchers {
     }
     val dynamicTime = System.nanoTime() - dynamicStart
     
+    // Benchmark compiled message (complete binary → InternalRow via generated converter)
+    val complexCompiledStart = System.nanoTime()
+    for (_ <- 1 to iterations) {
+      complexCompiledConverter.convert(binary)
+    }
+    val complexCompiledTime = System.nanoTime() - complexCompiledStart
+    
+    // Benchmark WireFormatConverter with binary descriptor set for complex structures
+    val complexWireFormatBinaryDescStart = System.nanoTime()
+    for (_ <- 1 to iterations) {
+      complexWireFormatBinaryDescExpr.expr.eval(null)
+    }
+    val complexWireFormatBinaryDescTime = System.nanoTime() - complexWireFormatBinaryDescStart
+    
     val wireFormatMs = wireFormatTime / 1e6
     val dynamicMs = dynamicTime / 1e6
-    val speedup = dynamicTime.toDouble / wireFormatTime
+    val complexCompiledMs = complexCompiledTime / 1e6
+    val complexWireFormatBinaryDescMs = complexWireFormatBinaryDescTime / 1e6
     
-    println(f"Complex WireFormatConverter: ${wireFormatMs}%.2f ms (${wireFormatTime / iterations}%.0f ns/op)")
-    println(f"Complex DynamicMessage path: ${dynamicMs}%.2f ms (${dynamicTime / iterations}%.0f ns/op)")
-    println(f"Speedup: ${speedup}%.2fx")
+    println(f"Complex WireFormatConverter (direct):       ${wireFormatMs}%.2f ms (${wireFormatTime / iterations}%.0f ns/op)")
+    println(f"Complex DynamicMessage path (descriptor):   ${dynamicMs}%.2f ms (${dynamicTime / iterations}%.0f ns/op)")
+    println(f"Complex Compiled message path:              ${complexCompiledMs}%.2f ms (${complexCompiledTime / iterations}%.0f ns/op)")
+    println(f"Complex WireFormatConverter (binary desc):  ${complexWireFormatBinaryDescMs}%.2f ms (${complexWireFormatBinaryDescTime / iterations}%.0f ns/op)")
+    
+    val wireFormatSpeedup = dynamicTime.toDouble / wireFormatTime
+    val compiledSpeedup = dynamicTime.toDouble / complexCompiledTime
+    val complexWireFormatBinaryDescSpeedup = dynamicTime.toDouble / complexWireFormatBinaryDescTime
+    
+    println(f"Complex WireFormatConverter (direct) is ${wireFormatSpeedup}%.2fx vs DynamicMessage path")
+    println(f"Complex Compiled message path is ${compiledSpeedup}%.2fx vs DynamicMessage path")
+    println(f"Complex WireFormatConverter (binary desc) is ${complexWireFormatBinaryDescSpeedup}%.2fx vs DynamicMessage path")
     
     // Now comparing fair end-to-end binary → InternalRow conversion for complex structures
-    // Both approaches complete successfully - WireFormatConverter should now be more competitive
+    // All approaches complete successfully
     wireFormatTime should be > 0L
     dynamicTime should be > 0L
+    complexCompiledTime should be > 0L
+    complexWireFormatBinaryDescTime should be > 0L
+    
+    // Compiled path should be fastest for complete conversion
+    complexCompiledTime should be < dynamicTime
     
     println("✓ Complex structure benchmark completed successfully")
   }
