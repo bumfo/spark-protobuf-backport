@@ -126,6 +126,16 @@ class WireFormatConverter(
         }
 
         input.popLimit(oldLimit)
+      } else if (mapping.fieldDescriptor.getType == FieldDescriptor.Type.MESSAGE) {
+        // Handle repeated MESSAGE fields directly to enable writer sharing
+        val messageBytes = input.readBytes().toByteArray
+        nestedConverters.get(fieldNumber) match {
+          case Some(converter) =>
+            // Store message bytes for later processing with writer sharing
+            values += messageBytes
+          case None =>
+            throw new IllegalStateException(s"No nested converter found for field ${mapping.fieldDescriptor.getName}")
+        }
       } else {
         // Non-packed repeated field - read single value
         values += readSingleValue(input, mapping.fieldDescriptor.getType, mapping)
@@ -249,19 +259,7 @@ class WireFormatConverter(
       case SINT32 => input.readSInt32()
       case SINT64 => input.readSInt64()
       case MESSAGE =>
-        val messageBytes = input.readBytes().toByteArray
-        nestedConverters.get(mapping.fieldDescriptor.getNumber) match {
-          case Some(converter) =>
-            // For repeated nested messages, we can't share the writer easily since we accumulate values
-            // So we convert to UnsafeRow separately and will handle writer sharing during writeArray
-            val subWriter = new UnsafeRowWriter(converter.schema.length)
-            // subWriter.resetRowWriter()
-            subWriter.reset()
-            subWriter.zeroOutNullBytes()
-            converter.writeData(messageBytes, subWriter)
-            subWriter.getRow
-          case None => throw new IllegalStateException(s"No nested converter found for field ${mapping.fieldDescriptor.getName}")
-        }
+        throw new IllegalStateException("MESSAGE fields should be handled directly in parseField, not through readSingleValue")
       case GROUP => throw new UnsupportedOperationException("GROUP type is deprecated and not supported")
     }
   }
@@ -273,8 +271,25 @@ class WireFormatConverter(
 
     arrayWriter.initialize(values.length)
 
-    for (i <- values.indices) {
-      writeArrayElement(arrayWriter, i, values(i), mapping.fieldDescriptor.getType)
+    if (mapping.fieldDescriptor.getType == FieldDescriptor.Type.MESSAGE) {
+      // Handle nested messages with writer sharing
+      val fieldNumber = mapping.fieldDescriptor.getNumber
+      nestedConverters.get(fieldNumber) match {
+        case Some(converter) =>
+          for (i <- values.indices) {
+            val messageBytes = values(i).asInstanceOf[Array[Byte]]
+            val elemOffset = arrayWriter.cursor()
+            converter.convert(messageBytes, writer)
+            arrayWriter.setOffsetAndSizeFromPreviousCursor(i, elemOffset)
+          }
+        case None =>
+          throw new IllegalStateException(s"No nested converter found for field ${mapping.fieldDescriptor.getName}")
+      }
+    } else {
+      // Handle primitive types
+      for (i <- values.indices) {
+        writeArrayElement(arrayWriter, i, values(i), mapping.fieldDescriptor.getType)
+      }
     }
 
     writer.setOffsetAndSizeFromPreviousCursor(mapping.rowOrdinal, offset)
@@ -310,7 +325,7 @@ class WireFormatConverter(
       case SFIXED64 => arrayWriter.write(index, value.asInstanceOf[Long])
       case SINT32 => arrayWriter.write(index, value.asInstanceOf[Int])
       case SINT64 => arrayWriter.write(index, value.asInstanceOf[Long])
-      case MESSAGE => arrayWriter.write(index, value.asInstanceOf[org.apache.spark.sql.catalyst.expressions.UnsafeRow])
+      case MESSAGE => throw new IllegalStateException("MESSAGE array elements should be handled directly in writeArray, not through writeArrayElement")
       case GROUP => throw new UnsupportedOperationException("GROUP type is deprecated and not supported")
     }
   }
