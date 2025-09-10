@@ -30,7 +30,7 @@ Internally, when `binaryDescriptorSet` is defined the expression builds the mess
 
 ### Deserialising Protobuf data (`from_protobuf`)
 
-At run time, the `from_protobuf` expression receives a binary input (`Array[Byte]`), parses it into a Protobuf message and converts it into a Catalyst row:
+At run time, the `from_protobuf` expression receives a binary input (`Array[Byte]`), parses it into a Protobuf message and converts it into a Catalyst row. The library chooses the most efficient conversion path based on available information:
 
 * **Parsing Protobuf bytes.** If the `messageName` refers to a compiled Java class and neither a descriptor file nor a binary descriptor set is provided, the expression loads the compiled class and invokes its static `parseFrom(byte[])` method to construct a message. Otherwise it uses `DynamicMessage.parseFrom(messageDescriptor, binary)` to create a `DynamicMessage` ([code](core/src/main/scala/org/apache/spark/sql/protobuf/backport/ProtobufDataToCatalyst.scala#L168-L177)). In both cases it checks the unknown‑fields map to detect when an incoming payload contains unknown fields whose numeric identifiers clash with known fields, raising a schema‑mismatch error ([code](core/src/main/scala/org/apache/spark/sql/protobuf/backport/ProtobufDataToCatalyst.scala#L185-L194)).
 

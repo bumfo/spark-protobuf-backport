@@ -6,6 +6,7 @@ import org.scalatest.flatspec.AnyFlatSpec
 import org.scalatest.matchers.should.Matchers
 import org.apache.spark.unsafe.types.UTF8String
 import org.apache.spark.sql.catalyst.util.ArrayData
+import org.apache.spark.sql.protobuf.backport.functions
 
 class WireFormatConverterSpec extends AnyFlatSpec with Matchers {
 
@@ -319,5 +320,205 @@ class WireFormatConverterSpec extends AnyFlatSpec with Matchers {
     val value2 = enumValues.getStruct(1, 3)
     value2.getUTF8String(0).toString should equal("VALUE_2")
     value2.getInt(1) should equal(2)
+  }
+
+  it should "produce identical results when using binary descriptor sets vs direct WireFormatConverter" in {
+    // Create a complex message with nested structures and repeated fields
+    val nestedField1 = Field.newBuilder()
+      .setName("nested_field1")
+      .setNumber(1)
+      .setKind(Field.Kind.TYPE_STRING)
+      .setCardinality(Field.Cardinality.CARDINALITY_OPTIONAL)
+      .build()
+      
+    val nestedField2 = Field.newBuilder()
+      .setName("nested_field2")
+      .setNumber(2)
+      .setKind(Field.Kind.TYPE_INT32)
+      .setCardinality(Field.Cardinality.CARDINALITY_REPEATED)
+      .build()
+
+    val sourceContext = SourceContext.newBuilder()
+      .setFileName("test.proto")
+      .build()
+
+    val complexType = Type.newBuilder()
+      .setName("complex_comparison_test")
+      .addFields(nestedField1)
+      .addFields(nestedField2)
+      .setSourceContext(sourceContext)
+      .setSyntax(Syntax.SYNTAX_PROTO3)
+      .build()
+
+    val binary = complexType.toByteArray
+    val descriptor = complexType.getDescriptorForType
+
+    // Create comprehensive Spark schema matching all fields
+    val sparkSchema = StructType(Seq(
+      StructField("name", StringType, nullable = true),
+      StructField("fields", ArrayType(StructType(Seq(
+        StructField("kind", StringType, nullable = true),
+        StructField("cardinality", StringType, nullable = true),
+        StructField("number", IntegerType, nullable = true),
+        StructField("name", StringType, nullable = true),
+        StructField("type_url", StringType, nullable = true),
+        StructField("oneof_index", IntegerType, nullable = true),
+        StructField("packed", BooleanType, nullable = true),
+        StructField("options", ArrayType(StructType(Seq(
+          StructField("name", StringType, nullable = true),
+          StructField("value", StructType(Seq(
+            StructField("type_url", StringType, nullable = true),
+            StructField("value", BinaryType, nullable = true)
+          )), nullable = true)
+        ))), nullable = true),
+        StructField("json_name", StringType, nullable = true),
+        StructField("default_value", StringType, nullable = true)
+      ))), nullable = true),
+      StructField("oneofs", ArrayType(StringType), nullable = true),
+      StructField("options", ArrayType(StructType(Seq(
+        StructField("name", StringType, nullable = true),
+        StructField("value", StructType(Seq(
+          StructField("type_url", StringType, nullable = true),
+          StructField("value", BinaryType, nullable = true)
+        )), nullable = true)
+      ))), nullable = true),
+      StructField("source_context", StructType(Seq(
+        StructField("file_name", StringType, nullable = true)
+      )), nullable = true),
+      StructField("syntax", StringType, nullable = true)
+    ))
+
+    // Method 1: Direct WireFormatConverter
+    val directConverter = new WireFormatConverter(descriptor, sparkSchema)
+    val directResult = directConverter.convert(binary)
+
+    // Method 2: Binary descriptor set through from_protobuf function (should use WireFormatConverter internally)
+    val descSet = DescriptorProtos.FileDescriptorSet.newBuilder()
+      .addFile(descriptor.getFile.toProto)
+      .addFile(AnyProto.getDescriptor.getFile.toProto)
+      .addFile(SourceContextProto.getDescriptor.getFile.toProto)
+      .addFile(ApiProto.getDescriptor.getFile.toProto)
+      .build()
+
+    // Create a temporary SparkSession for the from_protobuf test
+    val spark = org.apache.spark.sql.SparkSession.builder()
+      .appName("wireformat-correctness-test")
+      .master("local[1]")
+      .config("spark.ui.enabled", "false")
+      .config("spark.sql.adaptive.enabled", "false")
+      .config("spark.serializer", "org.apache.spark.serializer.KryoSerializer")
+      .getOrCreate()
+
+    spark.sparkContext.setLogLevel("ERROR")
+
+    try {
+      val sparkImplicits = spark.implicits
+      import sparkImplicits._
+
+      val df = Seq(binary).toDF("data")
+      val binaryDescResult = df.select(
+        functions.from_protobuf($"data", descriptor.getFullName, descSet.toByteArray).as("result")
+      ).head().getAs[org.apache.spark.sql.Row]("result")
+
+      // Compare all fields recursively
+      compareInternalRows(directResult, binaryDescResult, sparkSchema, "root")
+
+      println("✓ Direct WireFormatConverter and binary descriptor set produce identical results")
+      
+    } finally {
+      spark.stop()
+    }
+  }
+
+  private def compareInternalRows(
+      row1: org.apache.spark.sql.catalyst.InternalRow,
+      row2: org.apache.spark.sql.Row,
+      schema: StructType,
+      path: String): Unit = {
+    
+    row1.numFields should equal(row2.size)
+    
+    schema.fields.zipWithIndex.foreach { case (field, idx) =>
+      val fieldPath = s"$path.${field.name}"
+      
+      (row1.isNullAt(idx), row2.isNullAt(idx)) match {
+        case (true, true) => // Both null - OK
+        case (false, false) =>
+          field.dataType match {
+            case StringType =>
+              val str1 = if (row1.isNullAt(idx)) null else row1.getUTF8String(idx).toString
+              val str2 = if (row2.isNullAt(idx)) null else row2.getAs[String](idx)
+              str1 should equal(str2)
+              
+            case IntegerType =>
+              val int1 = row1.getInt(idx)
+              val int2 = row2.getAs[Int](idx)
+              int1 should equal(int2)
+              
+            case BooleanType =>
+              val bool1 = row1.getBoolean(idx)
+              val bool2 = row2.getAs[Boolean](idx)
+              bool1 should equal(bool2)
+              
+            case BinaryType =>
+              val bytes1 = row1.getBinary(idx)
+              val bytes2 = row2.getAs[Array[Byte]](idx)
+              bytes1 should equal(bytes2)
+              
+            case arrayType: ArrayType =>
+              val array1 = row1.getArray(idx)
+              val array2 = row2.getAs[Seq[_]](idx)
+              
+              if (array1 == null && array2 == null) {
+                // Both null - OK
+              } else if (array1 != null && array2 != null) {
+                array1.numElements() should equal(array2.size)
+                
+                // Compare each element based on element type
+                arrayType.elementType match {
+                  case StringType =>
+                    for (i <- 0 until array1.numElements()) {
+                      val elem1 = if (array1.isNullAt(i)) null else array1.getUTF8String(i).toString
+                      val elem2 = array2(i).asInstanceOf[String]
+                      elem1 should equal(elem2)
+                    }
+                  case structType: StructType =>
+                    for (i <- 0 until array1.numElements()) {
+                      if (!array1.isNullAt(i)) {
+                        val struct1 = array1.getStruct(i, structType.fields.length)
+                        val struct2 = array2(i).asInstanceOf[org.apache.spark.sql.Row]
+                        compareInternalRows(struct1, struct2, structType, s"$fieldPath[$i]")
+                      }
+                    }
+                  case _ => // For other array element types, just compare sizes for now
+                    array1.numElements() should equal(array2.size)
+                }
+              } else {
+                fail(s"Array mismatch at $fieldPath: one is null, other is not")
+              }
+              
+            case structType: StructType =>
+              val struct1 = row1.getStruct(idx, structType.fields.length)
+              val struct2 = row2.getAs[org.apache.spark.sql.Row](idx)
+              
+              if (struct1 == null && struct2 == null) {
+                // Both null - OK
+              } else if (struct1 != null && struct2 != null) {
+                compareInternalRows(struct1, struct2, structType, fieldPath)
+              } else {
+                fail(s"Struct mismatch at $fieldPath: one is null, other is not")
+              }
+              
+            case _ =>
+              // For other types, just verify neither is null unexpectedly
+              if (row1.isNullAt(idx) != row2.isNullAt(idx)) {
+                fail(s"Nullability mismatch at $fieldPath")
+              }
+          }
+          
+        case (null1, null2) =>
+          fail(s"Nullability mismatch at $fieldPath: row1.isNull=$null1, row2.isNull=$null2")
+      }
+    }
   }
 }

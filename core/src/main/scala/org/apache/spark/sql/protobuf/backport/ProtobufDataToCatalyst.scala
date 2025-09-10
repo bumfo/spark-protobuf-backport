@@ -16,7 +16,7 @@
 package org.apache.spark.sql.protobuf.backport
 
 import com.google.protobuf.{DynamicMessage, Message => PbMessage}
-import fastproto.{ProtoToRowGenerator, RowConverter}
+import fastproto.{ProtoToRowGenerator, RowConverter, WireFormatConverter}
 import org.apache.spark.sql.catalyst.expressions.codegen.{CodeGenerator, CodegenContext, ExprCode}
 import org.apache.spark.sql.catalyst.expressions.{ExpectsInputTypes, Expression, UnaryExpression}
 import org.apache.spark.sql.catalyst.util.{FailFastMode, ParseMode, PermissiveMode}
@@ -137,6 +137,25 @@ private[backport] case class ProtobufDataToCatalyst(
   }
 
   /**
+   * Lazily create a [[fastproto.WireFormatConverter]] for binary descriptor sets.
+   * This provides a fast path for direct wire format parsing when using binary
+   * descriptor sets, avoiding DynamicMessage overhead. Falls back to DynamicMessage
+   * if WireFormatConverter initialization fails (e.g., unsupported field types).
+   */
+  @transient private lazy val wireFormatConverterOpt: Option[WireFormatConverter] =
+    binaryDescriptorSet match {
+      case Some(_) =>
+        try {
+          // Convert DataType to StructType for WireFormatConverter
+          val structType = dataType.asInstanceOf[org.apache.spark.sql.types.StructType]
+          Some(new WireFormatConverter(messageDescriptor, structType))
+        } catch {
+          case _: Throwable => None // Fall back to DynamicMessage for unsupported cases
+        }
+      case None => None
+    }
+
+  /**
    * Handle an exception according to the configured parse mode.
    */
   private def handleException(e: Throwable): Any = {
@@ -157,8 +176,15 @@ private[backport] case class ProtobufDataToCatalyst(
   override def nullSafeEval(input: Any): Any = {
     val binary = input.asInstanceOf[Array[Byte]]
     try {
-      // If a rowConverter is defined, use it for direct binary conversion
+      // Priority 1: If a rowConverter is defined (compiled class), use it for direct binary conversion
       rowConverterOpt match {
+        case Some(converter) =>
+          return converter.convert(binary)
+        case None => // continue to check other fast paths
+      }
+      
+      // Priority 2: If a WireFormatConverter is available (binary descriptor set), use it
+      wireFormatConverterOpt match {
         case Some(converter) =>
           return converter.convert(binary)
         case None => // fallback to DynamicMessage path
