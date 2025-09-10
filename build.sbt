@@ -43,6 +43,7 @@ lazy val commonSettings = Seq(
 // Root project - core with source code, protobuf provided
 lazy val core = project
   .disablePlugins(AssemblyPlugin)
+  .enablePlugins(JmhPlugin)
   .settings(commonSettings)
   .settings(
     name := "spark-protobuf-backport",
@@ -55,6 +56,18 @@ lazy val core = project
     TaskKey[Unit]("benchmark") := {
       (Test / testOnly).toTask(" benchmark.* -- -n benchmark.Benchmark").value
     },
+    // JMH benchmark configuration
+    Jmh / sourceDirectory := (Test / sourceDirectory).value,
+    Jmh / classDirectory := (Test / classDirectory).value,
+    Jmh / dependencyClasspath := (Test / dependencyClasspath).value,
+    // Compile JMH benchmarks with test classpath
+    Jmh / compile := (Jmh / compile).dependsOn(Test / compile).value,
+    // Add JMH-specific dependencies to make Spark available at runtime
+    libraryDependencies ++= Seq(
+      "org.apache.spark" %% "spark-sql" % sparkVersion % "jmh,test",
+      "org.apache.spark" %% "spark-core" % sparkVersion % "jmh,test",
+      "com.google.protobuf" % "protobuf-java" % protobufVersion % "jmh,test"
+    ),
     // Simple task to run the converter code generator
     generateConverters := {
       println("Running converter code generation...")
