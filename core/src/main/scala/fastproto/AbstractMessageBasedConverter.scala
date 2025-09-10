@@ -9,7 +9,7 @@ abstract class AbstractMessageBasedConverter[T](schema: StructType)
 
   protected def writeMessage(message: T, writer: UnsafeRowWriter): Unit
 
-  override final def convert(message: T, parentWriter: UnsafeWriter): InternalRow = {
+  override def convert(message: T, parentWriter: UnsafeWriter): InternalRow = {
     val writer = prepareWriter(parentWriter)
     writeMessage(message, writer)
     if (parentWriter == null) writer.getRow else null

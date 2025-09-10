@@ -7,7 +7,7 @@ import org.apache.spark.sql.types.StructType
 abstract class AbstractRowConverter(val schema: StructType) extends RowConverter {
   protected val instanceWriter = new UnsafeRowWriter(schema.length)
 
-  protected final def prepareWriter(parentWriter: UnsafeWriter): UnsafeRowWriter = {
+  protected def prepareWriter(parentWriter: UnsafeWriter): UnsafeRowWriter = {
     if (parentWriter == null) {
       instanceWriter.reset()
       instanceWriter.zeroOutNullBytes()
@@ -21,7 +21,7 @@ abstract class AbstractRowConverter(val schema: StructType) extends RowConverter
 
   protected def writeData(binary: Array[Byte], writer: UnsafeRowWriter): Unit
 
-  override final def convert(binary: Array[Byte], parentWriter: UnsafeWriter): InternalRow = {
+  override def convert(binary: Array[Byte], parentWriter: UnsafeWriter): InternalRow = {
     val writer = prepareWriter(parentWriter)
     writeData(binary, writer)
     if (parentWriter == null) writer.getRow else null
