@@ -29,20 +29,26 @@ class WireFormatConverter(
 
   import WireFormatConverter._
 
-  // Build field number → row ordinal mapping during construction
-  private val fieldMapping: Map[Int, FieldMapping] = buildFieldMapping()
+  // Build field number → row ordinal mapping during construction - use arrays for better performance
+  private val (fieldMappingArray, maxFieldNumber) = buildFieldMappingArray()
 
-  // Cache nested converters for message fields
-  private val nestedConverters: Map[Int, WireFormatConverter] = buildNestedConverters()
+  // Cache nested converters for message fields - use array for O(1) lookup
+  private val nestedConvertersArray: Array[WireFormatConverter] = buildNestedConvertersArray()
 
-  // Track repeated field values during parsing
-  private val repeatedFieldValues: mutable.Map[Int, mutable.ArrayBuffer[Any]] = mutable.Map.empty
+  // Track repeated field values during parsing - use array for O(1) lookup
+  private val repeatedFieldValuesArray: Array[mutable.ArrayBuffer[Any]] = new Array(maxFieldNumber + 1)
 
   override protected def writeData(binary: Array[Byte], writer: UnsafeRowWriter): Unit = {
     val input = CodedInputStream.newInstance(binary)
 
     // Clear repeated field buffers for this conversion
-    repeatedFieldValues.clear()
+    var i = 0
+    while (i < repeatedFieldValuesArray.length) {
+      if (repeatedFieldValuesArray(i) != null) {
+        repeatedFieldValuesArray(i).clear()
+      }
+      i += 1
+    }
 
     // Parse the wire format
     while (!input.isAtEnd()) {
@@ -50,12 +56,11 @@ class WireFormatConverter(
       val fieldNumber = WireFormat.getTagFieldNumber(tag)
       val wireType = WireFormat.getTagWireType(tag)
 
-      fieldMapping.get(fieldNumber) match {
-        case Some(mapping) =>
-          parseField(input, tag, wireType, mapping, writer)
-        case None =>
-          // Skip unknown fields
-          input.skipField(tag)
+      if (fieldNumber <= maxFieldNumber && fieldMappingArray(fieldNumber) != null) {
+        parseField(input, tag, wireType, fieldMappingArray(fieldNumber), writer)
+      } else {
+        // Skip unknown fields
+        input.skipField(tag)
       }
     }
 
@@ -63,14 +68,18 @@ class WireFormatConverter(
     writeAccumulatedRepeatedFields(writer)
   }
 
-  private def buildFieldMapping(): Map[Int, FieldMapping] = {
-    val mapping = mutable.Map[Int, FieldMapping]()
+  private def buildFieldMappingArray(): (Array[FieldMapping], Int) = {
+    val tempMapping = mutable.Map[Int, FieldMapping]()
+    var maxFieldNum = 0
 
     descriptor.getFields.asScala.foreach { field =>
+      val fieldNum = field.getNumber
+      maxFieldNum = Math.max(maxFieldNum, fieldNum)
+      
       // Find corresponding field in Spark schema by name
       schema.fields.zipWithIndex.find(_._1.name == field.getName) match {
         case Some((sparkField, ordinal)) =>
-          mapping(field.getNumber) = FieldMapping(
+          tempMapping(fieldNum) = FieldMapping(
             fieldDescriptor = field,
             rowOrdinal = ordinal,
             sparkDataType = sparkField.dataType,
@@ -81,14 +90,22 @@ class WireFormatConverter(
       }
     }
 
-    mapping.toMap
+    // Create array and populate it
+    val mappingArray = new Array[FieldMapping](maxFieldNum + 1)
+    tempMapping.foreach { case (fieldNum, mapping) =>
+      mappingArray(fieldNum) = mapping
+    }
+    
+    (mappingArray, maxFieldNum)
   }
 
-  private def buildNestedConverters(): Map[Int, WireFormatConverter] = {
-    val converters = mutable.Map[Int, WireFormatConverter]()
+  private def buildNestedConvertersArray(): Array[WireFormatConverter] = {
+    val convertersArray = new Array[WireFormatConverter](maxFieldNumber + 1)
 
-    fieldMapping.foreach { case (fieldNumber, mapping) =>
-      if (mapping.fieldDescriptor.getType == FieldDescriptor.Type.MESSAGE) {
+    var i = 0
+    while (i < fieldMappingArray.length) {
+      val mapping = fieldMappingArray(i)
+      if (mapping != null && mapping.fieldDescriptor.getType == FieldDescriptor.Type.MESSAGE) {
         val nestedDescriptor = mapping.fieldDescriptor.getMessageType
         val nestedSchema = mapping.sparkDataType match {
           case struct: StructType => struct
@@ -96,11 +113,12 @@ class WireFormatConverter(
             arrayType.elementType.asInstanceOf[StructType]
           case _ => throw new IllegalArgumentException(s"Expected StructType or ArrayType[StructType] for message field ${mapping.fieldDescriptor.getName}")
         }
-        converters(fieldNumber) = new WireFormatConverter(nestedDescriptor, nestedSchema)
+        convertersArray(i) = new WireFormatConverter(nestedDescriptor, nestedSchema)
       }
+      i += 1
     }
 
-    converters.toMap
+    convertersArray
   }
 
   private def parseField(
@@ -114,7 +132,10 @@ class WireFormatConverter(
     if (mapping.isRepeated) {
       // For repeated fields, accumulate values
       val fieldNumber = mapping.fieldDescriptor.getNumber
-      val values = repeatedFieldValues.getOrElseUpdate(fieldNumber, mutable.ArrayBuffer.empty[Any])
+      if (repeatedFieldValuesArray(fieldNumber) == null) {
+        repeatedFieldValuesArray(fieldNumber) = mutable.ArrayBuffer.empty[Any]
+      }
+      val values = repeatedFieldValuesArray(fieldNumber)
 
       // Handle packed repeated fields (length-delimited)
       if (wireType == WireFormat.WIRETYPE_LENGTH_DELIMITED && isPackable(mapping.fieldDescriptor.getType)) {
@@ -129,12 +150,12 @@ class WireFormatConverter(
       } else if (mapping.fieldDescriptor.getType == FieldDescriptor.Type.MESSAGE) {
         // Handle repeated MESSAGE fields directly to enable writer sharing
         val messageBytes = input.readBytes().toByteArray
-        nestedConverters.get(fieldNumber) match {
-          case Some(converter) =>
-            // Store message bytes for later processing with writer sharing
-            values += messageBytes
-          case None =>
-            throw new IllegalStateException(s"No nested converter found for field ${mapping.fieldDescriptor.getName}")
+        val converter = nestedConvertersArray(fieldNumber)
+        if (converter != null) {
+          // Store message bytes for later processing with writer sharing
+          values += messageBytes
+        } else {
+          throw new IllegalStateException(s"No nested converter found for field ${mapping.fieldDescriptor.getName}")
         }
       } else {
         // Non-packed repeated field - read single value
@@ -189,24 +210,28 @@ class WireFormatConverter(
       mapping: FieldMapping,
       writer: UnsafeRowWriter): Unit = {
     val messageBytes = input.readBytes().toByteArray
-    nestedConverters.get(mapping.fieldDescriptor.getNumber) match {
-      case Some(converter) =>
-        // Use writer sharing pattern like ProtoToRowGenerator
-        val offset = writer.cursor()
-        converter.convert(messageBytes, writer)
-        writer.setOffsetAndSizeFromPreviousCursor(mapping.rowOrdinal, offset)
-      case None =>
-        throw new IllegalStateException(s"No nested converter found for field ${mapping.fieldDescriptor.getName}")
+    val converter = nestedConvertersArray(mapping.fieldDescriptor.getNumber)
+    if (converter != null) {
+      // Use writer sharing pattern like ProtoToRowGenerator
+      val offset = writer.cursor()
+      converter.convert(messageBytes, writer)
+      writer.setOffsetAndSizeFromPreviousCursor(mapping.rowOrdinal, offset)
+    } else {
+      throw new IllegalStateException(s"No nested converter found for field ${mapping.fieldDescriptor.getName}")
     }
   }
 
   private def writeAccumulatedRepeatedFields(writer: UnsafeRowWriter): Unit = {
-    repeatedFieldValues.foreach { case (fieldNumber, values) =>
-      fieldMapping.get(fieldNumber) match {
-        case Some(mapping) if mapping.isRepeated =>
+    var fieldNumber = 0
+    while (fieldNumber < repeatedFieldValuesArray.length) {
+      val values = repeatedFieldValuesArray(fieldNumber)
+      if (values != null && values.nonEmpty) {
+        val mapping = fieldMappingArray(fieldNumber)
+        if (mapping != null && mapping.isRepeated) {
           writeArray(values.toArray, mapping, writer)
-        case _ => // Should not happen
+        }
       }
+      fieldNumber += 1
     }
   }
 
@@ -274,16 +299,16 @@ class WireFormatConverter(
     if (mapping.fieldDescriptor.getType == FieldDescriptor.Type.MESSAGE) {
       // Handle nested messages with writer sharing
       val fieldNumber = mapping.fieldDescriptor.getNumber
-      nestedConverters.get(fieldNumber) match {
-        case Some(converter) =>
-          for (i <- values.indices) {
-            val messageBytes = values(i).asInstanceOf[Array[Byte]]
-            val elemOffset = arrayWriter.cursor()
-            converter.convert(messageBytes, writer)
-            arrayWriter.setOffsetAndSizeFromPreviousCursor(i, elemOffset)
-          }
-        case None =>
-          throw new IllegalStateException(s"No nested converter found for field ${mapping.fieldDescriptor.getName}")
+      val converter = nestedConvertersArray(fieldNumber)
+      if (converter != null) {
+        for (i <- values.indices) {
+          val messageBytes = values(i).asInstanceOf[Array[Byte]]
+          val elemOffset = arrayWriter.cursor()
+          converter.convert(messageBytes, writer)
+          arrayWriter.setOffsetAndSizeFromPreviousCursor(i, elemOffset)
+        }
+      } else {
+        throw new IllegalStateException(s"No nested converter found for field ${mapping.fieldDescriptor.getName}")
       }
     } else {
       // Handle primitive types
