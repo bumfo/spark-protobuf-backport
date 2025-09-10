@@ -318,23 +318,19 @@ object ProtoToRowGenerator {
     code ++= "import org.apache.spark.sql.catalyst.InternalRow;\n"
     code ++= "import org.apache.spark.sql.types.StructType;\n"
     code ++= "import org.apache.spark.unsafe.types.UTF8String;\n"
-    code ++= "import fastproto.MessageBasedConverter;\n"
+    code ++= "import fastproto.AbstractMessageBasedConverter;\n"
 
     // Begin class declaration
-    code ++= s"public final class ${className} implements fastproto.MessageBasedConverter<${messageClass.getName}> {\n"
+    code ++= s"public final class ${className} extends fastproto.AbstractMessageBasedConverter<${messageClass.getName}> {\n"
 
-    // Declare fields: schema, writer, and nested converters (non-final for setter injection)
-    code ++= "  private final StructType schema;\n"
-    code ++= "  private final UnsafeRowWriter writer;\n"
+    // Declare fields: nested converters (non-final for setter injection)
     (0 until numNestedTypes).foreach { idx =>
       code ++= s"  private fastproto.MessageBasedConverter nestedConv${idx}; // Non-final for dependency injection\n"
     }
 
     // Constructor with null nested converters initially
     code ++= s"  public ${className}(StructType schema) {\n"
-    code ++= "    this.schema = schema;\n"
-    code ++= "    int numFields = schema.length();\n"
-    code ++= "    this.writer = new UnsafeRowWriter(numFields);\n"
+    code ++= "    super(schema);\n"
     (0 until numNestedTypes).foreach { idx =>
       code ++= s"    this.nestedConv${idx} = null; // Will be set via setter\n"
     }
@@ -529,36 +525,21 @@ object ProtoToRowGenerator {
       }
     }
 
-    // Generate binary conversion methods with inlined parseFrom (no reflection)
-    code ++= "  public org.apache.spark.sql.catalyst.InternalRow convert(byte[] binary, UnsafeWriter parentWriter) {\n"
+    // Override writeData to implement binary conversion with inlined parseFrom
+    code ++= "  @Override\n"
+    code ++= "  protected void writeData(byte[] binary, UnsafeRowWriter writer) {\n"
     code ++= "    try {\n"
     code ++= "      // Direct parseFrom call - no reflection needed\n"
     code ++= s"      ${messageClass.getName} message = ${messageClass.getName}.parseFrom(binary);\n"
-    code ++= "      return convert(message, parentWriter);\n"
+    code ++= "      writeMessage(message, writer);\n"
     code ++= "    } catch (Exception e) {\n"
     code ++= "      throw new RuntimeException(\"Failed to parse protobuf binary\", e);\n"
     code ++= "    }\n"
     code ++= "  }\n"
     code ++= "\n"
 
-    // Generate the primary convert method - delegates to two-parameter version
-    code ++= "  public UnsafeRow convert(" + messageClass.getName + " msg) {\n"
-    code ++= "    return convert(msg, null);\n"
-    code ++= "  }\n"
-    code ++= "\n"
-    // Generate the convert method with parentWriter parameter for BufferHolder sharing  
-    code ++= "  public UnsafeRow convert(" + messageClass.getName + " msg, UnsafeWriter parentWriter) {\n"
-    code ++= "    UnsafeRowWriter writer;\n"
-    code ++= "    if (parentWriter == null) {\n"
-    code ++= "      // Use instance writer and reset it\n"
-    code ++= "      writer = this.writer;\n"
-    code ++= "      writer.reset();\n"
-    code ++= "      writer.zeroOutNullBytes();\n"
-    code ++= "    } else {\n"
-    code ++= "      // Create new writer that shares BufferHolder with parent\n"
-    code ++= "      writer = new UnsafeRowWriter(parentWriter, schema.length());\n"
-    code ++= "      writer.resetRowWriter(); // Initialize null bytes but don't reset buffer\n"
-    code ++= "    }\n"
+    // Typed writeMessage implementation (called by bridge method)
+    code ++= "  private void writeMessage(" + messageClass.getName + " msg, UnsafeRowWriter writer) {\n"
 
     // Generate per‑field extraction and writing logic using writer
     descriptor.getFields.asScala.zipWithIndex.foreach { case (fd, idx) =>
@@ -629,33 +610,13 @@ object ProtoToRowGenerator {
       }
     }
 
-    code ++= "    if (parentWriter != null) {\n"
-    code ++= "      // When using shared writer, data is written to parent buffer; return null\n"
-    code ++= "      return null;\n"
-    code ++= "    } else {\n"
-    code ++= "      // Root conversion - return the constructed row\n"
-    code ++= "      return writer.getRow();\n"
-    code ++= "    }\n"
-    code ++= "  }\n" // End of convert(T, UnsafeWriter) method
+    code ++= "  }\n" // End of writeMessage method
 
-    // Bridge method with @Override for Object signature
-    code ++= "  @Override\n"
-    code ++= "  public org.apache.spark.sql.catalyst.InternalRow convert(Object obj) {\n"
-    code ++= s"    return convert((${messageClass.getName}) obj);\n"
+    // Bridge method for type erasure compatibility (implements abstract method)
+    code ++= "  public void writeMessage(Object msg, UnsafeRowWriter writer) {\n"
+    code ++= s"    writeMessage((${messageClass.getName}) msg, writer);\n"
     code ++= "  }\n"
 
-    // Bridge method with @Override for Object, UnsafeWriter signature
-    code ++= "  @Override\n"
-    code ++= "  public org.apache.spark.sql.catalyst.InternalRow convert(Object obj, org.apache.spark.sql.catalyst.expressions.codegen.UnsafeWriter parentWriter) {\n"
-    code ++= s"    return convert((${messageClass.getName}) obj, parentWriter);\n"
-    code ++= "  }\n"
-    // Implement the schema() accessor defined on RowConverter.  Returning the
-    // stored StructType allows callers to inspect the Catalyst schema used
-    // during conversion.
-    code ++= "  @Override\n"
-    code ++= "  public org.apache.spark.sql.types.StructType schema() {\n"
-    code ++= "    return this.schema;\n"
-    code ++= "  }\n"
     code ++= "}\n" // End of class
 
     code
