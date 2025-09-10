@@ -107,6 +107,7 @@ lazy val root = (project in file("."))
   .disablePlugins(AssemblyPlugin)
   .aggregate(core, uberJar, shaded)
   .settings(
+    name := "spark-protobuf",
     publish / skip := true,
     sourcesInBase := false
   )
