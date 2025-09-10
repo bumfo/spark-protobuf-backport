@@ -3,6 +3,10 @@ package benchmark
 import com.google.protobuf._
 import fastproto.WireFormatConverter
 import org.apache.spark.sql.types._
+import org.apache.spark.sql.catalyst.expressions.Literal
+import org.apache.spark.sql.{Column, SparkSession}
+import org.apache.spark.sql.protobuf.backport.functions
+import fastproto.ProtoToRowGenerator
 import org.scalatest.flatspec.AnyFlatSpec
 import org.scalatest.matchers.should.Matchers
 
@@ -61,10 +65,44 @@ class WireFormatConverterBenchmark extends AnyFlatSpec with Matchers {
     println(s"Running benchmark with $iterations iterations...")
     println(s"Message size: ${binary.length} bytes")
     
-    // Warm up JVM
+    // Create components for fair DynamicMessage comparison - use from_protobuf function instead
+    
+    // Create a minimal SparkSession for testing
+    val spark = SparkSession.builder()
+      .appName("benchmark")
+      .master("local[1]")
+      .config("spark.sql.adaptive.enabled", false)
+      .config("spark.serializer", "org.apache.spark.serializer.KryoSerializer")
+      .getOrCreate()
+      
+    spark.sparkContext.setLogLevel("WARN")
+    
+    // Use the public from_protobuf function for DynamicMessage path
+    // Create proper FileDescriptorSet with dependencies - matching ProtobufBackportSpec
+    val descSet = DescriptorProtos.FileDescriptorSet.newBuilder()
+      .addFile(descriptor.getFile.toProto)
+      .addFile(AnyProto.getDescriptor.getFile.toProto)
+      .addFile(SourceContextProto.getDescriptor.getFile.toProto)
+      .addFile(ApiProto.getDescriptor.getFile.toProto)
+      .build()
+    
+    val binaryCol = new Column(Literal.create(binary, org.apache.spark.sql.types.BinaryType))
+    val fromProtobufExpr = functions.from_protobuf(
+      binaryCol,
+      descriptor.getFullName,
+      descSet.toByteArray
+    )
+    
+    // Compiled message path components  
+    val compiledConverter = ProtoToRowGenerator.generateConverter(descriptor, classOf[com.google.protobuf.Type])
+
+    // Warm up JVM - test all conversion paths
     for (_ <- 1 to 100) {
       converter.convert(binary)
-      DynamicMessage.parseFrom(descriptor, binary)
+      // DynamicMessage path warmup - use nullSafeEval on underlying expression
+      fromProtobufExpr.expr.eval(null)
+      // Compiled path warmup  
+      compiledConverter.convert(binary)
     }
     
     // Benchmark WireFormatConverter
@@ -74,17 +112,17 @@ class WireFormatConverterBenchmark extends AnyFlatSpec with Matchers {
     }
     val wireFormatTime = System.nanoTime() - wireFormatStart
     
-    // Benchmark DynamicMessage
+    // Benchmark DynamicMessage (complete binary → InternalRow via from_protobuf expression)
     val dynamicStart = System.nanoTime()
     for (_ <- 1 to iterations) {
-      DynamicMessage.parseFrom(descriptor, binary)
+      fromProtobufExpr.expr.eval(null)
     }
     val dynamicTime = System.nanoTime() - dynamicStart
     
-    // Benchmark compiled message parsing
+    // Benchmark compiled message (complete binary → InternalRow via generated converter)
     val compiledStart = System.nanoTime()
     for (_ <- 1 to iterations) {
-      Type.parseFrom(binary)
+      compiledConverter.convert(binary)
     }
     val compiledTime = System.nanoTime() - compiledStart
     
@@ -92,22 +130,25 @@ class WireFormatConverterBenchmark extends AnyFlatSpec with Matchers {
     val dynamicMs = dynamicTime / 1e6
     val compiledMs = compiledTime / 1e6
     
-    println(f"WireFormatConverter: ${wireFormatMs}%.2f ms (${wireFormatTime / iterations}%.0f ns/op)")
-    println(f"DynamicMessage:      ${dynamicMs}%.2f ms (${dynamicTime / iterations}%.0f ns/op)")
-    println(f"Compiled parsing:    ${compiledMs}%.2f ms (${compiledTime / iterations}%.0f ns/op)")
+    println(f"WireFormatConverter:    ${wireFormatMs}%.2f ms (${wireFormatTime / iterations}%.0f ns/op)")
+    println(f"DynamicMessage path:    ${dynamicMs}%.2f ms (${dynamicTime / iterations}%.0f ns/op)")
+    println(f"Compiled message path:  ${compiledMs}%.2f ms (${compiledTime / iterations}%.0f ns/op)")
     
     val wireFormatSpeedup = dynamicTime.toDouble / wireFormatTime
     val compiledSpeedup = dynamicTime.toDouble / compiledTime
     
-    println(f"WireFormatConverter is ${wireFormatSpeedup}%.2fx faster than DynamicMessage")
-    println(f"Compiled parsing is ${compiledSpeedup}%.2fx faster than DynamicMessage")
+    println(f"WireFormatConverter is ${wireFormatSpeedup}%.2fx vs DynamicMessage path")
+    println(f"Compiled message path is ${compiledSpeedup}%.2fx vs DynamicMessage path")
     
-    // Performance assertions - Note: WireFormatConverter may have overhead for simple messages
-    // but should show benefits for complex structures or when converting to InternalRow
-    compiledTime should be < dynamicTime   // Compiled should be fastest for parsing only
+    // Performance assertions - Now comparing fair end-to-end binary → InternalRow conversion
+    // Compiled path should be fastest for complete conversion
+    compiledTime should be < dynamicTime   // Compiled should be fastest
     
-    // WireFormatConverter trades parsing speed for elimination of intermediate objects
-    // The benefit is in end-to-end conversion to InternalRow, not just parsing
+    // WireFormatConverter should now be competitive since we're comparing complete conversions
+    // All paths now convert binary → InternalRow, not just parsing
+    
+    // Clean up SparkSession
+    spark.stop()
     
     println("✓ Performance benchmark completed successfully")
   }
@@ -150,10 +191,25 @@ class WireFormatConverterBenchmark extends AnyFlatSpec with Matchers {
     println(s"\\nRunning complex structure benchmark with $iterations iterations...")
     println(s"Complex message size: ${binary.length} bytes")
     
+    // Create components for fair complex benchmark
+    val complexDescSet = DescriptorProtos.FileDescriptorSet.newBuilder()
+      .addFile(descriptor.getFile.toProto)
+      .addFile(AnyProto.getDescriptor.getFile.toProto)
+      .addFile(SourceContextProto.getDescriptor.getFile.toProto)
+      .addFile(ApiProto.getDescriptor.getFile.toProto)
+      .build()
+      
+    val complexBinaryCol = new Column(Literal.create(binary, org.apache.spark.sql.types.BinaryType))
+    val complexFromProtobufExpr = functions.from_protobuf(
+      complexBinaryCol,
+      descriptor.getFullName,
+      complexDescSet.toByteArray
+    )
+    
     // Warm up
     for (_ <- 1 to 50) {
       converter.convert(binary)
-      DynamicMessage.parseFrom(descriptor, binary)
+      complexFromProtobufExpr.expr.eval(null)
     }
     
     // Benchmark
@@ -165,7 +221,7 @@ class WireFormatConverterBenchmark extends AnyFlatSpec with Matchers {
     
     val dynamicStart = System.nanoTime()
     for (_ <- 1 to iterations) {
-      DynamicMessage.parseFrom(descriptor, binary)
+      complexFromProtobufExpr.expr.eval(null)
     }
     val dynamicTime = System.nanoTime() - dynamicStart
     
@@ -174,12 +230,11 @@ class WireFormatConverterBenchmark extends AnyFlatSpec with Matchers {
     val speedup = dynamicTime.toDouble / wireFormatTime
     
     println(f"Complex WireFormatConverter: ${wireFormatMs}%.2f ms (${wireFormatTime / iterations}%.0f ns/op)")
-    println(f"Complex DynamicMessage:      ${dynamicMs}%.2f ms (${dynamicTime / iterations}%.0f ns/op)")
+    println(f"Complex DynamicMessage path: ${dynamicMs}%.2f ms (${dynamicTime / iterations}%.0f ns/op)")
     println(f"Speedup: ${speedup}%.2fx")
     
-    // WireFormatConverter trades parsing speed for elimination of intermediate objects
-    // The benefit is in end-to-end conversion to InternalRow, not just parsing speed
-    // For now, ensure both approaches complete successfully without performance requirements
+    // Now comparing fair end-to-end binary → InternalRow conversion for complex structures
+    // Both approaches complete successfully - WireFormatConverter should now be more competitive
     wireFormatTime should be > 0L
     dynamicTime should be > 0L
     
