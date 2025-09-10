@@ -6,9 +6,10 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 This is a Scala/Spark project that backports Spark 3.4's protobuf connector to Spark 3.2.1. It provides `from_protobuf` and `to_protobuf` functions to convert between binary Protobuf data and Spark SQL DataFrames without requiring users to upgrade Spark or patch the runtime.
 
-The project includes two key optimizations:
+The project includes three key optimizations:
 1. **Compiled message support**: When `messageName` refers to a compiled Java class, uses generated `RowConverter` via Janino for direct conversion to `UnsafeRow`, avoiding `DynamicMessage` overhead
-2. **Binary descriptor sets**: Allows passing descriptor bytes directly to avoid file distribution issues on executors
+2. **Wire format converter**: Direct binary parsing for binary descriptor sets using `WireFormatConverter`
+3. **Binary descriptor sets**: Allows passing descriptor bytes directly to avoid file distribution issues on executors
 
 ## Project Structure
 
@@ -28,6 +29,9 @@ sbt --error test
 
 # Run performance benchmarks (excluded from regular tests)
 sbt "core/testOnly benchmark.ProtobufConversionBenchmark -- -n benchmark.Benchmark"
+
+# Run JMH benchmarks
+sbt "core/Jmh/run"
 
 # Build shaded JAR with all dependencies
 sbt assembly

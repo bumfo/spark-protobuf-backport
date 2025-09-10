@@ -24,6 +24,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with th
 **Fast Proto Integration** (`src/main/scala/fastproto/`):
 - `ProtoToRowGenerator` - Generates optimized `RowConverter` implementations using Janino
 - `RowConverter` - Interface for direct protobuf message → `UnsafeRow` conversion
+- `WireFormatConverter` - Direct wire format parsing to UnsafeRow without intermediate message objects
 
 **Spark Compatibility Shims** (`shims/` subdirectory):
 - Error handling and query compilation compatibility layer for Spark 3.2.1
@@ -35,6 +36,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with th
 3. **Schema inference caching**: Lazy computation of Spark schemas from protobuf descriptors
 4. **Parse mode handling**: Supports both permissive (null on error) and fail-fast modes
 5. **Enhanced code generation**: `doGenCode` method generates optimized code when `rowConverterOpt` is available
+6. **Wire format optimization**: Direct parsing for binary descriptor sets when possible
 
 ## Development Notes
 
@@ -49,26 +51,36 @@ The tests verify three usage patterns: compiled class, descriptor file, and bina
 
 ## Performance Benchmarking
 
-The benchmark in `ProtobufConversionBenchmark.scala` compares performance between the three conversion approaches:
+The project includes comprehensive benchmarking infrastructure to validate optimization impact:
 
 - **Compiled class path**: Uses generated `RowConverter` via Janino for direct `UnsafeRow` conversion
-- **Descriptor file path**: Uses `DynamicMessage` parsing with descriptor file lookup
-- **Binary descriptor set path**: Uses `DynamicMessage` parsing with embedded descriptor bytes
+- **Wire format path**: Uses `WireFormatConverter` for direct binary parsing with binary descriptor sets  
+- **Dynamic message path**: Uses `DynamicMessage` parsing for maximum compatibility
 
-**Current findings**: Benchmark results show that DynamicMessage paths are currently 2-3x faster than the codegen path in DataFrame operations. This reveals optimization opportunities for:
-- Janino compilation caching to avoid runtime overhead
-- Generated code efficiency improvements  
-- Better utilization of JVM optimizations
-- Performance gains may be more apparent with larger batch sizes
+### Benchmarking Infrastructure
+
+The project integrates JMH (Java Microbenchmark Harness) for professional performance validation:
+- Fork isolation prevents JVM warmup contamination between benchmarks
+- Statistical analysis provides confidence intervals
+- Enables tracking optimization impact over time
 
 ### Running Benchmarks
 
 ```bash
-# Run performance benchmarks
+# Run traditional ScalaTest benchmarks
 sbt "testOnly *ProtobufConversionBenchmark*"
+
+# Run JMH benchmarks (all)
+sbt "core/Jmh/run"
+
+# Run specific JMH benchmarks
+sbt "core/Jmh/run .*WireFormatConverter.*"
+
+# Quick JMH test with minimal iterations
+sbt "core/Jmh/run -wi 2 -i 3 -f 1"
 ```
 
-The benchmark provides a foundation for measuring and tracking performance improvements as the codebase evolves.
+The benchmarking infrastructure provides a foundation for measuring and tracking performance improvements as the codebase evolves.
 
 ## Code Generation Optimization
 
