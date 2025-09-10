@@ -80,16 +80,18 @@ class WireFormatConverter(
   private def buildFieldMapping(): Map[Int, FieldMapping] = {
     val mapping = mutable.Map[Int, FieldMapping]()
     
-    descriptor.getFields.asScala.zipWithIndex.foreach { case (field, ordinal) =>
-      // Only include fields that exist in the Spark schema
-      if (ordinal < sparkSchema.length) {
-        val sparkField = sparkSchema.fields(ordinal)
-        mapping(field.getNumber) = FieldMapping(
-          fieldDescriptor = field,
-          rowOrdinal = ordinal,
-          sparkDataType = sparkField.dataType,
-          isRepeated = field.isRepeated
-        )
+    descriptor.getFields.asScala.foreach { field =>
+      // Find corresponding field in Spark schema by name
+      sparkSchema.fields.zipWithIndex.find(_._1.name == field.getName) match {
+        case Some((sparkField, ordinal)) =>
+          mapping(field.getNumber) = FieldMapping(
+            fieldDescriptor = field,
+            rowOrdinal = ordinal,
+            sparkDataType = sparkField.dataType,
+            isRepeated = field.isRepeated
+          )
+        case None =>
+          // Field exists in protobuf but not in Spark schema - skip it
       }
     }
     
@@ -195,7 +197,8 @@ class WireFormatConverter(
     val messageBytes = input.readBytes().toByteArray
     nestedConverters.get(mapping.fieldDescriptor.getNumber) match {
       case Some(converter) =>
-        val nestedRow = converter.convert(messageBytes, writer).asInstanceOf[org.apache.spark.sql.catalyst.expressions.UnsafeRow]
+        // Convert without sharing parent writer to avoid circular dependency
+        val nestedRow = converter.convert(messageBytes).asInstanceOf[org.apache.spark.sql.catalyst.expressions.UnsafeRow]
         writer.write(mapping.rowOrdinal, nestedRow)
       case None =>
         throw new IllegalStateException(s"No nested converter found for field ${mapping.fieldDescriptor.getName}")
