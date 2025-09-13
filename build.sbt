@@ -4,6 +4,7 @@
 
 ThisBuild / scalaVersion     := "2.12.15"
 ThisBuild / version          := "0.1.0-SNAPSHOT"
+ThisBuild / organization     := "com.example"
 
 // Provide Spark as a provided dependency – users must supply their own
 // `spark-core` and `spark-sql` jars at runtime.  Note that the
