@@ -16,7 +16,8 @@
 package org.apache.spark.sql.protobuf.backport
 
 import com.google.protobuf.{DynamicMessage, Message => PbMessage}
-import fastproto.{ProtoToRowGenerator, RowConverter, WireFormatConverter, WireFormatToRowGenerator, AbstractRowConverter}
+import fastproto.{AbstractRowConverter, ProtoToRowGenerator, WireFormatToRowGenerator}
+import fastproto.RowConverter
 import org.apache.spark.sql.catalyst.expressions.codegen.{CodeGenerator, CodegenContext, ExprCode}
 import org.apache.spark.sql.catalyst.expressions.{ExpectsInputTypes, Expression, UnaryExpression}
 import org.apache.spark.sql.catalyst.util.{FailFastMode, ParseMode, PermissiveMode}
