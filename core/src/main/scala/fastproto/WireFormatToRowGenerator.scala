@@ -218,18 +218,28 @@ object WireFormatToRowGenerator {
   }
 
   /**
-   * Generate field constants for compile-time optimization.
+   * Generate tag constants for direct tag switching.
    */
   private def generateFieldConstants(code: StringBuilder, descriptor: Descriptor, schema: StructType): Unit = {
-    code ++= "  // Field ordinal constants for compile-time optimization\n"
+    code ++= "  // Tag constants for direct switch (field_number << 3 | wire_type)\n"
     descriptor.getFields.asScala.foreach { field =>
       try {
-        val ordinal = schema.fieldIndex(field.getName)
-        code ++= s"  private static final int FIELD_${field.getNumber}_ORDINAL = $ordinal;\n"
-
-        // Wire type constants
+        schema.fieldIndex(field.getName) // Check field exists in schema
         val expectedWireType = getExpectedWireType(field.getType)
-        code ++= s"  private static final int FIELD_${field.getNumber}_WIRE_TYPE = $expectedWireType;\n"
+        val tag = (field.getNumber << 3) | expectedWireType
+        code ++= s"  private static final int FIELD_${field.getNumber}_TAG = $tag;\n"
+
+        if (field.isRepeated) {
+          // For repeated fields, also generate packed wire type tag if packable
+          field.getType match {
+            case FieldDescriptor.Type.STRING | FieldDescriptor.Type.BYTES | FieldDescriptor.Type.MESSAGE =>
+              // These types are not packable, skip
+            case _ =>
+              // Generate packed tag (always LENGTH_DELIMITED for packed fields)
+              val packedTag = (field.getNumber << 3) | 2 // WIRETYPE_LENGTH_DELIMITED = 2
+              code ++= s"  private static final int FIELD_${field.getNumber}_PACKED_TAG = $packedTag;\n"
+          }
+        }
       } catch {
         case _: IllegalArgumentException =>
           // Field not in schema, skip
@@ -297,27 +307,24 @@ object WireFormatToRowGenerator {
 
     code ++= "\n    try {\n"
     code ++= "      while (!input.isAtEnd()) {\n"
-    code ++= "        int tag = input.readTag();\n"
-    code ++= "        int fieldNumber = WireFormat.getTagFieldNumber(tag);\n"
-    code ++= "        int wireType = WireFormat.getTagWireType(tag);\n\n"
+    code ++= "        int tag = input.readTag();\n\n"
 
-    // Generate field dispatch - ordered by field number for better branch prediction
+    // Generate direct tag switch for maximum performance
     val schemaFields = descriptor.getFields.asScala
       .filter(field => schema.fieldNames.contains(field.getName))
       .sortBy(_.getNumber) // Natural order for better branch prediction
 
     if (schemaFields.nonEmpty) {
-      // Generate if-else chain ordered by field number
-      schemaFields.zipWithIndex.foreach { case (field, index) =>
-        val fieldNum = field.getNumber
-        val ifClause = if (index == 0) "if" else "} else if"
+      code ++= "        switch (tag) {\n"
 
-        code ++= s"        $ifClause (fieldNumber == $fieldNum) {\n"
-        generateFieldParsing(code, field, schema)
+      schemaFields.foreach { field =>
+        generateFieldTagCases(code, field, schema)
       }
-      code ++= "        } else {\n"
-      code ++= "          // Unknown field - skip\n"
-      code ++= "          input.skipField(tag);\n"
+
+      code ++= "          default:\n"
+      code ++= "            // Unknown tag - skip field\n"
+      code ++= "            input.skipField(tag);\n"
+      code ++= "            break;\n"
       code ++= "        }\n"
     } else {
       code ++= "        // No known fields - skip all\n"
@@ -343,93 +350,93 @@ object WireFormatToRowGenerator {
   }
 
   /**
-   * Generate parsing logic for a specific field.
+   * Generate switch cases for a specific field's tags.
    */
-  private def generateFieldParsing(code: StringBuilder, field: FieldDescriptor, schema: StructType): Unit = {
+  private def generateFieldTagCases(code: StringBuilder, field: FieldDescriptor, schema: StructType): Unit = {
     val fieldNum = field.getNumber
     val ordinal = schema.fieldIndex(field.getName)
 
     if (field.isRepeated) {
-      generateRepeatedFieldParsing(code, field)
+      generateRepeatedFieldTagCases(code, field, ordinal)
     } else {
-      generateSingularFieldParsing(code, field, ordinal)
+      generateSingularFieldTagCase(code, field, ordinal)
     }
   }
 
   /**
-   * Generate parsing logic for singular fields.
+   * Generate switch case for a singular field tag.
    */
-  private def generateSingularFieldParsing(code: StringBuilder, field: FieldDescriptor, ordinal: Int): Unit = {
+  private def generateSingularFieldTagCase(code: StringBuilder, field: FieldDescriptor, ordinal: Int): Unit = {
     val fieldNum = field.getNumber
-    val expectedWireType = getExpectedWireType(field.getType)
-
-    // Wire type validation with expected type first (likely branch)
-    code ++= s"          if (wireType == FIELD_${fieldNum}_WIRE_TYPE) {\n"
+    code ++= s"          case FIELD_${fieldNum}_TAG:\n"
 
     field.getType match {
       case FieldDescriptor.Type.INT32 =>
-        code ++= s"            writer.write(FIELD_${fieldNum}_ORDINAL, input.readInt32());\n"
+        code ++= s"            writer.write($ordinal, input.readInt32());\n"
       case FieldDescriptor.Type.INT64 =>
-        code ++= s"            writer.write(FIELD_${fieldNum}_ORDINAL, input.readInt64());\n"
+        code ++= s"            writer.write($ordinal, input.readInt64());\n"
       case FieldDescriptor.Type.UINT32 =>
-        code ++= s"            writer.write(FIELD_${fieldNum}_ORDINAL, input.readUInt32());\n"
+        code ++= s"            writer.write($ordinal, input.readUInt32());\n"
       case FieldDescriptor.Type.UINT64 =>
-        code ++= s"            writer.write(FIELD_${fieldNum}_ORDINAL, input.readUInt64());\n"
+        code ++= s"            writer.write($ordinal, input.readUInt64());\n"
       case FieldDescriptor.Type.SINT32 =>
-        code ++= s"            writer.write(FIELD_${fieldNum}_ORDINAL, input.readSInt32());\n"
+        code ++= s"            writer.write($ordinal, input.readSInt32());\n"
       case FieldDescriptor.Type.SINT64 =>
-        code ++= s"            writer.write(FIELD_${fieldNum}_ORDINAL, input.readSInt64());\n"
+        code ++= s"            writer.write($ordinal, input.readSInt64());\n"
       case FieldDescriptor.Type.FIXED32 =>
-        code ++= s"            writer.write(FIELD_${fieldNum}_ORDINAL, input.readFixed32());\n"
+        code ++= s"            writer.write($ordinal, input.readFixed32());\n"
       case FieldDescriptor.Type.FIXED64 =>
-        code ++= s"            writer.write(FIELD_${fieldNum}_ORDINAL, input.readFixed64());\n"
+        code ++= s"            writer.write($ordinal, input.readFixed64());\n"
       case FieldDescriptor.Type.SFIXED32 =>
-        code ++= s"            writer.write(FIELD_${fieldNum}_ORDINAL, input.readSFixed32());\n"
+        code ++= s"            writer.write($ordinal, input.readSFixed32());\n"
       case FieldDescriptor.Type.SFIXED64 =>
-        code ++= s"            writer.write(FIELD_${fieldNum}_ORDINAL, input.readSFixed64());\n"
+        code ++= s"            writer.write($ordinal, input.readSFixed64());\n"
       case FieldDescriptor.Type.FLOAT =>
-        code ++= s"            writer.write(FIELD_${fieldNum}_ORDINAL, input.readFloat());\n"
+        code ++= s"            writer.write($ordinal, input.readFloat());\n"
       case FieldDescriptor.Type.DOUBLE =>
-        code ++= s"            writer.write(FIELD_${fieldNum}_ORDINAL, input.readDouble());\n"
+        code ++= s"            writer.write($ordinal, input.readDouble());\n"
       case FieldDescriptor.Type.BOOL =>
-        code ++= s"            writer.write(FIELD_${fieldNum}_ORDINAL, input.readBool());\n"
+        code ++= s"            writer.write($ordinal, input.readBool());\n"
       case FieldDescriptor.Type.STRING =>
         code ++= s"            byte[] bytes = input.readBytes().toByteArray();\n"
-        code ++= s"            writer.write(FIELD_${fieldNum}_ORDINAL, UTF8String.fromBytes(bytes));\n"
+        code ++= s"            writer.write($ordinal, UTF8String.fromBytes(bytes));\n"
       case FieldDescriptor.Type.BYTES =>
-        code ++= s"            writer.write(FIELD_${fieldNum}_ORDINAL, input.readBytes().toByteArray());\n"
+        code ++= s"            writer.write($ordinal, input.readBytes().toByteArray());\n"
       case FieldDescriptor.Type.ENUM =>
         code ++= s"            int enumValue = input.readEnum();\n"
-        code ++= s"            writer.write(FIELD_${fieldNum}_ORDINAL, UTF8String.fromString(getEnumName${fieldNum}(enumValue)));\n"
+        code ++= s"            writer.write($ordinal, UTF8String.fromString(getEnumName${fieldNum}(enumValue)));\n"
       case FieldDescriptor.Type.MESSAGE =>
         code ++= s"            byte[] messageBytes = input.readBytes().toByteArray();\n"
-        code ++= s"            writeMessage(messageBytes, $fieldNum, FIELD_${fieldNum}_ORDINAL, writer);\n"
+        code ++= s"            writeMessage(messageBytes, $fieldNum, $ordinal, writer);\n"
       case _ =>
         code ++= s"            input.skipField(tag); // Unsupported type\n"
     }
 
-    code ++= "          } else {\n"
-    code ++= "            // Wire type mismatch - skip field\n"
-    code ++= "            input.skipField(tag);\n"
-    code ++= "          }\n"
+    code ++= "            break;\n"
   }
 
   /**
-   * Generate parsing logic for repeated fields.
+   * Generate switch cases for a repeated field (both regular and packed tags).
    */
-  private def generateRepeatedFieldParsing(code: StringBuilder, field: FieldDescriptor): Unit = {
+  private def generateRepeatedFieldTagCases(code: StringBuilder, field: FieldDescriptor, ordinal: Int): Unit = {
     val fieldNum = field.getNumber
 
-    code ++= s"          // Repeated field ${field.getName}\n"
-    code ++= s"          if (wireType == WireFormat.WIRETYPE_LENGTH_DELIMITED && isPackable${field.getType.name()}()) {\n"
-    code ++= s"            // Handle packed encoding\n"
-    generatePackedFieldParsing(code, field)
-    code ++= s"          } else if (wireType == FIELD_${fieldNum}_WIRE_TYPE) {\n"
-    code ++= s"            // Handle single value\n"
+    // Generate regular tag case
+    code ++= s"          case FIELD_${fieldNum}_TAG:\n"
+    code ++= s"            // Single repeated value for field ${field.getName}\n"
     generateSingleRepeatedValueParsing(code, field)
-    code ++= "          } else {\n"
-    code ++= "            input.skipField(tag);\n"
-    code ++= "          }\n"
+    code ++= "            break;\n"
+
+    // Generate packed tag case if applicable
+    field.getType match {
+      case FieldDescriptor.Type.STRING | FieldDescriptor.Type.BYTES | FieldDescriptor.Type.MESSAGE =>
+        // These types are not packable, skip packed case
+      case _ =>
+        code ++= s"          case FIELD_${fieldNum}_PACKED_TAG:\n"
+        code ++= s"            // Packed repeated values for field ${field.getName}\n"
+        generatePackedFieldParsing(code, field)
+        code ++= "            break;\n"
+    }
   }
 
   /**
