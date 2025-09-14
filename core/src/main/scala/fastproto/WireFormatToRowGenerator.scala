@@ -570,16 +570,18 @@ object WireFormatToRowGenerator {
 
         if (methodName != "unsupported") {
           code ++= s"            int packedLength${fieldNum} = input.readRawVarint32();\n"
-          code ++= s"            int oldCount${fieldNum} = field${fieldNum}_count;\n"
-          code ++= s"            field${fieldNum}_values = $methodName(input, field${fieldNum}_values, field${fieldNum}_count, packedLength${fieldNum});\n"
-          // Count parsed values by estimating from packed length
+          code ++= s"            if (packedLength${fieldNum} > 0) {\n"
+          code ++= s"              int oldCount${fieldNum} = field${fieldNum}_count;\n"
+          code ++= s"              field${fieldNum}_values = $methodName(input, field${fieldNum}_values, field${fieldNum}_count, packedLength${fieldNum});\n"
+          // Calculate actual count based on packed length and fixed byte size
           val bytesPerValue = field.getType match {
             case FieldDescriptor.Type.FLOAT => "4"
             case FieldDescriptor.Type.DOUBLE => "8"
             case FieldDescriptor.Type.BOOL => "1"
-            case _ => "4" // Conservative estimate for varints
+            case _ => "1" // For varints, we can't calculate from length, but this shouldn't be reached for the fixed types above
           }
-          code ++= s"            field${fieldNum}_count = oldCount${fieldNum} + Math.max(1, packedLength${fieldNum} / $bytesPerValue);\n"
+          code ++= s"              field${fieldNum}_count = oldCount${fieldNum} + (packedLength${fieldNum} / $bytesPerValue);\n"
+          code ++= s"            }\n"
         }
     }
   }
