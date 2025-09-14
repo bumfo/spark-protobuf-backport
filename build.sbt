@@ -2,14 +2,14 @@
 
 // See README.md for details.  This project targets Scala 2.12 and Spark 3.2.x.
 
-ThisBuild / scalaVersion     := "2.12.15"
-ThisBuild / version          := "0.1.0-SNAPSHOT"
+ThisBuild / scalaVersion := "2.12.15"
+ThisBuild / version := "0.1.0-SNAPSHOT"
 
 // Provide Spark as a provided dependency – users must supply their own
 // `spark-core` and `spark-sql` jars at runtime.  Note that the
 // protobuf runtime is shaded via sbt‑assembly; see assembly.sbt.
-lazy val sparkVersion         = "3.2.1"
-lazy val protobufVersion      = "3.21.7"
+lazy val sparkVersion = "3.2.1"
+lazy val protobufVersion = "3.21.7"
 
 // Task keys
 lazy val generateConverters = taskKey[Unit]("Generate converter code from protobuf files")
@@ -28,6 +28,7 @@ lazy val commonDependencies = Seq(
 // shading rules and merge strategies are defined here rather than
 // in project/assembly.sbt to avoid build‑loading issues.  See
 // project/plugins.sbt for enabling the plugin.
+
 import sbtassembly.AssemblyPlugin.autoImport._
 
 // Base project with common settings
@@ -44,31 +45,10 @@ lazy val commonSettings = Seq(
 // Root project - core with source code, protobuf provided
 lazy val core = project
   .disablePlugins(AssemblyPlugin)
-  .enablePlugins(JmhPlugin)
   .settings(commonSettings)
   .settings(
     name := "spark-protobuf-backport",
     publishArtifact := true,
-    // Redefine test task using testOnly with args to exclude benchmarks
-    Test / test := {
-      (Test / testOnly).toTask(" * -- -l benchmark.Benchmark").value
-    },
-    // Add a benchmark task that runs benchmarks only  
-    TaskKey[Unit]("benchmark") := {
-      (Test / testOnly).toTask(" benchmark.* -- -n benchmark.Benchmark").value
-    },
-    // JMH benchmark configuration
-    Jmh / sourceDirectory := (Test / sourceDirectory).value,
-    Jmh / classDirectory := (Test / classDirectory).value,
-    Jmh / dependencyClasspath := (Test / dependencyClasspath).value,
-    // Compile JMH benchmarks with test classpath
-    Jmh / compile := (Jmh / compile).dependsOn(Test / compile).value,
-    // Add JMH-specific dependencies to make Spark available at runtime
-    libraryDependencies ++= Seq(
-      "org.apache.spark" %% "spark-sql" % sparkVersion % "jmh,test",
-      "org.apache.spark" %% "spark-core" % sparkVersion % "jmh,test",
-      "com.google.protobuf" % "protobuf-java" % protobufVersion % "jmh,test"
-    ),
     // Simple task to run the converter code generator
     generateConverters := {
       println("Running converter code generation...")
@@ -85,6 +65,34 @@ lazy val core = project
     )
   )
 
+// Dedicated benchmark project
+lazy val bench = project
+  .dependsOn(core)
+  .enablePlugins(JmhPlugin)
+  .settings(commonSettings)
+  .settings(
+    name := "spark-protobuf-backport-bench",
+    publish / skip := true,
+    // JMH benchmark configuration
+    Jmh / sourceDirectory := (Test / sourceDirectory).value,
+    Jmh / classDirectory := (Test / classDirectory).value,
+    Jmh / dependencyClasspath := (Test / dependencyClasspath).value,
+    // Compile JMH benchmarks with test classpath
+    Jmh / compile := (Jmh / compile).dependsOn(Test / compile).value,
+    libraryDependencies ++= commonDependencies ++ Seq(
+      // Add full Spark and protobuf dependencies for benchmarking
+      "org.apache.spark" %% "spark-sql" % sparkVersion % "jmh,test",
+      "org.apache.spark" %% "spark-core" % sparkVersion % "jmh,test",
+      "com.google.protobuf" % "protobuf-java" % protobufVersion
+    ),
+    // Protocol buffers compilation for Java sources
+    Compile / PB.targets := Seq(
+      PB.gens.java -> (Compile / sourceManaged).value
+    ),
+    // Make sure protobuf compilation happens before regular compilation
+    Compile / compile := (Compile / compile).dependsOn(Compile / PB.generate).value
+  )
+
 // UberJar project - builds the assembly JAR with all dependencies
 lazy val uberJar = (project in file("uber"))
   .enablePlugins(AssemblyPlugin)
@@ -97,16 +105,16 @@ lazy val uberJar = (project in file("uber"))
       // Protobuf as compile dependency - will be shaded and included
       "com.google.protobuf" % "protobuf-java" % protobufVersion
     ),
-    
+
     // Assembly settings
     assembly / assemblyMergeStrategy := {
-      case PathList("META-INF", _ @ _*) => MergeStrategy.discard
+      case PathList("META-INF", _@_*) => MergeStrategy.discard
       case x => MergeStrategy.first
     },
     assembly / test := {},
     assembly / assemblyJarName := "spark-protobuf-backport-shaded-" + version.value + ".jar",
     assembly / assemblyOption := (assembly / assemblyOption).value.withIncludeScala(false),
-    
+
     // Shade protobuf to match Spark's expected shading pattern
     assemblyShadeRules ++= Seq(
       ShadeRule.rename("com.google.protobuf.**" -> "org.sparkproject.spark_protobuf.protobuf.@1").inAll
@@ -121,10 +129,10 @@ lazy val shaded = project
     // Use the assembly JAR from uberJar project as our main artifact
     Compile / packageBin := (uberJar / assembly).value
   )
-  
+
 lazy val root = (project in file("."))
   .disablePlugins(AssemblyPlugin)
-  .aggregate(core, uberJar, shaded)
+  .aggregate(core, bench, uberJar, shaded)
   .settings(
     name := "spark-protobuf",
     publish / skip := true,

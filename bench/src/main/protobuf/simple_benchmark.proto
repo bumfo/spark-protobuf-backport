@@ -1,0 +1,157 @@
+syntax = "proto3";
+
+package benchmark;
+
+option java_package = "benchmark";
+option java_outer_classname = "SimpleBenchmarkProtos";
+
+// Simple message with 100+ scalar and repeated scalar fields for benchmarking
+message SimpleMessage {
+  // Scalar fields (integers)
+  int32 field_int32_001 = 1;
+  int32 field_int32_002 = 2;
+  int32 field_int32_003 = 3;
+  int32 field_int32_004 = 4;
+  int32 field_int32_005 = 5;
+  int32 field_int32_006 = 6;
+  int32 field_int32_007 = 7;
+  int32 field_int32_008 = 8;
+  int32 field_int32_009 = 9;
+  int32 field_int32_010 = 10;
+  int32 field_int32_011 = 11;
+  int32 field_int32_012 = 12;
+  int32 field_int32_013 = 13;
+  int32 field_int32_014 = 14;
+  int32 field_int32_015 = 15;
+  int32 field_int32_016 = 16;
+  int32 field_int32_017 = 17;
+  int32 field_int32_018 = 18;
+  int32 field_int32_019 = 19;
+  int32 field_int32_020 = 20;
+
+  // Scalar fields (longs)
+  int64 field_int64_021 = 21;
+  int64 field_int64_022 = 22;
+  int64 field_int64_023 = 23;
+  int64 field_int64_024 = 24;
+  int64 field_int64_025 = 25;
+  int64 field_int64_026 = 26;
+  int64 field_int64_027 = 27;
+  int64 field_int64_028 = 28;
+  int64 field_int64_029 = 29;
+  int64 field_int64_030 = 30;
+  int64 field_int64_031 = 31;
+  int64 field_int64_032 = 32;
+  int64 field_int64_033 = 33;
+  int64 field_int64_034 = 34;
+  int64 field_int64_035 = 35;
+  int64 field_int64_036 = 36;
+  int64 field_int64_037 = 37;
+  int64 field_int64_038 = 38;
+  int64 field_int64_039 = 39;
+  int64 field_int64_040 = 40;
+
+  // Scalar fields (floats)
+  float field_float_041 = 41;
+  float field_float_042 = 42;
+  float field_float_043 = 43;
+  float field_float_044 = 44;
+  float field_float_045 = 45;
+  float field_float_046 = 46;
+  float field_float_047 = 47;
+  float field_float_048 = 48;
+  float field_float_049 = 49;
+  float field_float_050 = 50;
+
+  // Scalar fields (doubles)
+  double field_double_051 = 51;
+  double field_double_052 = 52;
+  double field_double_053 = 53;
+  double field_double_054 = 54;
+  double field_double_055 = 55;
+  double field_double_056 = 56;
+  double field_double_057 = 57;
+  double field_double_058 = 58;
+  double field_double_059 = 59;
+  double field_double_060 = 60;
+
+  // Scalar fields (booleans)
+  bool field_bool_061 = 61;
+  bool field_bool_062 = 62;
+  bool field_bool_063 = 63;
+  bool field_bool_064 = 64;
+  bool field_bool_065 = 65;
+  bool field_bool_066 = 66;
+  bool field_bool_067 = 67;
+  bool field_bool_068 = 68;
+  bool field_bool_069 = 69;
+  bool field_bool_070 = 70;
+
+  // Scalar fields (strings)
+  string field_string_071 = 71;
+  string field_string_072 = 72;
+  string field_string_073 = 73;
+  string field_string_074 = 74;
+  string field_string_075 = 75;
+  string field_string_076 = 76;
+  string field_string_077 = 77;
+  string field_string_078 = 78;
+  string field_string_079 = 79;
+  string field_string_080 = 80;
+
+  // Scalar fields (bytes)
+  bytes field_bytes_081 = 81;
+  bytes field_bytes_082 = 82;
+  bytes field_bytes_083 = 83;
+  bytes field_bytes_084 = 84;
+  bytes field_bytes_085 = 85;
+
+  // Repeated scalar fields (integers)
+  repeated int32 repeated_int32_086 = 86;
+  repeated int32 repeated_int32_087 = 87;
+  repeated int32 repeated_int32_088 = 88;
+  repeated int32 repeated_int32_089 = 89;
+  repeated int32 repeated_int32_090 = 90;
+
+  // Repeated scalar fields (longs)
+  repeated int64 repeated_int64_091 = 91;
+  repeated int64 repeated_int64_092 = 92;
+  repeated int64 repeated_int64_093 = 93;
+  repeated int64 repeated_int64_094 = 94;
+  repeated int64 repeated_int64_095 = 95;
+
+  // Repeated scalar fields (floats)
+  repeated float repeated_float_096 = 96;
+  repeated float repeated_float_097 = 97;
+  repeated float repeated_float_098 = 98;
+  repeated float repeated_float_099 = 99;
+  repeated float repeated_float_100 = 100;
+
+  // Repeated scalar fields (doubles)
+  repeated double repeated_double_101 = 101;
+  repeated double repeated_double_102 = 102;
+  repeated double repeated_double_103 = 103;
+  repeated double repeated_double_104 = 104;
+  repeated double repeated_double_105 = 105;
+
+  // Repeated scalar fields (booleans)
+  repeated bool repeated_bool_106 = 106;
+  repeated bool repeated_bool_107 = 107;
+  repeated bool repeated_bool_108 = 108;
+  repeated bool repeated_bool_109 = 109;
+  repeated bool repeated_bool_110 = 110;
+
+  // Repeated scalar fields (strings)
+  repeated string repeated_string_111 = 111;
+  repeated string repeated_string_112 = 112;
+  repeated string repeated_string_113 = 113;
+  repeated string repeated_string_114 = 114;
+  repeated string repeated_string_115 = 115;
+
+  // Repeated scalar fields (bytes)
+  repeated bytes repeated_bytes_116 = 116;
+  repeated bytes repeated_bytes_117 = 117;
+  repeated bytes repeated_bytes_118 = 118;
+  repeated bytes repeated_bytes_119 = 119;
+  repeated bytes repeated_bytes_120 = 120;
+}

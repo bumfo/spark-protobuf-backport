@@ -516,10 +516,10 @@ object WireFormatToRowGenerator {
       case _ => "unsupported"
     }
 
-    if (methodName != "unsupported") {
-      code ++= s"            int parsed = $methodName(input, field${fieldNum}_values, field${fieldNum}_values.length - field${fieldNum}_count);\n"
-      code ++= s"            field${fieldNum}_count += parsed;\n"
-    }
+    // if (methodName != "unsupported") {
+    //   code ++= s"            int parsed = $methodName(input, field${fieldNum}_values, field${fieldNum}_values.length - field${fieldNum}_count);\n"
+    //   code ++= s"            field${fieldNum}_count += parsed;\n"
+    // }
   }
 
   /**

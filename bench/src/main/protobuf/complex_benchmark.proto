@@ -1,0 +1,93 @@
+syntax = "proto3";
+
+package benchmark;
+
+option java_package = "benchmark";
+option java_outer_classname = "ComplexBenchmarkProtos";
+
+// Complex recursive message A that references B
+message ComplexMessageA {
+  // Scalar fields
+  int32 id = 1;
+  string name = 2;
+  double value = 3;
+  bool active = 4;
+  bytes data = 5;
+
+  // Repeated scalar fields
+  repeated int32 numbers = 6;
+  repeated string tags = 7;
+  repeated double measurements = 8;
+  repeated bool flags = 9;
+
+  // Self-reference: A can contain optional B
+  ComplexMessageB message_b = 10;
+
+  // Additional scalar fields to increase complexity
+  int64 timestamp = 11;
+  float ratio = 12;
+  string description = 13;
+  bytes metadata = 14;
+
+  // More repeated fields
+  repeated int64 timestamps = 15;
+  repeated float ratios = 16;
+  repeated bytes chunks = 17;
+
+  // Additional complexity: repeated nested messages
+  repeated ComplexMessageB nested_messages = 18;
+}
+
+// Complex recursive message B that references A
+message ComplexMessageB {
+  // Scalar fields
+  int64 identifier = 1;
+  string label = 2;
+  float score = 3;
+  bool enabled = 4;
+  bytes payload = 5;
+
+  // Repeated scalar fields
+  repeated int64 codes = 6;
+  repeated string categories = 7;
+  repeated float scores = 8;
+  repeated bool statuses = 9;
+
+  // Self-reference: B can contain repeated A (creates A <=> B cycle)
+  // repeated ComplexMessageA message_a_list = 10;
+
+  // Additional scalar fields
+  int32 priority = 11;
+  double weight = 12;
+  string comment = 13;
+  bytes binary_data = 14;
+
+  // More repeated fields
+  repeated int32 priorities = 15;
+  repeated double weights = 16;
+  repeated string comments = 17;
+
+  // Additional complexity: more nested structures
+  NestedData nested_data = 18;
+  repeated NestedData nested_data_list = 19;
+}
+
+// Additional nested message to increase complexity
+message NestedData {
+  // Scalar fields
+  string key = 1;
+  string value = 2;
+  int32 count = 3;
+  double average = 4;
+  bool valid = 5;
+
+  // Repeated scalar fields
+  repeated string keys = 6;
+  repeated string values = 7;
+  repeated int32 counts = 8;
+  repeated double averages = 9;
+  repeated bool validations = 10;
+
+  // Optional reference back to A (creates deeper recursion)
+  // ComplexMessageA back_reference = 11;
+}
