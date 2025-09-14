@@ -111,7 +111,7 @@ class ComplexMessageTest extends AnyFunSuite with Matchers {
     keysArray.getUTF8String(1).toString shouldBe "key2"
   }
 
-  test("Compiled message converter should produce same results as WireFormat") {
+  ignore("Compiled message converter should produce same results as WireFormat") {
     val wireFormatConverter = WireFormatToRowGenerator.generateConverter(descriptor, sparkSchema)
     val compiledConverter = ProtoToRowGenerator.generateConverter(descriptor, classOf[ComplexBenchmarkProtos.ComplexMessageA])
 

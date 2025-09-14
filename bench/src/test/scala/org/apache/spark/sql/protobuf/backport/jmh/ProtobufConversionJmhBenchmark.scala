@@ -50,16 +50,16 @@ class ProtobufConversionJmhBenchmark {
 
   // Converters for simple schema
   var simpleDirectConverter: WireFormatConverter = _
-  var simpleBinaryDescExpression: ProtobufDataToCatalyst = _
-  var simpleDescriptorFileExpression: ProtobufDataToCatalyst = _
-  var simpleCompiledConverter: fastproto.RowConverter = _
+  // var simpleBinaryDescExpression: ProtobufDataToCatalyst = _
+  // var simpleDescriptorFileExpression: ProtobufDataToCatalyst = _
+  // var simpleCompiledConverter: fastproto.RowConverter = _
   var simpleGeneratedConverter: fastproto.AbstractWireFormatConverter = _
 
   // Converters for complex schema
   var complexDirectConverter: WireFormatConverter = _
-  var complexBinaryDescExpression: ProtobufDataToCatalyst = _
-  var complexDescriptorFileExpression: ProtobufDataToCatalyst = _
-  var complexCompiledConverter: fastproto.RowConverter = _
+  // var complexBinaryDescExpression: ProtobufDataToCatalyst = _
+  // var complexDescriptorFileExpression: ProtobufDataToCatalyst = _
+  // var complexCompiledConverter: fastproto.RowConverter = _
   var complexGeneratedConverter: fastproto.AbstractWireFormatConverter = _
 
   @Setup
@@ -100,55 +100,55 @@ class ProtobufConversionJmhBenchmark {
 
     // === Initialize Simple Schema Converters ===
     simpleDirectConverter = new WireFormatConverter(simpleDescriptor, simpleSparkSchema)
-
-    simpleBinaryDescExpression = ProtobufDataToCatalyst(
-      child = Literal.create(simpleBinary, BinaryType),
-      messageName = simpleDescriptor.getFullName,
-      descFilePath = None,
-      options = Map.empty,
-      binaryDescriptorSet = Some(simpleDescSet)
-    )
-
-    simpleDescriptorFileExpression = ProtobufDataToCatalyst(
-      child = Literal.create(simpleBinary, BinaryType),
-      messageName = simpleDescriptor.getFullName,
-      descFilePath = Some(simpleTempDescFile.getAbsolutePath),
-      options = Map.empty,
-      binaryDescriptorSet = None
-    )
-
-    simpleCompiledConverter = ProtoToRowGenerator.generateConverter(
-      simpleDescriptor,
-      classOf[SimpleBenchmarkProtos.SimpleMessage]
-    )
-
     simpleGeneratedConverter = WireFormatToRowGenerator.generateConverter(simpleDescriptor, simpleSparkSchema)
+
+    // simpleBinaryDescExpression = ProtobufDataToCatalyst(
+    //   child = Literal.create(simpleBinary, BinaryType),
+    //   messageName = simpleDescriptor.getFullName,
+    //   descFilePath = None,
+    //   options = Map.empty,
+    //   binaryDescriptorSet = Some(simpleDescSet)
+    // )
+    //
+    // simpleDescriptorFileExpression = ProtobufDataToCatalyst(
+    //   child = Literal.create(simpleBinary, BinaryType),
+    //   messageName = simpleDescriptor.getFullName,
+    //   descFilePath = Some(simpleTempDescFile.getAbsolutePath),
+    //   options = Map.empty,
+    //   binaryDescriptorSet = None
+    // )
+    //
+    // simpleCompiledConverter = ProtoToRowGenerator.generateConverter(
+    //   simpleDescriptor,
+    //   classOf[SimpleBenchmarkProtos.SimpleMessage]
+    // )
+
 
     // === Initialize Complex Schema Converters ===
     complexDirectConverter = new WireFormatConverter(complexDescriptor, complexSparkSchema)
-
-    complexBinaryDescExpression = ProtobufDataToCatalyst(
-      child = Literal.create(complexBinary, BinaryType),
-      messageName = complexDescriptor.getFullName,
-      descFilePath = None,
-      options = Map.empty,
-      binaryDescriptorSet = Some(complexDescSet)
-    )
-
-    complexDescriptorFileExpression = ProtobufDataToCatalyst(
-      child = Literal.create(complexBinary, BinaryType),
-      messageName = complexDescriptor.getFullName,
-      descFilePath = Some(complexTempDescFile.getAbsolutePath),
-      options = Map.empty,
-      binaryDescriptorSet = None
-    )
-
-    complexCompiledConverter = ProtoToRowGenerator.generateConverter(
-      complexDescriptor,
-      classOf[ComplexBenchmarkProtos.ComplexMessageA]
-    )
-
     complexGeneratedConverter = WireFormatToRowGenerator.generateConverter(complexDescriptor, complexSparkSchema)
+
+    // complexBinaryDescExpression = ProtobufDataToCatalyst(
+    //   child = Literal.create(complexBinary, BinaryType),
+    //   messageName = complexDescriptor.getFullName,
+    //   descFilePath = None,
+    //   options = Map.empty,
+    //   binaryDescriptorSet = Some(complexDescSet)
+    // )
+    //
+    // complexDescriptorFileExpression = ProtobufDataToCatalyst(
+    //   child = Literal.create(complexBinary, BinaryType),
+    //   messageName = complexDescriptor.getFullName,
+    //   descFilePath = Some(complexTempDescFile.getAbsolutePath),
+    //   options = Map.empty,
+    //   binaryDescriptorSet = None
+    // )
+    //
+    // complexCompiledConverter = ProtoToRowGenerator.generateConverter(
+    //   complexDescriptor,
+    //   classOf[ComplexBenchmarkProtos.ComplexMessageA]
+    // )
+
   }
 
   @TearDown
@@ -169,46 +169,46 @@ class ProtobufConversionJmhBenchmark {
     bh.consume(simpleDirectConverter.convert(simpleBinary))
   }
 
-  @Benchmark
-  def simpleCompiledMessageConverter(bh: Blackhole): Unit = {
-    bh.consume(simpleCompiledConverter.convert(simpleBinary))
-  }
-
-  @Benchmark
-  def simpleDynamicMessageDescriptorFile(bh: Blackhole): Unit = {
-    bh.consume(simpleDescriptorFileExpression.nullSafeEval(simpleBinary))
-  }
-
-  @Benchmark
-  def simpleDynamicMessageBinaryDescriptor(bh: Blackhole): Unit = {
-    bh.consume(simpleBinaryDescExpression.nullSafeEval(simpleBinary))
-  }
+  // @Benchmark
+  // def simpleCompiledMessageConverter(bh: Blackhole): Unit = {
+  //   bh.consume(simpleCompiledConverter.convert(simpleBinary))
+  // }
+  //
+  // @Benchmark
+  // def simpleDynamicMessageDescriptorFile(bh: Blackhole): Unit = {
+  //   bh.consume(simpleDescriptorFileExpression.nullSafeEval(simpleBinary))
+  // }
+  //
+  // @Benchmark
+  // def simpleDynamicMessageBinaryDescriptor(bh: Blackhole): Unit = {
+  //   bh.consume(simpleBinaryDescExpression.nullSafeEval(simpleBinary))
+  // }
 
   // === Complex Schema Benchmarks (Recursive A <=> B) ===
 
-  @Benchmark
-  def complexGeneratedWireFormatConverter(bh: Blackhole): Unit = {
-    bh.consume(complexGeneratedConverter.convert(complexBinary))
-  }
-
-  @Benchmark
-  def complexDirectWireFormatConverter(bh: Blackhole): Unit = {
-    bh.consume(complexDirectConverter.convert(complexBinary))
-  }
-
-  @Benchmark
-  def complexCompiledMessageConverter(bh: Blackhole): Unit = {
-    bh.consume(complexCompiledConverter.convert(complexBinary))
-  }
-
-  @Benchmark
-  def complexDynamicMessageDescriptorFile(bh: Blackhole): Unit = {
-    bh.consume(complexDescriptorFileExpression.nullSafeEval(complexBinary))
-  }
-
-  @Benchmark
-  def complexDynamicMessageBinaryDescriptor(bh: Blackhole): Unit = {
-    bh.consume(complexBinaryDescExpression.nullSafeEval(complexBinary))
-  }
+  // @Benchmark
+  // def complexGeneratedWireFormatConverter(bh: Blackhole): Unit = {
+  //   bh.consume(complexGeneratedConverter.convert(complexBinary))
+  // }
+  //
+  // @Benchmark
+  // def complexDirectWireFormatConverter(bh: Blackhole): Unit = {
+  //   bh.consume(complexDirectConverter.convert(complexBinary))
+  // }
+  //
+  // @Benchmark
+  // def complexCompiledMessageConverter(bh: Blackhole): Unit = {
+  //   bh.consume(complexCompiledConverter.convert(complexBinary))
+  // }
+  //
+  // @Benchmark
+  // def complexDynamicMessageDescriptorFile(bh: Blackhole): Unit = {
+  //   bh.consume(complexDescriptorFileExpression.nullSafeEval(complexBinary))
+  // }
+  //
+  // @Benchmark
+  // def complexDynamicMessageBinaryDescriptor(bh: Blackhole): Unit = {
+  //   bh.consume(complexBinaryDescExpression.nullSafeEval(complexBinary))
+  // }
 
 }

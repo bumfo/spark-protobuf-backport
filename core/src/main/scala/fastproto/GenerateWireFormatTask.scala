@@ -392,13 +392,15 @@ public final class $className extends AbstractWireFormatConverter {
   private def createBasicSchemaForDescriptor(descriptor: Descriptor): StructType = {
     import scala.collection.JavaConverters._
 
-    val fields = descriptor.getFields.asScala.take(5).map { field => // Limit to 5 fields for demo
+    val fields = descriptor.getFields.asScala.map { field => // Handle all fields, not just 5
       val dataType = field.getType match {
         case com.google.protobuf.Descriptors.FieldDescriptor.Type.STRING => StringType
         case com.google.protobuf.Descriptors.FieldDescriptor.Type.INT32 |
              com.google.protobuf.Descriptors.FieldDescriptor.Type.UINT32 => IntegerType
         case com.google.protobuf.Descriptors.FieldDescriptor.Type.INT64 |
              com.google.protobuf.Descriptors.FieldDescriptor.Type.UINT64 => LongType
+        case com.google.protobuf.Descriptors.FieldDescriptor.Type.FLOAT => FloatType
+        case com.google.protobuf.Descriptors.FieldDescriptor.Type.DOUBLE => DoubleType
         case com.google.protobuf.Descriptors.FieldDescriptor.Type.BOOL => BooleanType
         case com.google.protobuf.Descriptors.FieldDescriptor.Type.BYTES => BinaryType
         case com.google.protobuf.Descriptors.FieldDescriptor.Type.ENUM => StringType

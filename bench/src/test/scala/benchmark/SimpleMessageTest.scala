@@ -20,44 +20,60 @@ class SimpleMessageTest extends AnyFunSuite with Matchers {
   private val descriptor = testMessage.getDescriptorForType
   private val sparkSchema = SchemaConverters.toSqlType(descriptor).dataType.asInstanceOf[StructType]
 
+  private val generatedWireFormatConverter = WireFormatToRowGenerator.generateConverter(descriptor, sparkSchema)
+
   test("SimpleMessage should have 120 fields") {
     sparkSchema.fields.length shouldBe 120
   }
 
+  test("Generated WireFormat converter should handle SimpleMessage 1") {
+    val b = SimpleBenchmarkProtos.SimpleMessage.newBuilder()
+    b.setFieldInt32001(100)
+    b.setFieldInt64021(200)
+    b.addRepeatedInt32086(300)
+    val msg = b.build().toByteArray
+
+    val converter = generatedWireFormatConverter
+    val row = converter.convert(msg)
+
+    row should not be null
+    row.numFields shouldBe 120
+  }
+
   test("Generated WireFormat converter should handle SimpleMessage") {
-    val converter = WireFormatToRowGenerator.generateConverter(descriptor, sparkSchema)
+    val converter = generatedWireFormatConverter
     val row = converter.convert(binaryData)
 
     row should not be null
     row.numFields shouldBe 120
 
     // Verify some known field values
-    row.getInt(0) shouldBe 100    // field_int32_001
-    row.getInt(1) shouldBe 200    // field_int32_002
-    row.getInt(19) shouldBe 2000  // field_int32_020
+    row.getInt(0) shouldBe 100 // field_int32_001
+    row.getInt(1) shouldBe 200 // field_int32_002
+    row.getInt(19) shouldBe 2000 // field_int32_020
 
     // Verify int64 fields
-    row.getLong(20) shouldBe 21000000L  // field_int64_021
-    row.getLong(39) shouldBe 40000000L  // field_int64_040
+    row.getLong(20) shouldBe 21000000L // field_int64_021
+    row.getLong(39) shouldBe 40000000L // field_int64_040
 
     // Verify float fields
-    row.getFloat(40) shouldBe 41.5f     // field_float_041
-    row.getFloat(49) shouldBe 50.5f     // field_float_050
+    row.getFloat(40) shouldBe 41.5f // field_float_041
+    row.getFloat(49) shouldBe 50.5f // field_float_050
 
     // Verify double fields
-    row.getDouble(50) shouldBe 51.25    // field_double_051
-    row.getDouble(59) shouldBe 60.25    // field_double_060
+    row.getDouble(50) shouldBe 51.25 // field_double_051
+    row.getDouble(59) shouldBe 60.25 // field_double_060
 
     // Verify boolean fields (alternating pattern)
-    row.getBoolean(60) shouldBe false   // field_bool_061 (61 % 2 == 0 -> false)
-    row.getBoolean(61) shouldBe true    // field_bool_062 (62 % 2 == 0 -> true)
+    row.getBoolean(60) shouldBe false // field_bool_061 (61 % 2 == 0 -> false)
+    row.getBoolean(61) shouldBe true // field_bool_062 (62 % 2 == 0 -> true)
 
     // Verify string fields
-    row.getUTF8String(70).toString shouldBe "test_string_field_71"  // field_string_071
-    row.getUTF8String(79).toString shouldBe "test_string_field_80"  // field_string_080
+    row.getUTF8String(70).toString shouldBe "test_string_field_71" // field_string_071
+    row.getUTF8String(79).toString shouldBe "test_string_field_80" // field_string_080
 
     // Verify bytes fields
-    val bytesField = row.getBinary(80)  // field_bytes_081
+    val bytesField = row.getBinary(80) // field_bytes_081
     new String(bytesField, "UTF-8") shouldBe "test_bytes_81"
   }
 
@@ -66,14 +82,14 @@ class SimpleMessageTest extends AnyFunSuite with Matchers {
     val row = converter.convert(binaryData)
 
     // Verify repeated int32 field
-    val repeatedInt32Array = row.getArray(85)  // repeated_int32_086
+    val repeatedInt32Array = row.getArray(85) // repeated_int32_086
     repeatedInt32Array.numElements() shouldBe 5
     (0 until 5).foreach { i =>
       repeatedInt32Array.getInt(i) shouldBe (i + 1) * 10
     }
 
     // Verify repeated string field
-    val repeatedStringArray = row.getArray(110)  // repeated_string_111
+    val repeatedStringArray = row.getArray(110) // repeated_string_111
     repeatedStringArray.numElements() shouldBe 5
     (0 until 5).foreach { i =>
       repeatedStringArray.getUTF8String(i).toString shouldBe s"repeated_string_${i + 1}"
@@ -184,7 +200,7 @@ class SimpleMessageTest extends AnyFunSuite with Matchers {
     }
 
     // Check repeated fields are ArrayType
-    sparkSchema.fields(85).dataType shouldBe ArrayType(IntegerType, containsNull = false)  // repeated_int32_086
-    sparkSchema.fields(110).dataType shouldBe ArrayType(StringType, containsNull = false)  // repeated_string_111
+    sparkSchema.fields(85).dataType shouldBe ArrayType(IntegerType, containsNull = false) // repeated_int32_086
+    sparkSchema.fields(110).dataType shouldBe ArrayType(StringType, containsNull = false) // repeated_string_111
   }
 }

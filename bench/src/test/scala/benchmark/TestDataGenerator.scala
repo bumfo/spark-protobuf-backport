@@ -41,37 +41,37 @@ object TestDataGenerator {
 
     // Set int64 fields with deterministic values
     (21 to 40).foreach { i =>
-      val method = builder.getClass.getMethod(s"setFieldInt64${i.toString.reverse.padTo(3, '0').reverse}", classOf[Long])
+       val method = builder.getClass.getMethod(s"setFieldInt64${"%03d".format(i)}", classOf[Long])
       method.invoke(builder, Long.box(i.toLong * 1000000L))
     }
 
     // Set float fields with deterministic values
     (41 to 50).foreach { i =>
-      val method = builder.getClass.getMethod(s"setFieldFloat${i.toString.reverse.padTo(3, '0').reverse}", classOf[Float])
+      val method = builder.getClass.getMethod(s"setFieldFloat${"%03d".format(i)}", classOf[Float])
       method.invoke(builder, Float.box(i.toFloat + 0.5f))
     }
 
     // Set double fields with deterministic values
     (51 to 60).foreach { i =>
-      val method = builder.getClass.getMethod(s"setFieldDouble${i.toString.reverse.padTo(3, '0').reverse}", classOf[Double])
+      val method = builder.getClass.getMethod(s"setFieldDouble${"%03d".format(i)}", classOf[Double])
       method.invoke(builder, Double.box(i.toDouble + 0.25))
     }
 
     // Set boolean fields with deterministic pattern
     (61 to 70).foreach { i =>
-      val method = builder.getClass.getMethod(s"setFieldBool${i.toString.reverse.padTo(3, '0').reverse}", classOf[Boolean])
+      val method = builder.getClass.getMethod(s"setFieldBool${"%03d".format(i)}", classOf[Boolean])
       method.invoke(builder, Boolean.box(i % 2 == 0))
     }
 
     // Set string fields with deterministic values
     (71 to 80).foreach { i =>
-      val method = builder.getClass.getMethod(s"setFieldString${i.toString.reverse.padTo(3, '0').reverse}", classOf[String])
+      val method = builder.getClass.getMethod(s"setFieldString${"%03d".format(i)}", classOf[String])
       method.invoke(builder, s"test_string_field_$i")
     }
 
     // Set bytes fields with deterministic values
     (81 to 85).foreach { i =>
-      val method = builder.getClass.getMethod(s"setFieldBytes${i.toString.reverse.padTo(3, '0').reverse}", classOf[ByteString])
+      val method = builder.getClass.getMethod(s"setFieldBytes${"%03d".format(i)}", classOf[ByteString])
       val bytes = s"test_bytes_$i".getBytes("UTF-8")
       method.invoke(builder, ByteString.copyFrom(bytes))
     }
