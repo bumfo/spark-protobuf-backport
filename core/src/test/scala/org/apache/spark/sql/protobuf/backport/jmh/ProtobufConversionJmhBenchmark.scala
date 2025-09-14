@@ -91,7 +91,7 @@ class ProtobufConversionJmhBenchmark {
     val nestedField = Field.newBuilder()
       .setName("nested_field")
       .setNumber(1)
-      .setKind(Field.Kind.TYPE_MESSAGE)
+      // .setKind(Field.Kind.TYPE_MESSAGE)
       .setTypeUrl("google.protobuf.Type")
       .build()
 
@@ -101,7 +101,7 @@ class ProtobufConversionJmhBenchmark {
       .setSourceContext(SourceContext.newBuilder()
         .setFileName("jmh_benchmark.proto")
         .build())
-      .setSyntax(Syntax.SYNTAX_PROTO3)
+      // .setSyntax(Syntax.SYNTAX_PROTO3)
       .build()
 
     complexBinary = complexType.toByteArray
@@ -214,6 +214,11 @@ class ProtobufConversionJmhBenchmark {
     bh.consume(compiledConverter.convert(binary))
   }
 
+  @Benchmark
+  def dynamicMessageDescriptorFile(bh: Blackhole): Unit = {
+    bh.consume(descriptorFileExpression.nullSafeEval(binary))
+  }
+
   // Complex structure benchmarks
 
   @Benchmark
@@ -229,5 +234,10 @@ class ProtobufConversionJmhBenchmark {
   @Benchmark
   def complexCompiledMessageConverter(bh: Blackhole): Unit = {
     bh.consume(complexCompiledConverter.convert(complexBinary))
+  }
+
+  @Benchmark
+  def complexDynamicMessageDescriptorFile(bh: Blackhole): Unit = {
+    bh.consume(complexDescriptorFileExpression.nullSafeEval(complexBinary))
   }
 }
