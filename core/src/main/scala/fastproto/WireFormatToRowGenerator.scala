@@ -207,6 +207,9 @@ object WireFormatToRowGenerator {
     // Main parsing method
     generateWriteDataMethod(code, descriptor, schema)
 
+    // Helper methods for repeated fields
+    generateRepeatedFieldMethods(code, descriptor, schema)
+
     // Helper methods for enum fields
     generateEnumHelperMethods(code, descriptor, schema)
 
@@ -291,7 +294,7 @@ object WireFormatToRowGenerator {
    */
   private def generateWriteDataMethod(code: StringBuilder, descriptor: Descriptor, schema: StructType): Unit = {
     code ++= "  @Override\n"
-    code ++= "  protected void writeData(byte[] binary, UnsafeRowWriter writer) throws java.io.IOException {\n"
+    code ++= "  protected void writeData(byte[] binary, UnsafeRowWriter writer) {\n"
     code ++= "    CodedInputStream input = CodedInputStream.newInstance(binary);\n\n"
 
     // Reset repeated field counters
@@ -302,8 +305,9 @@ object WireFormatToRowGenerator {
       code ++= s"    field${field.getNumber}_count = 0;\n"
     }
 
-    code ++= "\n    while (!input.isAtEnd()) {\n"
-    code ++= "      int tag = input.readTag();\n\n"
+    code ++= "\n    try {\n"
+    code ++= "      while (!input.isAtEnd()) {\n"
+    code ++= "        int tag = input.readTag();\n\n"
 
     // Generate direct tag switch for maximum performance
     val schemaFields = descriptor.getFields.asScala
@@ -311,55 +315,33 @@ object WireFormatToRowGenerator {
       .sortBy(_.getNumber) // Natural order for better branch prediction
 
     if (schemaFields.nonEmpty) {
-      code ++= "      switch (tag) {\n"
+      code ++= "        switch (tag) {\n"
 
       schemaFields.foreach { field =>
         generateFieldTagCases(code, field, schema)
       }
 
-      code ++= "        default:\n"
-      code ++= "          // Unknown tag - skip field\n"
-      code ++= "          input.skipField(tag);\n"
-      code ++= "          break;\n"
-      code ++= "      }\n"
+      code ++= "          default:\n"
+      code ++= "            // Unknown tag - skip field\n"
+      code ++= "            input.skipField(tag);\n"
+      code ++= "            break;\n"
+      code ++= "        }\n"
     } else {
-      code ++= "      // No known fields - skip all\n"
-      code ++= "      input.skipField(tag);\n"
+      code ++= "        // No known fields - skip all\n"
+      code ++= "        input.skipField(tag);\n"
     }
 
+    code ++= "      }\n"
+    code ++= "    } catch (Exception e) {\n"
+    code ++= "      throw new RuntimeException(\"Failed to parse wire format\", e);\n"
     code ++= "    }\n\n"
 
     // Write accumulated repeated fields
     if (repeatedFields.nonEmpty) {
       code ++= "    // Write accumulated repeated fields\n"
       repeatedFields.foreach { field =>
-        val fieldNum = field.getNumber
-        val ordinal = schema.fieldIndex(field.getName)
-        code ++= s"    if (field${fieldNum}_count > 0) {\n"
-
-        // Generate inline array writing code
-        field.getType match {
-          case FieldDescriptor.Type.MESSAGE =>
-            code ++= s"      writeMessageArray(field${fieldNum}_values, field${fieldNum}_count, $fieldNum, $ordinal, writer);\n"
-          case FieldDescriptor.Type.STRING =>
-            code ++= s"      writeStringArray(field${fieldNum}_values, field${fieldNum}_count, $ordinal, writer);\n"
-          case FieldDescriptor.Type.BYTES =>
-            code ++= s"      writeBytesArray(field${fieldNum}_values, field${fieldNum}_count, $ordinal, writer);\n"
-          case FieldDescriptor.Type.INT32 =>
-            code ++= s"      writeIntArray(field${fieldNum}_values, field${fieldNum}_count, $ordinal, writer);\n"
-          case FieldDescriptor.Type.INT64 =>
-            code ++= s"      writeLongArray(field${fieldNum}_values, field${fieldNum}_count, $ordinal, writer);\n"
-          case FieldDescriptor.Type.FLOAT =>
-            code ++= s"      writeFloatArray(field${fieldNum}_values, field${fieldNum}_count, $ordinal, writer);\n"
-          case FieldDescriptor.Type.DOUBLE =>
-            code ++= s"      writeDoubleArray(field${fieldNum}_values, field${fieldNum}_count, $ordinal, writer);\n"
-          case FieldDescriptor.Type.BOOL =>
-            code ++= s"      writeBooleanArray(field${fieldNum}_values, field${fieldNum}_count, $ordinal, writer);\n"
-          case _ =>
-            // For other types, use generic approach
-            code ++= s"      writeStringArray(field${fieldNum}_values, field${fieldNum}_count, $ordinal, writer);\n"
-        }
-
+        code ++= s"    if (field${field.getNumber}_count > 0) {\n"
+        code ++= s"      writeField${field.getNumber}Array(writer);\n"
         code ++= s"    }\n"
       }
     }
@@ -416,7 +398,7 @@ object WireFormatToRowGenerator {
       case FieldDescriptor.Type.BOOL =>
         code ++= s"            writer.write($ordinal, input.readBool());\n"
       case FieldDescriptor.Type.STRING =>
-        code ++= s"            writer.write($ordinal, UTF8String.fromBytes(input.readByteArray()));\n"
+        code ++= s"            writer.write($ordinal, input.readByteArray());\n"
       case FieldDescriptor.Type.BYTES =>
         code ++= s"            writer.write($ordinal, input.readByteArray());\n"
       case FieldDescriptor.Type.ENUM =>
@@ -520,6 +502,78 @@ object WireFormatToRowGenerator {
     }
   }
 
+  /**
+   * Generate helper methods for writing repeated field arrays.
+   */
+  private def generateRepeatedFieldMethods(code: StringBuilder, descriptor: Descriptor, schema: StructType): Unit = {
+    val repeatedFields = descriptor.getFields.asScala.filter(field =>
+      field.isRepeated && schema.fieldNames.contains(field.getName)
+    )
+
+    repeatedFields.foreach { field =>
+      val fieldNum = field.getNumber
+      val ordinal = schema.fieldIndex(field.getName)
+
+      code ++= s"  private void writeField${fieldNum}Array(UnsafeRowWriter writer) {\n"
+
+      field.getType match {
+        case FieldDescriptor.Type.INT32 | FieldDescriptor.Type.UINT32 | FieldDescriptor.Type.SINT32 |
+             FieldDescriptor.Type.FIXED32 | FieldDescriptor.Type.SFIXED32 | FieldDescriptor.Type.ENUM =>
+          code ++= s"    int[] trimmed = new int[field${fieldNum}_count];\n"
+          code ++= s"    System.arraycopy(field${fieldNum}_values, 0, trimmed, 0, field${fieldNum}_count);\n"
+          code ++= s"    writeIntArray(trimmed, $ordinal, writer);\n"
+
+        case FieldDescriptor.Type.INT64 | FieldDescriptor.Type.UINT64 | FieldDescriptor.Type.SINT64 |
+             FieldDescriptor.Type.FIXED64 | FieldDescriptor.Type.SFIXED64 =>
+          code ++= s"    long[] trimmed = new long[field${fieldNum}_count];\n"
+          code ++= s"    System.arraycopy(field${fieldNum}_values, 0, trimmed, 0, field${fieldNum}_count);\n"
+          code ++= s"    writeLongArray(trimmed, $ordinal, writer);\n"
+
+        case FieldDescriptor.Type.FLOAT =>
+          code ++= s"    float[] trimmed = new float[field${fieldNum}_count];\n"
+          code ++= s"    System.arraycopy(field${fieldNum}_values, 0, trimmed, 0, field${fieldNum}_count);\n"
+          code ++= s"    writeFloatArray(trimmed, $ordinal, writer);\n"
+
+        case FieldDescriptor.Type.DOUBLE =>
+          code ++= s"    double[] trimmed = new double[field${fieldNum}_count];\n"
+          code ++= s"    System.arraycopy(field${fieldNum}_values, 0, trimmed, 0, field${fieldNum}_count);\n"
+          code ++= s"    writeDoubleArray(trimmed, $ordinal, writer);\n"
+
+        case FieldDescriptor.Type.BOOL =>
+          code ++= s"    boolean[] trimmed = new boolean[field${fieldNum}_count];\n"
+          code ++= s"    System.arraycopy(field${fieldNum}_values, 0, trimmed, 0, field${fieldNum}_count);\n"
+          code ++= s"    writeBooleanArray(trimmed, $ordinal, writer);\n"
+
+        case FieldDescriptor.Type.STRING =>
+          code ++= s"    byte[][] trimmed = new byte[field${fieldNum}_count][];\n"
+          code ++= s"    System.arraycopy(field${fieldNum}_values, 0, trimmed, 0, field${fieldNum}_count);\n"
+          code ++= s"    writeStringArray(trimmed, $ordinal, writer);\n"
+
+        case FieldDescriptor.Type.BYTES =>
+          code ++= s"    byte[][] trimmed = new byte[field${fieldNum}_count][];\n"
+          code ++= s"    System.arraycopy(field${fieldNum}_values, 0, trimmed, 0, field${fieldNum}_count);\n"
+          code ++= s"    writeBytesArray(trimmed, $ordinal, writer);\n"
+
+        case FieldDescriptor.Type.MESSAGE =>
+          code ++= s"    byte[][] trimmed = new byte[field${fieldNum}_count][];\n"
+          code ++= s"    System.arraycopy(field${fieldNum}_values, 0, trimmed, 0, field${fieldNum}_count);\n"
+          code ++= s"    writeMessageArray(trimmed, $fieldNum, $ordinal, writer);\n"
+
+        case _ =>
+          code ++= s"    // Unsupported array type for field ${field.getName}\n"
+      }
+
+      code ++= "  }\n\n"
+
+      // Generate packability check method
+      field.getType match {
+        case FieldDescriptor.Type.STRING | FieldDescriptor.Type.BYTES | FieldDescriptor.Type.MESSAGE =>
+          code ++= s"  private static boolean isPackable${field.getType.name()}() { return false; }\n"
+        case _ =>
+          code ++= s"  private static boolean isPackable${field.getType.name()}() { return true; }\n"
+      }
+    }
+  }
 
   /**
    * Get the expected wire type for a protobuf field type.

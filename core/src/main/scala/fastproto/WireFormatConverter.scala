@@ -24,8 +24,8 @@ import scala.collection.mutable
  */
 class WireFormatConverter(
     descriptor: Descriptor,
-    _schema: StructType)
-  extends AbstractRowConverter(_schema) {
+    override val schema: StructType)
+  extends AbstractRowConverter(schema) {
 
   import WireFormatConverter._
 
