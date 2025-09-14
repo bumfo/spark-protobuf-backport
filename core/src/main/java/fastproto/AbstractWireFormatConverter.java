@@ -7,7 +7,6 @@ import org.apache.spark.sql.catalyst.InternalRow;
 import org.apache.spark.sql.types.StructType;
 
 import java.io.IOException;
-import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * Base class for generated WireFormat converters that parse protobuf wire format
@@ -18,11 +17,8 @@ import java.util.concurrent.ConcurrentHashMap;
  */
 public abstract class AbstractWireFormatConverter extends AbstractRowConverter {
 
-    private final ConcurrentHashMap<Integer, AbstractWireFormatConverter> nestedConverters;
-
     public AbstractWireFormatConverter(StructType schema) {
         super(schema);
-        this.nestedConverters = new ConcurrentHashMap<>();
     }
 
     /**
@@ -42,19 +38,6 @@ public abstract class AbstractWireFormatConverter extends AbstractRowConverter {
     public abstract void writeData(byte[] binary, UnsafeRowWriter writer);
 
 
-    /**
-     * Set nested converter for message fields.
-     */
-    public void setNestedConverter(int fieldNumber, AbstractWireFormatConverter converter) {
-        nestedConverters.put(fieldNumber, converter);
-    }
-
-    /**
-     * Get nested converter for message fields.
-     */
-    protected AbstractWireFormatConverter getNestedConverter(int fieldNumber) {
-        return nestedConverters.get(fieldNumber);
-    }
 
     // ========== String Array Methods ==========
 
@@ -246,21 +229,16 @@ public abstract class AbstractWireFormatConverter extends AbstractRowConverter {
      * Write a repeated message field as an array to the UnsafeRow.
      * Uses nested converter with writer sharing for optimal performance.
      */
-    protected void writeMessageArray(byte[][] messageBytes, int fieldNumber, int ordinal, UnsafeRowWriter writer) throws IOException {
-        writeMessageArray(messageBytes, messageBytes.length, fieldNumber, ordinal, writer);
+    protected void writeMessageArray(byte[][] messageBytes, int ordinal, AbstractWireFormatConverter converter, UnsafeRowWriter writer) {
+        writeMessageArray(messageBytes, messageBytes.length, ordinal, converter, writer);
     }
 
     /**
      * Write a repeated message field as an array to the UnsafeRow with size parameter.
      * Eliminates array slicing by using size parameter instead of messageBytes.length.
      */
-    protected void writeMessageArray(byte[][] messageBytes, int size, int fieldNumber, int ordinal, UnsafeRowWriter writer) {
+    protected void writeMessageArray(byte[][] messageBytes, int size, int ordinal, AbstractWireFormatConverter converter, UnsafeRowWriter writer) {
         assert size <= messageBytes.length;
-
-        AbstractWireFormatConverter converter = getNestedConverter(fieldNumber);
-        if (converter == null) {
-            throw new IllegalStateException("No nested converter found for field " + fieldNumber);
-        }
 
         int offset = writer.cursor();
         UnsafeArrayWriter arrayWriter = new UnsafeArrayWriter(writer, 8);
@@ -281,12 +259,7 @@ public abstract class AbstractWireFormatConverter extends AbstractRowConverter {
      * Write a single nested message field to the UnsafeRow.
      * Uses nested converter with writer sharing.
      */
-    protected void writeMessage(byte[] messageBytes, int fieldNumber, int ordinal, UnsafeRowWriter writer) {
-        AbstractWireFormatConverter converter = getNestedConverter(fieldNumber);
-        if (converter == null) {
-            throw new IllegalStateException("No nested converter found for field " + fieldNumber);
-        }
-
+    protected void writeMessage(byte[] messageBytes, int ordinal, AbstractWireFormatConverter converter, UnsafeRowWriter writer) {
         int offset = writer.cursor();
         converter.convert(messageBytes, writer);
         writer.setOffsetAndSizeFromPreviousCursor(ordinal, offset);

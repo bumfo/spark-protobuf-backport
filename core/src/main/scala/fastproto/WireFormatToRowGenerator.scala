@@ -139,7 +139,8 @@ object WireFormatToRowGenerator {
         throw new IllegalStateException(s"Nested converter not found: $nestedKey")
       )
 
-      converter.setNestedConverter(field.getNumber, nestedConverter)
+      val setterMethod = converter.getClass.getMethod(s"setNestedConverter${field.getNumber}", classOf[AbstractWireFormatConverter])
+      setterMethod.invoke(converter, nestedConverter)
     }
 
     // Recursively wire nested dependencies
@@ -198,6 +199,9 @@ object WireFormatToRowGenerator {
     // Repeated field accumulators
     generateRepeatedFieldAccumulators(code, descriptor, schema)
 
+    // Nested converter fields
+    generateNestedConverterFields(code, descriptor, schema)
+
     // Constructor
     code ++= s"  public $className(StructType schema) {\n"
     code ++= "    super(schema);\n"
@@ -207,11 +211,47 @@ object WireFormatToRowGenerator {
     // Main parsing method
     generateWriteDataMethod(code, descriptor, schema)
 
+    // Nested converter setter methods
+    generateNestedConverterSetters(code, descriptor, schema)
+
     // Helper methods for enum fields
     generateEnumHelperMethods(code, descriptor, schema)
 
     code ++= "}\n"
     code
+  }
+
+  /**
+   * Generate nested converter field declarations.
+   */
+  private def generateNestedConverterFields(code: StringBuilder, descriptor: Descriptor, schema: StructType): Unit = {
+    val messageFields = descriptor.getFields.asScala.filter { field =>
+      field.getType == FieldDescriptor.Type.MESSAGE && schema.fieldNames.contains(field.getName)
+    }
+
+    if (messageFields.nonEmpty) {
+      code ++= "  // Nested converter fields\n"
+      messageFields.foreach { field =>
+        code ++= s"  private AbstractWireFormatConverter nestedConv${field.getNumber};\n"
+      }
+      code ++= "\n"
+    }
+  }
+
+  /**
+   * Generate setter methods for nested converters.
+   */
+  private def generateNestedConverterSetters(code: StringBuilder, descriptor: Descriptor, schema: StructType): Unit = {
+    val messageFields = descriptor.getFields.asScala.filter { field =>
+      field.getType == FieldDescriptor.Type.MESSAGE && schema.fieldNames.contains(field.getName)
+    }
+
+    messageFields.foreach { field =>
+      val fieldNum = field.getNumber
+      code ++= s"  public void setNestedConverter${fieldNum}(AbstractWireFormatConverter conv) {\n"
+      code ++= s"    this.nestedConv${fieldNum} = conv;\n"
+      code ++= "  }\n\n"
+    }
   }
 
   /**
@@ -344,7 +384,7 @@ object WireFormatToRowGenerator {
         // Generate inline array writing code
         field.getType match {
           case FieldDescriptor.Type.MESSAGE =>
-            code ++= s"      writeMessageArray(field${fieldNum}_values, field${fieldNum}_count, $fieldNum, $ordinal, writer);\n"
+            code ++= s"      writeMessageArray(field${fieldNum}_values, field${fieldNum}_count, $ordinal, nestedConv${fieldNum}, writer);\n"
           case FieldDescriptor.Type.STRING =>
             code ++= s"      writeStringArray(field${fieldNum}_values, field${fieldNum}_count, $ordinal, writer);\n"
           case FieldDescriptor.Type.BYTES =>
@@ -420,7 +460,7 @@ object WireFormatToRowGenerator {
       case FieldDescriptor.Type.BOOL =>
         code ++= s"            writer.write($ordinal, input.readBool());\n"
       case FieldDescriptor.Type.STRING =>
-        code ++= s"            writer.write($ordinal, input.readByteArray());\n"
+        code ++= s"            writer.write($ordinal, UTF8String.fromBytes(input.readByteArray()));\n"
       case FieldDescriptor.Type.BYTES =>
         code ++= s"            writer.write($ordinal, input.readByteArray());\n"
       case FieldDescriptor.Type.ENUM =>
@@ -428,7 +468,7 @@ object WireFormatToRowGenerator {
         code ++= s"            writer.write($ordinal, UTF8String.fromString(getEnumName${fieldNum}(enumValue)));\n"
       case FieldDescriptor.Type.MESSAGE =>
         code ++= s"            byte[] messageBytes = input.readByteArray();\n"
-        code ++= s"            writeMessage(messageBytes, $fieldNum, $ordinal, writer);\n"
+        code ++= s"            writeMessage(messageBytes, $ordinal, nestedConv${fieldNum}, writer);\n"
       case _ =>
         code ++= s"            input.skipField(tag); // Unsupported type\n"
     }
