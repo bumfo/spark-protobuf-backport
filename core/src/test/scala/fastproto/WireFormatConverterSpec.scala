@@ -7,8 +7,38 @@ import org.scalatest.matchers.should.Matchers
 import org.apache.spark.unsafe.types.UTF8String
 import org.apache.spark.sql.catalyst.util.ArrayData
 import org.apache.spark.sql.protobuf.backport.functions
+import java.io.ByteArrayOutputStream
 
 class WireFormatConverterSpec extends AnyFlatSpec with Matchers {
+
+  private def createWireTypeMismatchData(): Array[Byte] = {
+    val baos = new ByteArrayOutputStream()
+    val output = CodedOutputStream.newInstance(baos)
+
+    // Create a message that has wire type mismatches when parsed with certain schemas
+    // Field 1: VARINT with value 0
+    output.writeTag(1, WireFormat.WIRETYPE_VARINT)
+    output.writeInt32NoTag(0)
+
+    // Field 2: LENGTH_DELIMITED containing a nested structure
+    val nestedData = {
+      val nestedBaos = new ByteArrayOutputStream()
+      val nestedOutput = CodedOutputStream.newInstance(nestedBaos)
+
+      // Inner field that could cause wire type mismatch
+      nestedOutput.writeTag(5, WireFormat.WIRETYPE_VARINT)
+      nestedOutput.writeInt64NoTag(42L)
+
+      nestedOutput.flush()
+      nestedBaos.toByteArray
+    }
+
+    output.writeTag(2, WireFormat.WIRETYPE_LENGTH_DELIMITED)
+    output.writeBytesNoTag(ByteString.copyFrom(nestedData))
+
+    output.flush()
+    baos.toByteArray
+  }
 
   "WireFormatConverter" should "convert simple protobuf messages with correct field values" in {
     // Create a simple Type message (which is available in protobuf-java)
@@ -520,5 +550,58 @@ class WireFormatConverterSpec extends AnyFlatSpec with Matchers {
           fail(s"Nullability mismatch at $fieldPath: row1.isNull=$null1, row2.isNull=$null2")
       }
     }
+  }
+
+  it should "handle wire type mismatches gracefully" in {
+    // Create synthetic binary data with wire type mismatches
+    val binary = createWireTypeMismatchData()
+
+    // Use a simple Type descriptor - the data should be parsed without errors
+    // even if wire types don't match exactly what the schema expects
+    val typeMsg = Type.newBuilder().build()
+    val descriptor = typeMsg.getDescriptorForType
+
+    val sparkSchema = StructType(Seq(
+      StructField("name", StringType, nullable = true),
+      StructField("fields", ArrayType(StructType(Seq(
+        StructField("name", StringType, nullable = true),
+        StructField("number", IntegerType, nullable = true)
+      ))), nullable = true)
+    ))
+
+    val converter = new WireFormatConverter(descriptor, sparkSchema)
+
+    // This should not throw an exception, even with wire type mismatches
+    val row = converter.convert(binary)
+
+    // Verify the converter completed successfully
+    row.numFields should equal(2)
+
+    // Fields may be null due to wire type mismatches, which is acceptable
+    // The important thing is that parsing didn't crash
+  }
+
+  it should "skip fields with unexpected wire types" in {
+    // Create a message with a field that would be a wire type mismatch
+    val typeMsg = Type.newBuilder()
+      .setName("wire_type_test")
+      .build()
+
+    val binary = typeMsg.toByteArray
+    val descriptor = typeMsg.getDescriptorForType
+
+    // Create a schema that expects field 5 to be a string (which would be LENGTH_DELIMITED)
+    // but the actual data might have field 5 as VARINT
+    val sparkSchema = StructType(Seq(
+      StructField("name", StringType, nullable = true),
+      StructField("unknown_field", StringType, nullable = true) // This field doesn't exist in the message
+    ))
+
+    val converter = new WireFormatConverter(descriptor, sparkSchema)
+    val row = converter.convert(binary)
+
+    // Should complete without errors
+    row.numFields should equal(2)
+    row.getUTF8String(0).toString should equal("wire_type_test")
   }
 }

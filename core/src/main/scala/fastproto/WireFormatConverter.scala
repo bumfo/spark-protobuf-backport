@@ -129,6 +129,14 @@ class WireFormatConverter(
       writer: UnsafeRowWriter): Unit = {
     import FieldDescriptor.Type._
 
+    // Validate wire type matches expected type for this field
+    val expectedWireType = getExpectedWireType(mapping.fieldDescriptor.getType)
+    if (wireType != expectedWireType && !isValidWireTypeForField(wireType, mapping.fieldDescriptor.getType, mapping.isRepeated)) {
+      // Wire type mismatch - skip this field to avoid parsing errors
+      input.skipField(tag)
+      return
+    }
+
     if (mapping.isRepeated) {
       // For repeated fields, accumulate values
       val fieldNumber = mapping.fieldDescriptor.getNumber
@@ -353,6 +361,51 @@ class WireFormatConverter(
       case MESSAGE => throw new IllegalStateException("MESSAGE array elements should be handled directly in writeArray, not through writeArrayElement")
       case GROUP => throw new UnsupportedOperationException("GROUP type is deprecated and not supported")
     }
+  }
+
+  /**
+   * Returns the expected wire type for a given protobuf field type.
+   */
+  private def getExpectedWireType(fieldType: FieldDescriptor.Type): Int = {
+    import FieldDescriptor.Type._
+    fieldType match {
+      case DOUBLE => WireFormat.WIRETYPE_FIXED64
+      case FLOAT => WireFormat.WIRETYPE_FIXED32
+      case INT64 => WireFormat.WIRETYPE_VARINT
+      case UINT64 => WireFormat.WIRETYPE_VARINT
+      case INT32 => WireFormat.WIRETYPE_VARINT
+      case FIXED64 => WireFormat.WIRETYPE_FIXED64
+      case FIXED32 => WireFormat.WIRETYPE_FIXED32
+      case BOOL => WireFormat.WIRETYPE_VARINT
+      case STRING => WireFormat.WIRETYPE_LENGTH_DELIMITED
+      case BYTES => WireFormat.WIRETYPE_LENGTH_DELIMITED
+      case UINT32 => WireFormat.WIRETYPE_VARINT
+      case ENUM => WireFormat.WIRETYPE_VARINT
+      case SFIXED32 => WireFormat.WIRETYPE_FIXED32
+      case SFIXED64 => WireFormat.WIRETYPE_FIXED64
+      case SINT32 => WireFormat.WIRETYPE_VARINT
+      case SINT64 => WireFormat.WIRETYPE_VARINT
+      case MESSAGE => WireFormat.WIRETYPE_LENGTH_DELIMITED
+      case GROUP => throw new UnsupportedOperationException("GROUP type is deprecated and not supported")
+    }
+  }
+
+  /**
+   * Checks if a wire type is valid for a field type, considering repeated fields and packed encoding.
+   */
+  private def isValidWireTypeForField(wireType: Int, fieldType: FieldDescriptor.Type, isRepeated: Boolean): Boolean = {
+    val expectedWireType = getExpectedWireType(fieldType)
+
+    if (wireType == expectedWireType) {
+      return true
+    }
+
+    // For repeated fields, also allow LENGTH_DELIMITED for packed encoding
+    if (isRepeated && wireType == WireFormat.WIRETYPE_LENGTH_DELIMITED && isPackable(fieldType)) {
+      return true
+    }
+
+    false
   }
 }
 
