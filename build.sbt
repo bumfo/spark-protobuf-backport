@@ -13,6 +13,7 @@ lazy val protobufVersion      = "3.21.7"
 
 // Task keys
 lazy val generateConverters = taskKey[Unit]("Generate converter code from protobuf files")
+lazy val generateWireFormat = taskKey[Unit]("Generate WireFormat converter code from protobuf schemas")
 
 // Common dependencies for both projects
 lazy val commonDependencies = Seq(
@@ -72,6 +73,11 @@ lazy val core = project
     generateConverters := {
       println("Running converter code generation...")
       (Test / runMain).toTask(" fastproto.GenerateConvertersTask").value
+    },
+    // Task to run the WireFormat code generator
+    generateWireFormat := {
+      println("Running WireFormat converter code generation...")
+      (Test / runMain).toTask(" fastproto.GenerateWireFormatTask").value
     },
     libraryDependencies ++= commonDependencies ++ Seq(
       // Protobuf as provided for compilation
