@@ -408,16 +408,12 @@ object WireFormatToRowGenerator {
             // Use IntList
             code ++= s"    if (field${fieldNum}_list.count > 0) {\n"
             code ++= s"      writeIntArray(field${fieldNum}_list.array, field${fieldNum}_list.count, $ordinal, writer);\n"
-            code ++= s"    } else {\n"
-            code ++= s"      writer.setNullAt($ordinal);\n"
             code ++= s"    }\n"
 
           case FieldDescriptor.Type.INT64 | FieldDescriptor.Type.SINT64 | FieldDescriptor.Type.SFIXED64 =>
             // Use LongList
             code ++= s"    if (field${fieldNum}_list.count > 0) {\n"
             code ++= s"      writeLongArray(field${fieldNum}_list.array, field${fieldNum}_list.count, $ordinal, writer);\n"
-            code ++= s"    } else {\n"
-            code ++= s"      writer.setNullAt($ordinal);\n"
             code ++= s"    }\n"
 
           case _ =>
@@ -447,8 +443,6 @@ object WireFormatToRowGenerator {
                 code ++= s"      writeStringArray(field${fieldNum}_values, field${fieldNum}_count, $ordinal, writer);\n"
             }
 
-            code ++= s"    } else {\n"
-            code ++= s"      writer.setNullAt($ordinal);\n"
             code ++= s"    }\n"
         }
       }
@@ -599,17 +593,11 @@ object WireFormatToRowGenerator {
     field.getType match {
       case FieldDescriptor.Type.INT32 | FieldDescriptor.Type.SINT32 | FieldDescriptor.Type.SFIXED32 =>
         // Use IntList for int32 types
-        code ++= s"            if (field${fieldNum}_list.count >= field${fieldNum}_list.array.length) {\n"
-        code ++= s"              field${fieldNum}_list.grow(field${fieldNum}_list.count);\n"
-        code ++= s"            }\n"
-        code ++= s"            field${fieldNum}_list.array[field${fieldNum}_list.count++] = input.readInt32();\n"
+        code ++= s"            field${fieldNum}_list.add(input.readInt32());\n"
 
       case FieldDescriptor.Type.INT64 | FieldDescriptor.Type.SINT64 | FieldDescriptor.Type.SFIXED64 =>
         // Use LongList for int64 types
-        code ++= s"            if (field${fieldNum}_list.count >= field${fieldNum}_list.array.length) {\n"
-        code ++= s"              field${fieldNum}_list.grow(field${fieldNum}_list.count);\n"
-        code ++= s"            }\n"
-        code ++= s"            field${fieldNum}_list.array[field${fieldNum}_list.count++] = input.readInt64();\n"
+        code ++= s"            field${fieldNum}_list.add(input.readInt64());\n"
 
       case _ =>
         // Use existing array-based approach for other types

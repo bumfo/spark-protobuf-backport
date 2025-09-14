@@ -38,4 +38,15 @@ public class LongList {
         System.arraycopy(array, 0, newArray, 0, currentCount);
         array = newArray;
     }
+
+    /**
+     * Add a single value to the list, growing if necessary.
+     * Used for single repeated field values (not packed parsing).
+     */
+    public void add(long value) {
+        if (count >= array.length) {
+            grow(count);
+        }
+        array[count++] = value;
+    }
 }
