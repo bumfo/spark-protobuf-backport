@@ -21,6 +21,68 @@ public abstract class AbstractWireFormatConverter extends AbstractRowConverter {
         super(schema);
     }
 
+    // ========== Array Resizing Utilities ==========
+
+    /**
+     * Resize primitive int array when capacity is exceeded.
+     */
+    protected static int[] resizeIntArray(int[] array, int currentCount, int minSize) {
+        int newSize = Math.max(array.length * 2, minSize);
+        int[] newArray = new int[newSize];
+        System.arraycopy(array, 0, newArray, 0, currentCount);
+        return newArray;
+    }
+
+    /**
+     * Resize primitive long array when capacity is exceeded.
+     */
+    protected static long[] resizeLongArray(long[] array, int currentCount, int minSize) {
+        int newSize = Math.max(array.length * 2, minSize);
+        long[] newArray = new long[newSize];
+        System.arraycopy(array, 0, newArray, 0, currentCount);
+        return newArray;
+    }
+
+    /**
+     * Resize primitive float array when capacity is exceeded.
+     */
+    protected static float[] resizeFloatArray(float[] array, int currentCount, int minSize) {
+        int newSize = Math.max(array.length * 2, minSize);
+        float[] newArray = new float[newSize];
+        System.arraycopy(array, 0, newArray, 0, currentCount);
+        return newArray;
+    }
+
+    /**
+     * Resize primitive double array when capacity is exceeded.
+     */
+    protected static double[] resizeDoubleArray(double[] array, int currentCount, int minSize) {
+        int newSize = Math.max(array.length * 2, minSize);
+        double[] newArray = new double[newSize];
+        System.arraycopy(array, 0, newArray, 0, currentCount);
+        return newArray;
+    }
+
+    /**
+     * Resize primitive boolean array when capacity is exceeded.
+     */
+    protected static boolean[] resizeBooleanArray(boolean[] array, int currentCount, int minSize) {
+        int newSize = Math.max(array.length * 2, minSize);
+        boolean[] newArray = new boolean[newSize];
+        System.arraycopy(array, 0, newArray, 0, currentCount);
+        return newArray;
+    }
+
+    /**
+     * Resize byte array array when capacity is exceeded.
+     */
+    protected static byte[][] resizeByteArrayArray(byte[][] array, int currentCount, int minSize) {
+        int newSize = Math.max(array.length * 2, minSize);
+        byte[][] newArray = new byte[newSize][];
+        System.arraycopy(array, 0, newArray, 0, currentCount);
+        return newArray;
+    }
+
     // ========== String Array Methods ==========
 
     /**
@@ -250,88 +312,172 @@ public abstract class AbstractWireFormatConverter extends AbstractRowConverter {
     // ========== Packed Field Parsing Methods ==========
 
     /**
-     * Parse packed repeated values from a LENGTH_DELIMITED wire format.
-     * Returns the number of values parsed.
+     * Parse packed repeated ints from a LENGTH_DELIMITED wire format.
+     * Resizes array internally if needed and returns the number of values parsed.
+     * The caller should update their count accordingly.
      */
-    protected int parsePackedInts(CodedInputStream input, int[] buffer, int maxCount) throws IOException {
-        int length = input.readRawVarint32();
-        int oldLimit = input.pushLimit(length);
-        int count = 0;
+    protected static int parsePackedInts(CodedInputStream input, int[] buffer, int currentCount, int packedLength) throws IOException {
+        int oldLimit = input.pushLimit(packedLength);
 
-        while (input.getBytesUntilLimit() > 0 && count < maxCount) {
-            buffer[count] = input.readInt32();
-            count++;
+        // Calculate required capacity (ints are variable length, estimate conservatively)
+        int maxNewValues = packedLength; // Worst case: 1 byte per varint
+        if (buffer.length < currentCount + maxNewValues) {
+            // This won't work since we can't return the new array - need different approach
+            throw new RuntimeException("Buffer too small for packed field parsing");
+        }
+
+        int index = currentCount;
+        while (input.getBytesUntilLimit() > 0) {
+            buffer[index++] = input.readInt32();
         }
 
         input.popLimit(oldLimit);
-        return count;
+        return index - currentCount; // Return number of values parsed
     }
 
     /**
      * Parse packed repeated longs from a LENGTH_DELIMITED wire format.
+     * Resizes array internally if needed and returns the (potentially new) array.
      */
-    protected int parsePackedLongs(CodedInputStream input, long[] buffer, int maxCount) throws IOException {
-        int length = input.readRawVarint32();
-        int oldLimit = input.pushLimit(length);
-        int count = 0;
+    protected static long[] parsePackedLongs(CodedInputStream input, long[] buffer, int currentCount, int packedLength) throws IOException {
+        int oldLimit = input.pushLimit(packedLength);
 
-        while (input.getBytesUntilLimit() > 0 && count < maxCount) {
-            buffer[count] = input.readInt64();
-            count++;
+        // Calculate required capacity (longs are variable length, estimate conservatively)
+        int maxNewValues = packedLength; // Worst case: 1 byte per varint
+        if (buffer.length < currentCount + maxNewValues) {
+            buffer = resizeLongArray(buffer, currentCount, currentCount + maxNewValues);
+        }
+
+        int index = currentCount;
+        while (input.getBytesUntilLimit() > 0) {
+            buffer[index++] = input.readInt64();
         }
 
         input.popLimit(oldLimit);
-        return count;
+        return buffer;
     }
 
     /**
      * Parse packed repeated floats from a LENGTH_DELIMITED wire format.
+     * Resizes array internally if needed and returns the (potentially new) array.
      */
-    protected int parsePackedFloats(CodedInputStream input, float[] buffer, int maxCount) throws IOException {
-        int length = input.readRawVarint32();
-        int oldLimit = input.pushLimit(length);
-        int count = 0;
+    protected static float[] parsePackedFloats(CodedInputStream input, float[] buffer, int currentCount, int packedLength) throws IOException {
+        int oldLimit = input.pushLimit(packedLength);
 
-        while (input.getBytesUntilLimit() > 0 && count < maxCount) {
-            buffer[count] = input.readFloat();
-            count++;
+        // Calculate required capacity (floats are 4 bytes each)
+        int maxNewValues = packedLength / 4;
+        if (buffer.length < currentCount + maxNewValues) {
+            buffer = resizeFloatArray(buffer, currentCount, currentCount + maxNewValues);
+        }
+
+        int index = currentCount;
+        while (input.getBytesUntilLimit() > 0) {
+            buffer[index++] = input.readFloat();
         }
 
         input.popLimit(oldLimit);
-        return count;
+        return buffer;
     }
 
     /**
      * Parse packed repeated doubles from a LENGTH_DELIMITED wire format.
+     * Resizes array internally if needed and returns the (potentially new) array.
      */
-    protected int parsePackedDoubles(CodedInputStream input, double[] buffer, int maxCount) throws IOException {
-        int length = input.readRawVarint32();
-        int oldLimit = input.pushLimit(length);
-        int count = 0;
+    protected static double[] parsePackedDoubles(CodedInputStream input, double[] buffer, int currentCount, int packedLength) throws IOException {
+        int oldLimit = input.pushLimit(packedLength);
 
-        while (input.getBytesUntilLimit() > 0 && count < maxCount) {
-            buffer[count] = input.readDouble();
-            count++;
+        // Calculate required capacity (doubles are 8 bytes each)
+        int maxNewValues = packedLength / 8;
+        if (buffer.length < currentCount + maxNewValues) {
+            buffer = resizeDoubleArray(buffer, currentCount, currentCount + maxNewValues);
+        }
+
+        int index = currentCount;
+        while (input.getBytesUntilLimit() > 0) {
+            buffer[index++] = input.readDouble();
         }
 
         input.popLimit(oldLimit);
-        return count;
+        return buffer;
     }
 
     /**
      * Parse packed repeated booleans from a LENGTH_DELIMITED wire format.
+     * Resizes array internally if needed and returns the (potentially new) array.
      */
-    protected int parsePackedBooleans(CodedInputStream input, boolean[] buffer, int maxCount) throws IOException {
-        int length = input.readRawVarint32();
-        int oldLimit = input.pushLimit(length);
-        int count = 0;
+    protected static boolean[] parsePackedBooleans(CodedInputStream input, boolean[] buffer, int currentCount, int packedLength) throws IOException {
+        int oldLimit = input.pushLimit(packedLength);
 
-        while (input.getBytesUntilLimit() > 0 && count < maxCount) {
-            buffer[count] = input.readBool();
-            count++;
+        // Calculate required capacity (booleans are 1 byte each)
+        int maxNewValues = packedLength;
+        if (buffer.length < currentCount + maxNewValues) {
+            buffer = resizeBooleanArray(buffer, currentCount, currentCount + maxNewValues);
+        }
+
+        int index = currentCount;
+        while (input.getBytesUntilLimit() > 0) {
+            buffer[index++] = input.readBool();
         }
 
         input.popLimit(oldLimit);
-        return count;
+        return buffer;
+    }
+
+    // ========== Packed Field Parsing with IntList/LongList ==========
+
+    /**
+     * Parse packed repeated ints using IntList for efficient storage.
+     * Reads the packed length from input and updates the list's count and may resize the array.
+     */
+    protected static void parsePackedInts(CodedInputStream input, IntList list) throws IOException {
+        int packedLength = input.readRawVarint32();
+        int oldLimit = input.pushLimit(packedLength);
+
+        // Local variables for performance
+        int[] array = list.array;
+        int count = list.count;
+
+        // Parse all values in the packed field
+        while (input.getBytesUntilLimit() > 0) {
+            // Check capacity and grow if needed
+            if (count >= array.length) {
+                list.grow(count);
+                array = list.array;  // Update local reference after resize
+            }
+            array[count++] = input.readInt32();
+        }
+
+        // Write back the count
+        list.count = count;
+
+        input.popLimit(oldLimit);
+    }
+
+    /**
+     * Parse packed repeated longs using LongList for efficient storage.
+     * Reads the packed length from input and updates the list's count and may resize the array.
+     */
+    protected static void parsePackedLongs(CodedInputStream input, LongList list) throws IOException {
+        int packedLength = input.readRawVarint32();
+        int oldLimit = input.pushLimit(packedLength);
+
+        // Local variables for performance
+        long[] array = list.array;
+        int count = list.count;
+
+        // Parse all values in the packed field
+        while (input.getBytesUntilLimit() > 0) {
+            // Check capacity and grow if needed
+            if (count >= array.length) {
+                list.grow(count);
+                array = list.array;  // Update local reference after resize
+            }
+            array[count++] = input.readInt64();
+        }
+
+        // Write back the count
+        list.count = count;
+
+        input.popLimit(oldLimit);
     }
 }

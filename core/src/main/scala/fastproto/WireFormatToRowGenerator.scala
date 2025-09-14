@@ -188,7 +188,9 @@ object WireFormatToRowGenerator {
     code ++= "import org.apache.spark.sql.catalyst.expressions.codegen.UnsafeRowWriter;\n"
     code ++= "import org.apache.spark.sql.types.StructType;\n"
     code ++= "import org.apache.spark.unsafe.types.UTF8String;\n"
-    code ++= "import fastproto.AbstractWireFormatConverter;\n\n"
+    code ++= "import fastproto.AbstractWireFormatConverter;\n"
+    code ++= "import fastproto.IntList;\n"
+    code ++= "import fastproto.LongList;\n\n"
 
     // Class declaration
     code ++= s"public final class $className extends AbstractWireFormatConverter {\n"
@@ -296,9 +298,16 @@ object WireFormatToRowGenerator {
     if (repeatedFields.nonEmpty) {
       code ++= "  // Repeated field accumulators\n"
       repeatedFields.foreach { field =>
-        val javaType = getJavaElementType(field.getType)
-        code ++= s"  private $javaType[] field${field.getNumber}_values;\n"
-        code ++= s"  private int field${field.getNumber}_count = 0;\n"
+        field.getType match {
+          case FieldDescriptor.Type.INT32 | FieldDescriptor.Type.SINT32 | FieldDescriptor.Type.SFIXED32 =>
+            code ++= s"  private final IntList field${field.getNumber}_list = new IntList();\n"
+          case FieldDescriptor.Type.INT64 | FieldDescriptor.Type.SINT64 | FieldDescriptor.Type.SFIXED64 =>
+            code ++= s"  private final LongList field${field.getNumber}_list = new LongList();\n"
+          case _ =>
+            val javaType = getJavaElementType(field.getType)
+            code ++= s"  private $javaType[] field${field.getNumber}_values;\n"
+            code ++= s"  private int field${field.getNumber}_count = 0;\n"
+        }
       }
       code ++= "\n"
     }
@@ -313,15 +322,22 @@ object WireFormatToRowGenerator {
     )
 
     repeatedFields.foreach { field =>
-      val javaType = getJavaElementType(field.getType)
-      val initialCapacity = getInitialCapacity(field.getType)
-      // For primitive types, javaType is "int", "long", etc. -> new int[8]
-      // For byte array types, javaType is "byte[]" -> new byte[8][]
-      if (javaType.endsWith("[]")) {
-        val baseType = javaType.dropRight(2)
-        code ++= s"    field${field.getNumber}_values = new $baseType[$initialCapacity][];\n"
-      } else {
-        code ++= s"    field${field.getNumber}_values = new $javaType[$initialCapacity];\n"
+      field.getType match {
+        case FieldDescriptor.Type.INT32 | FieldDescriptor.Type.SINT32 | FieldDescriptor.Type.SFIXED32 =>
+          // IntList is initialized in field declaration, no initialization needed
+        case FieldDescriptor.Type.INT64 | FieldDescriptor.Type.SINT64 | FieldDescriptor.Type.SFIXED64 =>
+          // LongList is initialized in field declaration, no initialization needed
+        case _ =>
+          val javaType = getJavaElementType(field.getType)
+          val initialCapacity = getInitialCapacity(field.getType)
+          // For primitive types, javaType is "int", "long", etc. -> new int[8]
+          // For byte array types, javaType is "byte[]" -> new byte[8][]
+          if (javaType.endsWith("[]")) {
+            val baseType = javaType.dropRight(2)
+            code ++= s"    field${field.getNumber}_values = new $baseType[$initialCapacity][];\n"
+          } else {
+            code ++= s"    field${field.getNumber}_values = new $javaType[$initialCapacity];\n"
+          }
       }
     }
   }
@@ -339,7 +355,14 @@ object WireFormatToRowGenerator {
       field.isRepeated && schema.fieldNames.contains(field.getName)
     )
     repeatedFields.foreach { field =>
-      code ++= s"    field${field.getNumber}_count = 0;\n"
+      field.getType match {
+        case FieldDescriptor.Type.INT32 | FieldDescriptor.Type.SINT32 | FieldDescriptor.Type.SFIXED32 =>
+          code ++= s"    field${field.getNumber}_list.count = 0;\n"
+        case FieldDescriptor.Type.INT64 | FieldDescriptor.Type.SINT64 | FieldDescriptor.Type.SFIXED64 =>
+          code ++= s"    field${field.getNumber}_list.count = 0;\n"
+        case _ =>
+          code ++= s"    field${field.getNumber}_count = 0;\n"
+      }
     }
 
     code ++= "\n    try {\n"
@@ -379,32 +402,55 @@ object WireFormatToRowGenerator {
       repeatedFields.foreach { field =>
         val fieldNum = field.getNumber
         val ordinal = schema.fieldIndex(field.getName)
-        code ++= s"    if (field${fieldNum}_count > 0) {\n"
 
-        // Generate inline array writing code
         field.getType match {
-          case FieldDescriptor.Type.MESSAGE =>
-            code ++= s"      writeMessageArray(field${fieldNum}_values, field${fieldNum}_count, $ordinal, nestedConv${fieldNum}, writer);\n"
-          case FieldDescriptor.Type.STRING =>
-            code ++= s"      writeStringArray(field${fieldNum}_values, field${fieldNum}_count, $ordinal, writer);\n"
-          case FieldDescriptor.Type.BYTES =>
-            code ++= s"      writeBytesArray(field${fieldNum}_values, field${fieldNum}_count, $ordinal, writer);\n"
-          case FieldDescriptor.Type.INT32 =>
-            code ++= s"      writeIntArray(field${fieldNum}_values, field${fieldNum}_count, $ordinal, writer);\n"
-          case FieldDescriptor.Type.INT64 =>
-            code ++= s"      writeLongArray(field${fieldNum}_values, field${fieldNum}_count, $ordinal, writer);\n"
-          case FieldDescriptor.Type.FLOAT =>
-            code ++= s"      writeFloatArray(field${fieldNum}_values, field${fieldNum}_count, $ordinal, writer);\n"
-          case FieldDescriptor.Type.DOUBLE =>
-            code ++= s"      writeDoubleArray(field${fieldNum}_values, field${fieldNum}_count, $ordinal, writer);\n"
-          case FieldDescriptor.Type.BOOL =>
-            code ++= s"      writeBooleanArray(field${fieldNum}_values, field${fieldNum}_count, $ordinal, writer);\n"
-          case _ =>
-            // For other types, use generic approach
-            code ++= s"      writeStringArray(field${fieldNum}_values, field${fieldNum}_count, $ordinal, writer);\n"
-        }
+          case FieldDescriptor.Type.INT32 | FieldDescriptor.Type.SINT32 | FieldDescriptor.Type.SFIXED32 =>
+            // Use IntList
+            code ++= s"    if (field${fieldNum}_list.count > 0) {\n"
+            code ++= s"      writeIntArray(field${fieldNum}_list.array, field${fieldNum}_list.count, $ordinal, writer);\n"
+            code ++= s"    } else {\n"
+            code ++= s"      writer.setNullAt($ordinal);\n"
+            code ++= s"    }\n"
 
-        code ++= s"    }\n"
+          case FieldDescriptor.Type.INT64 | FieldDescriptor.Type.SINT64 | FieldDescriptor.Type.SFIXED64 =>
+            // Use LongList
+            code ++= s"    if (field${fieldNum}_list.count > 0) {\n"
+            code ++= s"      writeLongArray(field${fieldNum}_list.array, field${fieldNum}_list.count, $ordinal, writer);\n"
+            code ++= s"    } else {\n"
+            code ++= s"      writer.setNullAt($ordinal);\n"
+            code ++= s"    }\n"
+
+          case _ =>
+            // Use existing array-based approach for other types
+            code ++= s"    if (field${fieldNum}_count > 0) {\n"
+
+            // Generate inline array writing code
+            field.getType match {
+              case FieldDescriptor.Type.MESSAGE =>
+                code ++= s"      writeMessageArray(field${fieldNum}_values, field${fieldNum}_count, $ordinal, nestedConv${fieldNum}, writer);\n"
+              case FieldDescriptor.Type.STRING =>
+                code ++= s"      writeStringArray(field${fieldNum}_values, field${fieldNum}_count, $ordinal, writer);\n"
+              case FieldDescriptor.Type.BYTES =>
+                code ++= s"      writeBytesArray(field${fieldNum}_values, field${fieldNum}_count, $ordinal, writer);\n"
+              case FieldDescriptor.Type.INT32 =>
+                code ++= s"      writeIntArray(field${fieldNum}_values, field${fieldNum}_count, $ordinal, writer);\n"
+              case FieldDescriptor.Type.INT64 =>
+                code ++= s"      writeLongArray(field${fieldNum}_values, field${fieldNum}_count, $ordinal, writer);\n"
+              case FieldDescriptor.Type.FLOAT =>
+                code ++= s"      writeFloatArray(field${fieldNum}_values, field${fieldNum}_count, $ordinal, writer);\n"
+              case FieldDescriptor.Type.DOUBLE =>
+                code ++= s"      writeDoubleArray(field${fieldNum}_values, field${fieldNum}_count, $ordinal, writer);\n"
+              case FieldDescriptor.Type.BOOL =>
+                code ++= s"      writeBooleanArray(field${fieldNum}_values, field${fieldNum}_count, $ordinal, writer);\n"
+              case _ =>
+                // For other types, use generic approach
+                code ++= s"      writeStringArray(field${fieldNum}_values, field${fieldNum}_count, $ordinal, writer);\n"
+            }
+
+            code ++= s"    } else {\n"
+            code ++= s"      writer.setNullAt($ordinal);\n"
+            code ++= s"    }\n"
+        }
       }
     }
 
@@ -505,20 +551,42 @@ object WireFormatToRowGenerator {
    */
   private def generatePackedFieldParsing(code: StringBuilder, field: FieldDescriptor): Unit = {
     val fieldNum = field.getNumber
-    val methodName = field.getType match {
-      case FieldDescriptor.Type.INT32 | FieldDescriptor.Type.UINT32 | FieldDescriptor.Type.SINT32 |
-           FieldDescriptor.Type.FIXED32 | FieldDescriptor.Type.SFIXED32 | FieldDescriptor.Type.ENUM => "parsePackedInts"
-      case FieldDescriptor.Type.INT64 | FieldDescriptor.Type.UINT64 | FieldDescriptor.Type.SINT64 |
-           FieldDescriptor.Type.FIXED64 | FieldDescriptor.Type.SFIXED64 => "parsePackedLongs"
-      case FieldDescriptor.Type.FLOAT => "parsePackedFloats"
-      case FieldDescriptor.Type.DOUBLE => "parsePackedDoubles"
-      case FieldDescriptor.Type.BOOL => "parsePackedBooleans"
-      case _ => "unsupported"
-    }
 
-    if (methodName != "unsupported") {
-      code ++= s"            int parsed${fieldNum} = $methodName(input, field${fieldNum}_values, field${fieldNum}_values.length - field${fieldNum}_count);\n"
-      code ++= s"            field${fieldNum}_count += parsed${fieldNum};\n"
+    field.getType match {
+      case FieldDescriptor.Type.INT32 | FieldDescriptor.Type.SINT32 | FieldDescriptor.Type.SFIXED32 =>
+        // Use IntList with new parsePackedInts method (reads length internally)
+        code ++= s"            parsePackedInts(input, field${fieldNum}_list);\n"
+
+      case FieldDescriptor.Type.INT64 | FieldDescriptor.Type.SINT64 | FieldDescriptor.Type.SFIXED64 =>
+        // Use LongList with new parsePackedLongs method (reads length internally)
+        code ++= s"            parsePackedLongs(input, field${fieldNum}_list);\n"
+
+      case _ =>
+        // Use existing array-based methods for other types
+        val methodName = field.getType match {
+          case FieldDescriptor.Type.INT32 | FieldDescriptor.Type.UINT32 | FieldDescriptor.Type.SINT32 |
+               FieldDescriptor.Type.FIXED32 | FieldDescriptor.Type.SFIXED32 | FieldDescriptor.Type.ENUM => "parsePackedInts"
+          case FieldDescriptor.Type.INT64 | FieldDescriptor.Type.UINT64 | FieldDescriptor.Type.SINT64 |
+               FieldDescriptor.Type.FIXED64 | FieldDescriptor.Type.SFIXED64 => "parsePackedLongs"
+          case FieldDescriptor.Type.FLOAT => "parsePackedFloats"
+          case FieldDescriptor.Type.DOUBLE => "parsePackedDoubles"
+          case FieldDescriptor.Type.BOOL => "parsePackedBooleans"
+          case _ => "unsupported"
+        }
+
+        if (methodName != "unsupported") {
+          code ++= s"            int packedLength${fieldNum} = input.readRawVarint32();\n"
+          code ++= s"            int oldCount${fieldNum} = field${fieldNum}_count;\n"
+          code ++= s"            field${fieldNum}_values = $methodName(input, field${fieldNum}_values, field${fieldNum}_count, packedLength${fieldNum});\n"
+          // Count parsed values by estimating from packed length
+          val bytesPerValue = field.getType match {
+            case FieldDescriptor.Type.FLOAT => "4"
+            case FieldDescriptor.Type.DOUBLE => "8"
+            case FieldDescriptor.Type.BOOL => "1"
+            case _ => "4" // Conservative estimate for varints
+          }
+          code ++= s"            field${fieldNum}_count = oldCount${fieldNum} + Math.max(1, packedLength${fieldNum} / $bytesPerValue);\n"
+        }
     }
   }
 
@@ -528,39 +596,57 @@ object WireFormatToRowGenerator {
   private def generateSingleRepeatedValueParsing(code: StringBuilder, field: FieldDescriptor): Unit = {
     val fieldNum = field.getNumber
 
-    // Ensure array capacity
-    code ++= s"            if (field${fieldNum}_count >= field${fieldNum}_values.length) {\n"
-    val javaType = getJavaElementType(field.getType)
-    if (javaType.endsWith("[]")) {
-      val baseType = javaType.dropRight(2)
-      code ++= s"              $javaType[] newArray = new $baseType[field${fieldNum}_values.length * 2][];\n"
-    } else {
-      code ++= s"              $javaType[] newArray = new $javaType[field${fieldNum}_values.length * 2];\n"
-    }
-    code ++= s"              System.arraycopy(field${fieldNum}_values, 0, newArray, 0, field${fieldNum}_count);\n"
-    code ++= s"              field${fieldNum}_values = newArray;\n"
-    code ++= s"            }\n"
-
-    // Parse single value
     field.getType match {
-      case FieldDescriptor.Type.INT32 =>
-        code ++= s"            field${fieldNum}_values[field${fieldNum}_count++] = input.readInt32();\n"
-      case FieldDescriptor.Type.INT64 =>
-        code ++= s"            field${fieldNum}_values[field${fieldNum}_count++] = input.readInt64();\n"
-      case FieldDescriptor.Type.FLOAT =>
-        code ++= s"            field${fieldNum}_values[field${fieldNum}_count++] = input.readFloat();\n"
-      case FieldDescriptor.Type.DOUBLE =>
-        code ++= s"            field${fieldNum}_values[field${fieldNum}_count++] = input.readDouble();\n"
-      case FieldDescriptor.Type.BOOL =>
-        code ++= s"            field${fieldNum}_values[field${fieldNum}_count++] = input.readBool();\n"
-      case FieldDescriptor.Type.STRING =>
-        code ++= s"            field${fieldNum}_values[field${fieldNum}_count++] = input.readByteArray();\n"
-      case FieldDescriptor.Type.BYTES =>
-        code ++= s"            field${fieldNum}_values[field${fieldNum}_count++] = input.readByteArray();\n"
-      case FieldDescriptor.Type.MESSAGE =>
-        code ++= s"            field${fieldNum}_values[field${fieldNum}_count++] = input.readByteArray();\n"
+      case FieldDescriptor.Type.INT32 | FieldDescriptor.Type.SINT32 | FieldDescriptor.Type.SFIXED32 =>
+        // Use IntList for int32 types
+        code ++= s"            if (field${fieldNum}_list.count >= field${fieldNum}_list.array.length) {\n"
+        code ++= s"              field${fieldNum}_list.grow(field${fieldNum}_list.count);\n"
+        code ++= s"            }\n"
+        code ++= s"            field${fieldNum}_list.array[field${fieldNum}_list.count++] = input.readInt32();\n"
+
+      case FieldDescriptor.Type.INT64 | FieldDescriptor.Type.SINT64 | FieldDescriptor.Type.SFIXED64 =>
+        // Use LongList for int64 types
+        code ++= s"            if (field${fieldNum}_list.count >= field${fieldNum}_list.array.length) {\n"
+        code ++= s"              field${fieldNum}_list.grow(field${fieldNum}_list.count);\n"
+        code ++= s"            }\n"
+        code ++= s"            field${fieldNum}_list.array[field${fieldNum}_list.count++] = input.readInt64();\n"
+
       case _ =>
-        code ++= s"            input.skipField(tag); // Unsupported repeated type\n"
+        // Use existing array-based approach for other types
+        code ++= s"            if (field${fieldNum}_count >= field${fieldNum}_values.length) {\n"
+        val resizeMethod = field.getType match {
+          case FieldDescriptor.Type.INT32 => "resizeIntArray"
+          case FieldDescriptor.Type.INT64 => "resizeLongArray"
+          case FieldDescriptor.Type.FLOAT => "resizeFloatArray"
+          case FieldDescriptor.Type.DOUBLE => "resizeDoubleArray"
+          case FieldDescriptor.Type.BOOL => "resizeBooleanArray"
+          case FieldDescriptor.Type.STRING | FieldDescriptor.Type.BYTES | FieldDescriptor.Type.MESSAGE => "resizeByteArrayArray"
+          case _ => "resizeByteArrayArray" // Default to byte array array
+        }
+        code ++= s"              field${fieldNum}_values = $resizeMethod(field${fieldNum}_values, field${fieldNum}_count, field${fieldNum}_count + 1);\n"
+        code ++= s"            }\n"
+
+        // Parse single value
+        field.getType match {
+          case FieldDescriptor.Type.INT32 =>
+            code ++= s"            field${fieldNum}_values[field${fieldNum}_count++] = input.readInt32();\n"
+          case FieldDescriptor.Type.INT64 =>
+            code ++= s"            field${fieldNum}_values[field${fieldNum}_count++] = input.readInt64();\n"
+          case FieldDescriptor.Type.FLOAT =>
+            code ++= s"            field${fieldNum}_values[field${fieldNum}_count++] = input.readFloat();\n"
+          case FieldDescriptor.Type.DOUBLE =>
+            code ++= s"            field${fieldNum}_values[field${fieldNum}_count++] = input.readDouble();\n"
+          case FieldDescriptor.Type.BOOL =>
+            code ++= s"            field${fieldNum}_values[field${fieldNum}_count++] = input.readBool();\n"
+          case FieldDescriptor.Type.STRING =>
+            code ++= s"            field${fieldNum}_values[field${fieldNum}_count++] = input.readByteArray();\n"
+          case FieldDescriptor.Type.BYTES =>
+            code ++= s"            field${fieldNum}_values[field${fieldNum}_count++] = input.readByteArray();\n"
+          case FieldDescriptor.Type.MESSAGE =>
+            code ++= s"            field${fieldNum}_values[field${fieldNum}_count++] = input.readByteArray();\n"
+          case _ =>
+            code ++= s"            input.skipField(tag); // Unsupported repeated type\n"
+        }
     }
   }
 

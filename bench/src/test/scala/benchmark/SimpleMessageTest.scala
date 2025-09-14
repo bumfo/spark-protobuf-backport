@@ -83,15 +83,15 @@ class SimpleMessageTest extends AnyFunSuite with Matchers {
 
     // Verify repeated int32 field
     val repeatedInt32Array = row.getArray(85) // repeated_int32_086
-    repeatedInt32Array.numElements() shouldBe 5
-    (0 until 5).foreach { i =>
+    repeatedInt32Array.numElements() shouldBe 120
+    (0 until 120).foreach { i =>
       repeatedInt32Array.getInt(i) shouldBe (i + 1) * 10
     }
 
     // Verify repeated string field
     val repeatedStringArray = row.getArray(110) // repeated_string_111
-    repeatedStringArray.numElements() shouldBe 5
-    (0 until 5).foreach { i =>
+    repeatedStringArray.numElements() shouldBe 12
+    (0 until 12).foreach { i =>
       repeatedStringArray.getUTF8String(i).toString shouldBe s"repeated_string_${i + 1}"
     }
   }

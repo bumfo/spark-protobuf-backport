@@ -77,13 +77,14 @@ object TestDataGenerator {
     }
 
     // Add repeated fields with deterministic values
-    (1 to 5).foreach(i => builder.addRepeatedInt32086(i * 10))
-    (91 to 95).foreach(i => builder.addRepeatedInt64091(i.toLong * 100000L))
-    (96 to 100).foreach(i => builder.addRepeatedFloat096(i.toFloat + 0.1f))
-    (101 to 105).foreach(i => builder.addRepeatedDouble101(i.toDouble + 0.01))
-    (106 to 110).foreach(i => builder.addRepeatedBool106(i % 2 == 1))
-    (1 to 5).foreach(i => builder.addRepeatedString111(s"repeated_string_$i"))
-    (1 to 5).foreach(i => builder.addRepeatedBytes116(ByteString.copyFromUtf8(s"repeated_bytes_$i")))
+    // Large repeated int32 field to test packed field parsing with array resizing (100+ elements)
+    (1 to 120).foreach(i => builder.addRepeatedInt32086(i * 10))
+    (91 to 100).foreach(i => builder.addRepeatedInt64091(i.toLong * 100000L))
+    (1 to 15).foreach(i => builder.addRepeatedFloat096(i.toFloat + 0.1f))
+    (101 to 110).foreach(i => builder.addRepeatedDouble101(i.toDouble + 0.01))
+    (106 to 125).foreach(i => builder.addRepeatedBool106(i % 2 == 1))
+    (1 to 12).foreach(i => builder.addRepeatedString111(s"repeated_string_$i"))
+    (1 to 8).foreach(i => builder.addRepeatedBytes116(ByteString.copyFromUtf8(s"repeated_bytes_$i")))
 
     builder.build()
   }
