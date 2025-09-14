@@ -21,26 +21,6 @@ public abstract class AbstractWireFormatConverter extends AbstractRowConverter {
         super(schema);
     }
 
-    /**
-     * Convert protobuf binary data to InternalRow using optimized parsing.
-     * <p>
-     * This is a convenience method that creates a fresh UnsafeRowWriter,
-     * calls {@link #writeData(byte[], UnsafeRowWriter)}, and returns the
-     * completed InternalRow. Use this for top-level conversions where you
-     * need the final row result.
-     * <p>
-     * This method inherits buffer-sharing behavior from {@link AbstractRowConverter#convert(byte[], org.apache.spark.sql.catalyst.expressions.codegen.UnsafeWriter)}.
-     *
-     * @param binary the protobuf binary data to parse
-     * @return a complete InternalRow containing all parsed fields
-     */
-    public InternalRow convert(byte[] binary) {
-        UnsafeRowWriter writer = new UnsafeRowWriter(schema().size());
-        writer.resetRowWriter();
-        writeData(binary, writer);
-        return writer.getRow();
-    }
-
     // ========== String Array Methods ==========
 
     /**

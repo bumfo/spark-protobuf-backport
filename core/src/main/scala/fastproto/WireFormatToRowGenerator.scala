@@ -460,7 +460,7 @@ object WireFormatToRowGenerator {
       case FieldDescriptor.Type.BOOL =>
         code ++= s"            writer.write($ordinal, input.readBool());\n"
       case FieldDescriptor.Type.STRING =>
-        code ++= s"            writer.write($ordinal, UTF8String.fromBytes(input.readByteArray()));\n"
+        code ++= s"            writer.write($ordinal, input.readByteArray());\n"
       case FieldDescriptor.Type.BYTES =>
         code ++= s"            writer.write($ordinal, input.readByteArray());\n"
       case FieldDescriptor.Type.ENUM =>
