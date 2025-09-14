@@ -15,6 +15,7 @@ abstract class AbstractRowConverter(val schema: StructType) extends RowConverter
     } else {
       val writer = new UnsafeRowWriter(parentWriter, schema.length)
       writer.resetRowWriter()
+      writer.zeroOutNullBytes()
       writer
     }
   }

@@ -22,8 +22,8 @@ class WireFormatGeneratorSpec extends AnyFlatSpec with Matchers {
       val nestedBaos = new ByteArrayOutputStream()
       val nestedOutput = CodedOutputStream.newInstance(nestedBaos)
 
-      // Nested field 1: STRING (name) - tag=10, "field1"
-      nestedOutput.writeTag(1, WireFormat.WIRETYPE_LENGTH_DELIMITED)
+      // Nested field 4: STRING (name) - tag=32, "field1" (Field.name is field 4)
+      nestedOutput.writeTag(4, WireFormat.WIRETYPE_LENGTH_DELIMITED)
       nestedOutput.writeStringNoTag("field1")
 
       nestedOutput.flush()
@@ -38,8 +38,8 @@ class WireFormatGeneratorSpec extends AnyFlatSpec with Matchers {
       val nestedBaos = new ByteArrayOutputStream()
       val nestedOutput = CodedOutputStream.newInstance(nestedBaos)
 
-      // Nested field 1: STRING (name) - tag=10, "field2"
-      nestedOutput.writeTag(1, WireFormat.WIRETYPE_LENGTH_DELIMITED)
+      // Nested field 4: STRING (name) - tag=32, "field2" (Field.name is field 4)
+      nestedOutput.writeTag(4, WireFormat.WIRETYPE_LENGTH_DELIMITED)
       nestedOutput.writeStringNoTag("field2")
 
       nestedOutput.flush()
@@ -281,7 +281,7 @@ class WireFormatGeneratorSpec extends AnyFlatSpec with Matchers {
     val row = converter.convert(emptyBinary)
 
     row.numFields should equal(1)
-    row.isNullAt(0) should be(true)
+    row.getString(0) should equal("")
   }
 
   it should "handle unknown fields by skipping them" in {

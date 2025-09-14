@@ -151,7 +151,7 @@ class WireFormatConverter(
         val oldLimit = input.pushLimit(length)
 
         while (input.getBytesUntilLimit > 0) {
-          values += readPackedValue(input, mapping.fieldDescriptor.getType)
+          values += readPackedValue(input, mapping.fieldDescriptor)
         }
 
         input.popLimit(oldLimit)
@@ -196,7 +196,11 @@ class WireFormatConverter(
         case UINT32 =>
           writer.write(mapping.rowOrdinal, input.readUInt32())
         case ENUM =>
-          writer.write(mapping.rowOrdinal, input.readEnum())
+          val enumValue = input.readEnum()
+          val enumDescriptor = mapping.fieldDescriptor.getEnumType
+          val enumValueDescriptor = enumDescriptor.findValueByNumber(enumValue)
+          val enumName = if (enumValueDescriptor != null) enumValueDescriptor.getName else enumValue.toString
+          writer.write(mapping.rowOrdinal, UTF8String.fromString(enumName))
         case SFIXED32 =>
           writer.write(mapping.rowOrdinal, input.readSFixed32())
         case SFIXED64 =>
@@ -251,9 +255,9 @@ class WireFormatConverter(
     }
   }
 
-  private def readPackedValue(input: CodedInputStream, fieldType: FieldDescriptor.Type): Any = {
+  private def readPackedValue(input: CodedInputStream, fieldDescriptor: FieldDescriptor): Any = {
     import FieldDescriptor.Type._
-    fieldType match {
+    fieldDescriptor.getType match {
       case DOUBLE => input.readDouble()
       case FLOAT => input.readFloat()
       case INT64 => input.readInt64()
@@ -263,12 +267,16 @@ class WireFormatConverter(
       case FIXED32 => input.readFixed32()
       case BOOL => input.readBool()
       case UINT32 => input.readUInt32()
-      case ENUM => input.readEnum()
+      case ENUM =>
+        val enumValue = input.readEnum()
+        val enumDescriptor = fieldDescriptor.getEnumType
+        val enumValueDescriptor = enumDescriptor.findValueByNumber(enumValue)
+        if (enumValueDescriptor != null) enumValueDescriptor.getName else enumValue.toString
       case SFIXED32 => input.readSFixed32()
       case SFIXED64 => input.readSFixed64()
       case SINT32 => input.readSInt32()
       case SINT64 => input.readSInt64()
-      case _ => throw new IllegalArgumentException(s"Type $fieldType is not packable")
+      case _ => throw new IllegalArgumentException(s"Type ${fieldDescriptor.getType} is not packable")
     }
   }
 
@@ -286,7 +294,11 @@ class WireFormatConverter(
       case STRING => UTF8String.fromBytes(input.readBytes().toByteArray)
       case BYTES => input.readBytes().toByteArray
       case UINT32 => input.readUInt32()
-      case ENUM => input.readEnum()
+      case ENUM =>
+        val enumValue = input.readEnum()
+        val enumDescriptor = mapping.fieldDescriptor.getEnumType
+        val enumValueDescriptor = enumDescriptor.findValueByNumber(enumValue)
+        if (enumValueDescriptor != null) enumValueDescriptor.getName else enumValue.toString
       case SFIXED32 => input.readSFixed32()
       case SFIXED64 => input.readSFixed64()
       case SINT32 => input.readSInt32()
@@ -332,9 +344,9 @@ class WireFormatConverter(
     import FieldDescriptor.Type._
     fieldType match {
       case DOUBLE | INT64 | UINT64 | FIXED64 | SFIXED64 | SINT64 => 8
-      case FLOAT | INT32 | UINT32 | FIXED32 | SFIXED32 | SINT32 | ENUM => 4
+      case FLOAT | INT32 | UINT32 | FIXED32 | SFIXED32 | SINT32 => 4
       case BOOL => 1
-      case STRING | BYTES | MESSAGE => 8 // Variable length fields use 8 bytes for offset/size
+      case STRING | BYTES | MESSAGE | ENUM => 8 // Variable length fields use 8 bytes for offset/size
       case GROUP => throw new UnsupportedOperationException("GROUP type is deprecated and not supported")
     }
   }
@@ -353,7 +365,7 @@ class WireFormatConverter(
       case STRING => arrayWriter.write(index, value.asInstanceOf[UTF8String])
       case BYTES => arrayWriter.write(index, value.asInstanceOf[Array[Byte]])
       case UINT32 => arrayWriter.write(index, value.asInstanceOf[Int])
-      case ENUM => arrayWriter.write(index, value.asInstanceOf[Int])
+      case ENUM => arrayWriter.write(index, UTF8String.fromString(value.asInstanceOf[String]))
       case SFIXED32 => arrayWriter.write(index, value.asInstanceOf[Int])
       case SFIXED64 => arrayWriter.write(index, value.asInstanceOf[Long])
       case SINT32 => arrayWriter.write(index, value.asInstanceOf[Int])
