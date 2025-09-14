@@ -33,7 +33,6 @@ public abstract class AbstractWireFormatConverter extends AbstractRowConverter {
      *
      * @param binary the protobuf binary data to parse
      * @return a complete InternalRow containing all parsed fields
-     * @throws IOException if protobuf parsing fails
      */
     public InternalRow convert(byte[] binary) {
         UnsafeRowWriter writer = new UnsafeRowWriter(schema().size());
@@ -41,40 +40,6 @@ public abstract class AbstractWireFormatConverter extends AbstractRowConverter {
         writeData(binary, writer);
         return writer.getRow();
     }
-
-    /**
-     * Parse protobuf binary data and write directly to the provided UnsafeRowWriter.
-     * <p>
-     * <b>CRITICAL USAGE NOTES:</b>
-     * <ul>
-     * <li><b>Absolute Ordinals:</b> This method writes data to specific ordinal positions
-     *     (0, 1, 2, etc.) in the provided writer using {@code writer.write(ordinal, value)}</li>
-     * <li><b>Top-level Use:</b> Designed for top-level row construction where you control
-     *     the complete row structure</li>
-     * <li><b>Nested Messages:</b> For nested messages within arrays or complex structures,
-     *     use {@link AbstractRowConverter#convert(byte[], org.apache.spark.sql.catalyst.expressions.codegen.UnsafeWriter)}
-     *     instead to avoid overwriting parent row data</li>
-     * </ul>
-     * <p>
-     * <b>Implementation Details:</b>
-     * Generated converters implement this method with optimized protobuf parsing logic:
-     * <ul>
-     * <li>Direct tag switching without runtime type checking</li>
-     * <li>Efficient repeated field accumulation and batch writing</li>
-     * <li>Inline enum value to string conversion</li>
-     * <li>Zero-copy binary field handling where possible</li>
-     * </ul>
-     *
-     * @param binary the protobuf binary data to parse (wire format)
-     * @param writer the UnsafeRowWriter to write parsed fields into
-     * @throws RuntimeException if protobuf parsing fails or encounters invalid wire format
-     *
-     * @see AbstractRowConverter#convert(byte[], org.apache.spark.sql.catalyst.expressions.codegen.UnsafeWriter)
-     *      for nested message conversion with buffer sharing
-     */
-    public abstract void writeData(byte[] binary, UnsafeRowWriter writer);
-
-
 
     // ========== String Array Methods ==========
 
