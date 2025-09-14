@@ -42,6 +42,29 @@ sbt clean
 
 The assembled JAR includes shaded protobuf dependencies to avoid conflicts with Spark's own protobuf runtime.
 
+## Git Workflow
+
+**IMPORTANT**: Never push directly to the `master` branch. Always work on feature branches.
+
+### Creating Pull Requests
+
+Before creating a PR, ensure you are on a feature branch:
+
+1. **Check current branch**: `git branch --show-current`
+2. **If on master, create feature branch**:
+   ```bash
+   git checkout -b feature/your-feature-name
+   ```
+3. **Make your changes and commit**
+4. **Push feature branch**: `git push -u origin feature/your-feature-name`
+5. **Create PR**: `gh pr create --title "Your PR Title" --body "PR description"`
+
+### Branch Naming Convention
+- `feature/description` - for new features
+- `fix/description` - for bug fixes
+- `perf/description` - for performance improvements
+- `test/description` - for test-only changes
+
 ## Module Documentation
 
 For detailed implementation and development information:
