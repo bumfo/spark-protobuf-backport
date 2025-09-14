@@ -398,15 +398,14 @@ object WireFormatToRowGenerator {
       case FieldDescriptor.Type.BOOL =>
         code ++= s"            writer.write($ordinal, input.readBool());\n"
       case FieldDescriptor.Type.STRING =>
-        code ++= s"            byte[] bytes = input.readBytes().toByteArray();\n"
-        code ++= s"            writer.write($ordinal, UTF8String.fromBytes(bytes));\n"
+        code ++= s"            writer.write($ordinal, input.readByteArray());\n"
       case FieldDescriptor.Type.BYTES =>
-        code ++= s"            writer.write($ordinal, input.readBytes().toByteArray());\n"
+        code ++= s"            writer.write($ordinal, input.readByteArray());\n"
       case FieldDescriptor.Type.ENUM =>
         code ++= s"            int enumValue = input.readEnum();\n"
         code ++= s"            writer.write($ordinal, UTF8String.fromString(getEnumName${fieldNum}(enumValue)));\n"
       case FieldDescriptor.Type.MESSAGE =>
-        code ++= s"            byte[] messageBytes = input.readBytes().toByteArray();\n"
+        code ++= s"            byte[] messageBytes = input.readByteArray();\n"
         code ++= s"            writeMessage(messageBytes, $fieldNum, $ordinal, writer);\n"
       case _ =>
         code ++= s"            input.skipField(tag); // Unsupported type\n"
@@ -493,11 +492,11 @@ object WireFormatToRowGenerator {
       case FieldDescriptor.Type.BOOL =>
         code ++= s"            field${fieldNum}_values[field${fieldNum}_count++] = input.readBool();\n"
       case FieldDescriptor.Type.STRING =>
-        code ++= s"            field${fieldNum}_values[field${fieldNum}_count++] = input.readBytes().toByteArray();\n"
+        code ++= s"            field${fieldNum}_values[field${fieldNum}_count++] = input.readByteArray();\n"
       case FieldDescriptor.Type.BYTES =>
-        code ++= s"            field${fieldNum}_values[field${fieldNum}_count++] = input.readBytes().toByteArray();\n"
+        code ++= s"            field${fieldNum}_values[field${fieldNum}_count++] = input.readByteArray();\n"
       case FieldDescriptor.Type.MESSAGE =>
-        code ++= s"            field${fieldNum}_values[field${fieldNum}_count++] = input.readBytes().toByteArray();\n"
+        code ++= s"            field${fieldNum}_values[field${fieldNum}_count++] = input.readByteArray();\n"
       case _ =>
         code ++= s"            input.skipField(tag); // Unsupported repeated type\n"
     }
