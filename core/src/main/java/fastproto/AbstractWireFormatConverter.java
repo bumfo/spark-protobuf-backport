@@ -313,17 +313,15 @@ public abstract class AbstractWireFormatConverter extends AbstractRowConverter {
 
     /**
      * Parse packed repeated ints from a LENGTH_DELIMITED wire format.
-     * Resizes array internally if needed and returns the number of values parsed.
-     * The caller should update their count accordingly.
+     * Resizes array internally if needed and returns the (potentially new) array.
      */
-    protected static int parsePackedInts(CodedInputStream input, int[] buffer, int currentCount, int packedLength) throws IOException {
+    protected static int[] parsePackedInts(CodedInputStream input, int[] buffer, int currentCount, int packedLength) throws IOException {
         int oldLimit = input.pushLimit(packedLength);
 
         // Calculate required capacity (ints are variable length, estimate conservatively)
         int maxNewValues = packedLength; // Worst case: 1 byte per varint
         if (buffer.length < currentCount + maxNewValues) {
-            // This won't work since we can't return the new array - need different approach
-            throw new RuntimeException("Buffer too small for packed field parsing");
+            buffer = resizeIntArray(buffer, currentCount, currentCount + maxNewValues);
         }
 
         int index = currentCount;
@@ -332,7 +330,7 @@ public abstract class AbstractWireFormatConverter extends AbstractRowConverter {
         }
 
         input.popLimit(oldLimit);
-        return index - currentCount; // Return number of values parsed
+        return buffer;
     }
 
     /**

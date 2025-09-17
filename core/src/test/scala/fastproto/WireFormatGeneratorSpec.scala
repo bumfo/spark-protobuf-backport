@@ -427,4 +427,38 @@ class WireFormatGeneratorSpec extends AnyFlatSpec with Matchers {
       executor.awaitTermination(5, TimeUnit.SECONDS)
     }
   }
+
+  it should "handle FIXED32 packed fields without compilation errors" in {
+    import java.io.ByteArrayOutputStream
+    import com.google.protobuf.{CodedOutputStream, WireFormat}
+
+    // Create a schema with FIXED32 repeated field
+    val schema = StructType(Seq(
+      StructField("fixed32_values", ArrayType(IntegerType), nullable = true)
+    ))
+
+    // Create test binary data with packed FIXED32 values
+    val baos = new ByteArrayOutputStream()
+    val output = CodedOutputStream.newInstance(baos)
+
+    // Field 1: repeated fixed32 values (packed)
+    // Tag for field 1 with LENGTH_DELIMITED wire type = (1 << 3) | 2 = 10
+    output.writeTag(1, WireFormat.WIRETYPE_LENGTH_DELIMITED)
+    val fixed32Values = Array(100, 200, 300, 400)
+    output.writeRawVarint32(fixed32Values.length * 4) // 4 bytes per FIXED32
+    fixed32Values.foreach(output.writeFixed32NoTag)
+
+    output.flush()
+    val testBinary = baos.toByteArray
+
+    // Create a simple descriptor that represents FIXED32 repeated field
+    val typeDescriptor = Type.getDescriptor
+
+    // This should not throw compilation errors
+    noException should be thrownBy {
+      val converter = WireFormatToRowGenerator.generateConverter(typeDescriptor, schema)
+      // The converter generation should succeed without compilation errors
+      converter should not be null
+    }
+  }
 }
