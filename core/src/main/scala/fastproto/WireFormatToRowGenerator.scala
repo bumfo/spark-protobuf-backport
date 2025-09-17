@@ -558,60 +558,32 @@ object WireFormatToRowGenerator {
         code ++= s"            parsePackedLongs(input, field${fieldNum}_list);\n"
 
       case _ =>
-        field.getType match {
-          // Fixed-size types: can calculate count from packed length
-          case FieldDescriptor.Type.FIXED32 | FieldDescriptor.Type.SFIXED32 =>
-            code ++= s"            int packedLength${fieldNum} = input.readRawVarint32();\n"
-            code ++= s"            if (packedLength${fieldNum} > 0) {\n"
-            code ++= s"              int oldCount${fieldNum} = field${fieldNum}_count;\n"
-            code ++= s"              field${fieldNum}_values = parsePackedInts(input, field${fieldNum}_values, field${fieldNum}_count, packedLength${fieldNum});\n"
-            code ++= s"              field${fieldNum}_count = oldCount${fieldNum} + (packedLength${fieldNum} / 4);\n"
-            code ++= s"            }\n"
-
-          case FieldDescriptor.Type.FIXED64 | FieldDescriptor.Type.SFIXED64 =>
-            code ++= s"            int packedLength${fieldNum} = input.readRawVarint32();\n"
-            code ++= s"            if (packedLength${fieldNum} > 0) {\n"
-            code ++= s"              int oldCount${fieldNum} = field${fieldNum}_count;\n"
-            code ++= s"              field${fieldNum}_values = parsePackedLongs(input, field${fieldNum}_values, field${fieldNum}_count, packedLength${fieldNum});\n"
-            code ++= s"              field${fieldNum}_count = oldCount${fieldNum} + (packedLength${fieldNum} / 8);\n"
-            code ++= s"            }\n"
-
-          case FieldDescriptor.Type.FLOAT =>
-            code ++= s"            int packedLength${fieldNum} = input.readRawVarint32();\n"
-            code ++= s"            if (packedLength${fieldNum} > 0) {\n"
-            code ++= s"              int oldCount${fieldNum} = field${fieldNum}_count;\n"
-            code ++= s"              field${fieldNum}_values = parsePackedFloats(input, field${fieldNum}_values, field${fieldNum}_count, packedLength${fieldNum});\n"
-            code ++= s"              field${fieldNum}_count = oldCount${fieldNum} + (packedLength${fieldNum} / 4);\n"
-            code ++= s"            }\n"
-
-          case FieldDescriptor.Type.DOUBLE =>
-            code ++= s"            int packedLength${fieldNum} = input.readRawVarint32();\n"
-            code ++= s"            if (packedLength${fieldNum} > 0) {\n"
-            code ++= s"              int oldCount${fieldNum} = field${fieldNum}_count;\n"
-            code ++= s"              field${fieldNum}_values = parsePackedDoubles(input, field${fieldNum}_values, field${fieldNum}_count, packedLength${fieldNum});\n"
-            code ++= s"              field${fieldNum}_count = oldCount${fieldNum} + (packedLength${fieldNum} / 8);\n"
-            code ++= s"            }\n"
-
-          case FieldDescriptor.Type.BOOL =>
-            code ++= s"            int packedLength${fieldNum} = input.readRawVarint32();\n"
-            code ++= s"            if (packedLength${fieldNum} > 0) {\n"
-            code ++= s"              int oldCount${fieldNum} = field${fieldNum}_count;\n"
-            code ++= s"              field${fieldNum}_values = parsePackedBooleans(input, field${fieldNum}_values, field${fieldNum}_count, packedLength${fieldNum});\n"
-            code ++= s"              field${fieldNum}_count = oldCount${fieldNum} + packedLength${fieldNum};\n"
-            code ++= s"            }\n"
+        // Use existing array-based methods for fixed-size types only
+        val (methodName, bytesPerValue) = field.getType match {
+          case FieldDescriptor.Type.FIXED32 | FieldDescriptor.Type.SFIXED32 => ("parsePackedInts", 4)
+          case FieldDescriptor.Type.FIXED64 | FieldDescriptor.Type.SFIXED64 => ("parsePackedLongs", 8)
+          case FieldDescriptor.Type.FLOAT => ("parsePackedFloats", 4)
+          case FieldDescriptor.Type.DOUBLE => ("parsePackedDoubles", 8)
+          case FieldDescriptor.Type.BOOL => ("parsePackedBooleans", 1)
 
           // Variable-length types that should never reach this point
           case FieldDescriptor.Type.INT32 | FieldDescriptor.Type.SINT32 | FieldDescriptor.Type.SFIXED32 |
                FieldDescriptor.Type.UINT32 | FieldDescriptor.Type.ENUM =>
             throw new IllegalArgumentException(s"Packed field type ${field.getType} should be handled by IntList path, not fallback array path")
-
           case FieldDescriptor.Type.INT64 | FieldDescriptor.Type.SINT64 | FieldDescriptor.Type.SFIXED64 |
                FieldDescriptor.Type.UINT64 =>
             throw new IllegalArgumentException(s"Packed field type ${field.getType} should be handled by LongList path, not fallback array path")
-
           case _ =>
             throw new IllegalArgumentException(s"Unsupported packed field type: ${field.getType}")
         }
+
+        // Generate the common parsing code pattern
+        code ++= s"            int packedLength${fieldNum} = input.readRawVarint32();\n"
+        code ++= s"            if (packedLength${fieldNum} > 0) {\n"
+        code ++= s"              int oldCount${fieldNum} = field${fieldNum}_count;\n"
+        code ++= s"              field${fieldNum}_values = $methodName(input, field${fieldNum}_values, field${fieldNum}_count, packedLength${fieldNum});\n"
+        code ++= s"              field${fieldNum}_count = oldCount${fieldNum} + (packedLength${fieldNum} / $bytesPerValue);\n"
+        code ++= s"            }\n"
     }
   }
 
