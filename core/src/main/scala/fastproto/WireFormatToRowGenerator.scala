@@ -33,6 +33,144 @@ object WireFormatToRowGenerator {
   private val instanceCache: ThreadLocal[scala.collection.mutable.Map[String, AbstractWireFormatConverter]] =
     ThreadLocal.withInitial(() => scala.collection.mutable.Map.empty[String, AbstractWireFormatConverter])
 
+  // ========== Wire Format Type Categorization ==========
+
+  /**
+   * Wire format-based type categorization methods.
+   * These group types by their semantic wire format characteristics.
+   */
+  private def isVarint32(fieldType: FieldDescriptor.Type): Boolean = {
+    import FieldDescriptor.Type._
+    fieldType match {
+      case INT32 | SINT32 | UINT32 | ENUM => true
+      case _ => false
+    }
+  }
+
+  private def isVarint64(fieldType: FieldDescriptor.Type): Boolean = {
+    import FieldDescriptor.Type._
+    fieldType match {
+      case INT64 | SINT64 | UINT64 => true
+      case _ => false
+    }
+  }
+
+  private def isFixedInt32(fieldType: FieldDescriptor.Type): Boolean = {
+    import FieldDescriptor.Type._
+    fieldType match {
+      case FIXED32 | SFIXED32 => true
+      case _ => false
+    }
+  }
+
+  private def isFixedInt64(fieldType: FieldDescriptor.Type): Boolean = {
+    import FieldDescriptor.Type._
+    fieldType match {
+      case FIXED64 | SFIXED64 => true
+      case _ => false
+    }
+  }
+
+  private def isLengthDelimited(fieldType: FieldDescriptor.Type): Boolean = {
+    import FieldDescriptor.Type._
+    fieldType match {
+      case STRING | BYTES | MESSAGE => true
+      case _ => false
+    }
+  }
+
+  // ========== Method Name Mappings ==========
+
+  /**
+   * Get the CodedInputStream read method name for a field type.
+   */
+  private def getReadMethod(fieldType: FieldDescriptor.Type): String = {
+    import FieldDescriptor.Type._
+    fieldType match {
+      case INT32 => "readInt32"
+      case SINT32 => "readSInt32"
+      case UINT32 => "readUInt32"
+      case INT64 => "readInt64"
+      case SINT64 => "readSInt64"
+      case UINT64 => "readUInt64"
+      case FIXED32 => "readFixed32"
+      case SFIXED32 => "readSFixed32"
+      case FIXED64 => "readFixed64"
+      case SFIXED64 => "readSFixed64"
+      case FLOAT => "readFloat"
+      case DOUBLE => "readDouble"
+      case BOOL => "readBool"
+      case STRING | BYTES | MESSAGE => "readByteArray"
+      case ENUM => "readEnum"
+    }
+  }
+
+  /**
+   * Get the packed parsing method name for a field type.
+   */
+  private def getPackedParseMethod(fieldType: FieldDescriptor.Type): String = {
+    import FieldDescriptor.Type._
+    fieldType match {
+      case t if isVarint32(t) || isFixedInt32(t) => "parsePackedInts"
+      case t if isVarint64(t) || isFixedInt64(t) => "parsePackedLongs"
+      case FLOAT => "parsePackedFloats"
+      case DOUBLE => "parsePackedDoubles"
+      case BOOL => "parsePackedBooleans"
+      case _ => throw new IllegalArgumentException(s"Type $fieldType cannot be packed")
+    }
+  }
+
+  /**
+   * Get the bytes per element for fixed-size types, None for variable-length types.
+   */
+  private def getBytesPerElement(fieldType: FieldDescriptor.Type): Option[Int] = {
+    import FieldDescriptor.Type._
+    fieldType match {
+      case t if isFixedInt32(t) => Some(4)
+      case t if isFixedInt64(t) => Some(8)
+      case FLOAT => Some(4)
+      case DOUBLE => Some(8)
+      case BOOL => Some(1)
+      case _ => None  // Variable-length types
+    }
+  }
+
+  /**
+   * Get the array resize method name for a field type.
+   */
+  private def getResizeMethod(fieldType: FieldDescriptor.Type): String = {
+    import FieldDescriptor.Type._
+    fieldType match {
+      case t if isVarint32(t) || isFixedInt32(t) => "resizeIntArray"
+      case t if isVarint64(t) || isFixedInt64(t) => "resizeLongArray"
+      case FLOAT => "resizeFloatArray"
+      case DOUBLE => "resizeDoubleArray"
+      case BOOL => "resizeBooleanArray"
+      case t if isLengthDelimited(t) => "resizeByteArrayArray"
+      case ENUM => "resizeIntArray"
+      case _ => throw new IllegalArgumentException(s"Unknown type: $fieldType")
+    }
+  }
+
+  /**
+   * Get the array write method name for a field type.
+   */
+  private def getWriteArrayMethod(fieldType: FieldDescriptor.Type): String = {
+    import FieldDescriptor.Type._
+    fieldType match {
+      case t if isVarint32(t) || isFixedInt32(t) => "writeIntArray"
+      case t if isVarint64(t) || isFixedInt64(t) => "writeLongArray"
+      case FLOAT => "writeFloatArray"
+      case DOUBLE => "writeDoubleArray"
+      case BOOL => "writeBooleanArray"
+      case STRING => "writeStringArray"
+      case BYTES => "writeBytesArray"
+      case MESSAGE => "writeMessageArray"
+      case ENUM => "writeIntArray"
+      case _ => throw new IllegalArgumentException(s"Unsupported array type: $fieldType")
+    }
+  }
+
   /**
    * Generate or retrieve a cached converter for the given descriptor and schema.
    * Uses two-tier caching: globally cached compiled classes + thread-local instances.
@@ -323,15 +461,16 @@ object WireFormatToRowGenerator {
     if (repeatedFields.nonEmpty) {
       code ++= "  // Repeated field accumulators\n"
       repeatedFields.foreach { field =>
-        field.getType match {
-          case FieldDescriptor.Type.INT32 | FieldDescriptor.Type.SINT32 =>
-            code ++= s"  private final IntList field${field.getNumber}_list = new IntList();\n"
-          case FieldDescriptor.Type.INT64 | FieldDescriptor.Type.SINT64 =>
-            code ++= s"  private final LongList field${field.getNumber}_list = new LongList();\n"
-          case _ =>
-            val javaType = getJavaElementType(field.getType)
-            code ++= s"  private $javaType[] field${field.getNumber}_values;\n"
-            code ++= s"  private int field${field.getNumber}_count = 0;\n"
+        val fieldNum = field.getNumber
+
+        if (isVarint32(field.getType)) {
+          code ++= s"  private final IntList field${fieldNum}_list = new IntList();\n"
+        } else if (isVarint64(field.getType)) {
+          code ++= s"  private final LongList field${fieldNum}_list = new LongList();\n"
+        } else {
+          val javaType = getJavaElementType(field.getType)
+          code ++= s"  private $javaType[] field${fieldNum}_values;\n"
+          code ++= s"  private int field${fieldNum}_count = 0;\n"
         }
       }
       code ++= "\n"
@@ -380,13 +519,11 @@ object WireFormatToRowGenerator {
       field.isRepeated && schema.fieldNames.contains(field.getName)
     )
     repeatedFields.foreach { field =>
-      field.getType match {
-        case FieldDescriptor.Type.INT32 | FieldDescriptor.Type.SINT32 =>
-          code ++= s"    field${field.getNumber}_list.count = 0;\n"
-        case FieldDescriptor.Type.INT64 | FieldDescriptor.Type.SINT64 =>
-          code ++= s"    field${field.getNumber}_list.count = 0;\n"
-        case _ =>
-          code ++= s"    field${field.getNumber}_count = 0;\n"
+      val fieldNum = field.getNumber
+      if (isVarint32(field.getType) || isVarint64(field.getType)) {
+        code ++= s"    field${fieldNum}_list.count = 0;\n"
+      } else {
+        code ++= s"    field${fieldNum}_count = 0;\n"
       }
     }
 
@@ -425,51 +562,7 @@ object WireFormatToRowGenerator {
     if (repeatedFields.nonEmpty) {
       code ++= "    // Write accumulated repeated fields\n"
       repeatedFields.foreach { field =>
-        val fieldNum = field.getNumber
-        val ordinal = schema.fieldIndex(field.getName)
-
-        field.getType match {
-          case FieldDescriptor.Type.INT32 | FieldDescriptor.Type.SINT32 =>
-            // Use IntList
-            code ++= s"    if (field${fieldNum}_list.count > 0) {\n"
-            code ++= s"      writeIntArray(field${fieldNum}_list.array, field${fieldNum}_list.count, $ordinal, writer);\n"
-            code ++= s"    }\n"
-
-          case FieldDescriptor.Type.INT64 | FieldDescriptor.Type.SINT64 =>
-            // Use LongList
-            code ++= s"    if (field${fieldNum}_list.count > 0) {\n"
-            code ++= s"      writeLongArray(field${fieldNum}_list.array, field${fieldNum}_list.count, $ordinal, writer);\n"
-            code ++= s"    }\n"
-
-          case _ =>
-            // Use existing array-based approach for other types
-            code ++= s"    if (field${fieldNum}_count > 0) {\n"
-
-            // Generate inline array writing code
-            field.getType match {
-              case FieldDescriptor.Type.MESSAGE =>
-                code ++= s"      writeMessageArray(field${fieldNum}_values, field${fieldNum}_count, $ordinal, nestedConv${fieldNum}, writer);\n"
-              case FieldDescriptor.Type.STRING =>
-                code ++= s"      writeStringArray(field${fieldNum}_values, field${fieldNum}_count, $ordinal, writer);\n"
-              case FieldDescriptor.Type.BYTES =>
-                code ++= s"      writeBytesArray(field${fieldNum}_values, field${fieldNum}_count, $ordinal, writer);\n"
-              case FieldDescriptor.Type.INT32 | FieldDescriptor.Type.SINT32 | FieldDescriptor.Type.FIXED32 | FieldDescriptor.Type.SFIXED32 =>
-                code ++= s"      writeIntArray(field${fieldNum}_values, field${fieldNum}_count, $ordinal, writer);\n"
-              case FieldDescriptor.Type.INT64 | FieldDescriptor.Type.SINT64 | FieldDescriptor.Type.FIXED64 | FieldDescriptor.Type.SFIXED64 =>
-                code ++= s"      writeLongArray(field${fieldNum}_values, field${fieldNum}_count, $ordinal, writer);\n"
-              case FieldDescriptor.Type.FLOAT =>
-                code ++= s"      writeFloatArray(field${fieldNum}_values, field${fieldNum}_count, $ordinal, writer);\n"
-              case FieldDescriptor.Type.DOUBLE =>
-                code ++= s"      writeDoubleArray(field${fieldNum}_values, field${fieldNum}_count, $ordinal, writer);\n"
-              case FieldDescriptor.Type.BOOL =>
-                code ++= s"      writeBooleanArray(field${fieldNum}_values, field${fieldNum}_count, $ordinal, writer);\n"
-              case _ =>
-                // For other types, use generic approach
-                code ++= s"      writeStringArray(field${fieldNum}_values, field${fieldNum}_count, $ordinal, writer);\n"
-            }
-
-            code ++= s"    }\n"
-        }
+        generateRepeatedFieldWriting(code, field, schema)
       }
     }
 
@@ -571,45 +664,33 @@ object WireFormatToRowGenerator {
   private def generatePackedFieldParsing(code: StringBuilder, field: FieldDescriptor): Unit = {
     val fieldNum = field.getNumber
 
-    field.getType match {
-      case FieldDescriptor.Type.INT32 | FieldDescriptor.Type.SINT32 |
-           FieldDescriptor.Type.UINT32 | FieldDescriptor.Type.ENUM =>
-        // Use IntList with new parsePackedInts method (reads length internally)
-        code ++= s"            parsePackedInts(input, field${fieldNum}_list);\n"
-
-      case FieldDescriptor.Type.INT64 | FieldDescriptor.Type.SINT64 |
-           FieldDescriptor.Type.UINT64 =>
-        // Use LongList with new parsePackedLongs method (reads length internally)
-        code ++= s"            parsePackedLongs(input, field${fieldNum}_list);\n"
-
-      case _ =>
-        // Use existing array-based methods for fixed-size types only
-        val (methodName, bytesPerValue) = field.getType match {
-          case FieldDescriptor.Type.FIXED32 | FieldDescriptor.Type.SFIXED32 => ("parsePackedInts", 4)
-          case FieldDescriptor.Type.FIXED64 | FieldDescriptor.Type.SFIXED64 => ("parsePackedLongs", 8)
-          case FieldDescriptor.Type.FLOAT => ("parsePackedFloats", 4)
-          case FieldDescriptor.Type.DOUBLE => ("parsePackedDoubles", 8)
-          case FieldDescriptor.Type.BOOL => ("parsePackedBooleans", 1)
-
-          // Variable-length types that should never reach this point
-          case FieldDescriptor.Type.INT32 | FieldDescriptor.Type.SINT32 |
-               FieldDescriptor.Type.UINT32 | FieldDescriptor.Type.ENUM =>
-            throw new IllegalArgumentException(s"Packed field type ${field.getType} should be handled by IntList path, not fallback array path")
-          case FieldDescriptor.Type.INT64 | FieldDescriptor.Type.SINT64 |
-               FieldDescriptor.Type.UINT64 =>
-            throw new IllegalArgumentException(s"Packed field type ${field.getType} should be handled by LongList path, not fallback array path")
-          case _ =>
-            throw new IllegalArgumentException(s"Unsupported packed field type: ${field.getType}")
-        }
-
-        // Generate the common parsing code pattern
-        code ++= s"            int packedLength${fieldNum} = input.readRawVarint32();\n"
-        code ++= s"            if (packedLength${fieldNum} > 0) {\n"
-        code ++= s"              int oldCount${fieldNum} = field${fieldNum}_count;\n"
-        code ++= s"              field${fieldNum}_values = $methodName(input, field${fieldNum}_values, field${fieldNum}_count, packedLength${fieldNum});\n"
-        code ++= s"              field${fieldNum}_count = oldCount${fieldNum} + (packedLength${fieldNum} / $bytesPerValue);\n"
-        code ++= s"            }\n"
+    if (isVarint32(field.getType)) {
+      // Variable-length int32 types use IntList for efficient parsing
+      code ++= s"            parsePackedInts(input, field${fieldNum}_list);\n"
+    } else if (isVarint64(field.getType)) {
+      // Variable-length int64 types use LongList for efficient parsing
+      code ++= s"            parsePackedLongs(input, field${fieldNum}_list);\n"
+    } else {
+      // Fixed-size types use array with pre-calculated count
+      generateFixedSizePackedParsing(code, fieldNum, field.getType)
     }
+  }
+
+  /**
+   * Generate packed field parsing for fixed-size types.
+   */
+  private def generateFixedSizePackedParsing(code: StringBuilder, fieldNum: Int, fieldType: FieldDescriptor.Type): Unit = {
+    val parseMethod = getPackedParseMethod(fieldType)
+    val bytesPerElement = getBytesPerElement(fieldType).getOrElse(
+      throw new IllegalArgumentException(s"$fieldType is not a fixed-size type")
+    )
+
+    code ++= s"            int packedLength${fieldNum} = input.readRawVarint32();\n"
+    code ++= s"            if (packedLength${fieldNum} > 0) {\n"
+    code ++= s"              int oldCount${fieldNum} = field${fieldNum}_count;\n"
+    code ++= s"              field${fieldNum}_values = $parseMethod(input, field${fieldNum}_values, field${fieldNum}_count, packedLength${fieldNum});\n"
+    code ++= s"              field${fieldNum}_count = oldCount${fieldNum} + (packedLength${fieldNum} / $bytesPerElement);\n"
+    code ++= s"            }\n"
   }
 
   /**
@@ -617,67 +698,59 @@ object WireFormatToRowGenerator {
    */
   private def generateSingleRepeatedValueParsing(code: StringBuilder, field: FieldDescriptor): Unit = {
     val fieldNum = field.getNumber
+    val readMethod = getReadMethod(field.getType)
 
-    field.getType match {
-      case FieldDescriptor.Type.INT32 | FieldDescriptor.Type.SINT32 =>
-        // Use IntList for int32 types
-        code ++= s"            field${fieldNum}_list.add(input.readInt32());\n"
-
-      case FieldDescriptor.Type.INT64 | FieldDescriptor.Type.SINT64 =>
-        // Use LongList for int64 types
-        code ++= s"            field${fieldNum}_list.add(input.readInt64());\n"
-
-      case _ =>
-        // Use existing array-based approach for other types
-        code ++= s"            if (field${fieldNum}_count >= field${fieldNum}_values.length) {\n"
-        val resizeMethod = field.getType match {
-          case FieldDescriptor.Type.INT32 | FieldDescriptor.Type.SINT32 | FieldDescriptor.Type.FIXED32 | FieldDescriptor.Type.SFIXED32 => "resizeIntArray"
-          case FieldDescriptor.Type.INT64 | FieldDescriptor.Type.SINT64 | FieldDescriptor.Type.FIXED64 | FieldDescriptor.Type.SFIXED64 => "resizeLongArray"
-          case FieldDescriptor.Type.FLOAT => "resizeFloatArray"
-          case FieldDescriptor.Type.DOUBLE => "resizeDoubleArray"
-          case FieldDescriptor.Type.BOOL => "resizeBooleanArray"
-          case FieldDescriptor.Type.STRING | FieldDescriptor.Type.BYTES | FieldDescriptor.Type.MESSAGE => "resizeByteArrayArray"
-          case _ => "resizeByteArrayArray" // Default to byte array array
-        }
-        code ++= s"              field${fieldNum}_values = $resizeMethod(field${fieldNum}_values, field${fieldNum}_count, field${fieldNum}_count + 1);\n"
-        code ++= s"            }\n"
-
-        // Parse single value
-        field.getType match {
-          case FieldDescriptor.Type.INT32 =>
-            code ++= s"            field${fieldNum}_values[field${fieldNum}_count++] = input.readInt32();\n"
-          case FieldDescriptor.Type.INT64 =>
-            code ++= s"            field${fieldNum}_values[field${fieldNum}_count++] = input.readInt64();\n"
-          case FieldDescriptor.Type.SINT32 =>
-            code ++= s"            field${fieldNum}_values[field${fieldNum}_count++] = input.readSInt32();\n"
-          case FieldDescriptor.Type.SINT64 =>
-            code ++= s"            field${fieldNum}_values[field${fieldNum}_count++] = input.readSInt64();\n"
-          case FieldDescriptor.Type.FIXED32 =>
-            code ++= s"            field${fieldNum}_values[field${fieldNum}_count++] = input.readFixed32();\n"
-          case FieldDescriptor.Type.FIXED64 =>
-            code ++= s"            field${fieldNum}_values[field${fieldNum}_count++] = input.readFixed64();\n"
-          case FieldDescriptor.Type.SFIXED32 =>
-            code ++= s"            field${fieldNum}_values[field${fieldNum}_count++] = input.readSFixed32();\n"
-          case FieldDescriptor.Type.SFIXED64 =>
-            code ++= s"            field${fieldNum}_values[field${fieldNum}_count++] = input.readSFixed64();\n"
-          case FieldDescriptor.Type.FLOAT =>
-            code ++= s"            field${fieldNum}_values[field${fieldNum}_count++] = input.readFloat();\n"
-          case FieldDescriptor.Type.DOUBLE =>
-            code ++= s"            field${fieldNum}_values[field${fieldNum}_count++] = input.readDouble();\n"
-          case FieldDescriptor.Type.BOOL =>
-            code ++= s"            field${fieldNum}_values[field${fieldNum}_count++] = input.readBool();\n"
-          case FieldDescriptor.Type.STRING =>
-            code ++= s"            field${fieldNum}_values[field${fieldNum}_count++] = input.readByteArray();\n"
-          case FieldDescriptor.Type.BYTES =>
-            code ++= s"            field${fieldNum}_values[field${fieldNum}_count++] = input.readByteArray();\n"
-          case FieldDescriptor.Type.MESSAGE =>
-            code ++= s"            field${fieldNum}_values[field${fieldNum}_count++] = input.readByteArray();\n"
-          case _ =>
-            code ++= s"            input.skipField(tag); // Unsupported repeated type\n"
-        }
+    if (isVarint32(field.getType)) {
+      // Variable-length int32 types use IntList
+      code ++= s"            field${fieldNum}_list.add(input.$readMethod());\n"
+    } else if (isVarint64(field.getType)) {
+      // Variable-length int64 types use LongList
+      code ++= s"            field${fieldNum}_list.add(input.$readMethod());\n"
+    } else {
+      // All other types use array-based approach
+      generateArrayValueParsing(code, fieldNum, readMethod, field.getType)
     }
   }
 
+  /**
+   * Generate array-based value parsing with resize check.
+   */
+  private def generateArrayValueParsing(code: StringBuilder, fieldNum: Int, readMethod: String, fieldType: FieldDescriptor.Type): Unit = {
+    // Generate resize check
+    code ++= s"            if (field${fieldNum}_count >= field${fieldNum}_values.length) {\n"
+    val resizeMethod = getResizeMethod(fieldType)
+    code ++= s"              field${fieldNum}_values = $resizeMethod(field${fieldNum}_values, field${fieldNum}_count, field${fieldNum}_count + 1);\n"
+    code ++= s"            }\n"
+    // Generate the read - same pattern for all array types
+    code ++= s"            field${fieldNum}_values[field${fieldNum}_count++] = input.$readMethod();\n"
+  }
+
+  /**
+   * Generate output writing for a repeated field.
+   */
+  private def generateRepeatedFieldWriting(code: StringBuilder, field: FieldDescriptor, schema: StructType): Unit = {
+    val fieldNum = field.getNumber
+    val ordinal = schema.fieldIndex(field.getName)
+
+    if (isVarint32(field.getType)) {
+      code ++= s"    if (field${fieldNum}_list.count > 0) {\n"
+      code ++= s"      writeIntArray(field${fieldNum}_list.array, field${fieldNum}_list.count, $ordinal, writer);\n"
+      code ++= s"    }\n"
+    } else if (isVarint64(field.getType)) {
+      code ++= s"    if (field${fieldNum}_list.count > 0) {\n"
+      code ++= s"      writeLongArray(field${fieldNum}_list.array, field${fieldNum}_list.count, $ordinal, writer);\n"
+      code ++= s"    }\n"
+    } else {
+      val writeMethod = getWriteArrayMethod(field.getType)
+      code ++= s"    if (field${fieldNum}_count > 0) {\n"
+      if (field.getType == FieldDescriptor.Type.MESSAGE) {
+        code ++= s"      $writeMethod(field${fieldNum}_values, field${fieldNum}_count, $ordinal, nestedConv${fieldNum}, writer);\n"
+      } else {
+        code ++= s"      $writeMethod(field${fieldNum}_values, field${fieldNum}_count, $ordinal, writer);\n"
+      }
+      code ++= s"    }\n"
+    }
+  }
 
   /**
    * Get the expected wire type for a protobuf field type.
