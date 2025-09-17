@@ -15,17 +15,15 @@
 
 package org.apache.spark.sql.protobuf.backport
 
-import com.google.protobuf.{DynamicMessage, Message => PbMessage}
-import fastproto.{ProtoToRowGenerator, RowConverter, WireFormatConverter, WireFormatToRowGenerator, AbstractRowConverter}
+import com.google.protobuf.{Message => PbMessage}
+import fastproto.{AbstractRowConverter, ProtoToRowGenerator, RowConverter, WireFormatToRowGenerator}
 import org.apache.spark.sql.catalyst.expressions.codegen.{CodeGenerator, CodegenContext, ExprCode}
 import org.apache.spark.sql.catalyst.expressions.{ExpectsInputTypes, Expression, UnaryExpression}
 import org.apache.spark.sql.catalyst.util.{FailFastMode, ParseMode, PermissiveMode}
 import org.apache.spark.sql.protobuf.backport.shims.{QueryCompilationErrors, QueryExecutionErrors}
 import org.apache.spark.sql.protobuf.backport.utils.{ProtobufOptions, ProtobufUtils, SchemaConverters}
-import org.apache.spark.sql.types.{AbstractDataType, BinaryType, DataType}
-import org.apache.spark.unsafe.types.UTF8String
+import org.apache.spark.sql.types.{AbstractDataType, BinaryType, StructType}
 
-import scala.collection.JavaConverters._
 import scala.util.control.NonFatal
 
 /**
@@ -64,7 +62,7 @@ private[backport] case class ProtobufDataToCatalyst(
 
   override def inputTypes: Seq[AbstractDataType] = Seq(BinaryType)
 
-  override lazy val dataType: DataType =
+  override lazy val dataType: StructType =
     SchemaConverters.toSqlType(messageDescriptor, protobufOptions).dataType
 
   override def nullable: Boolean = true
@@ -77,17 +75,6 @@ private[backport] case class ProtobufDataToCatalyst(
       case None => ProtobufUtils.buildDescriptor(messageName, descFilePath)
     }
 
-  // Cache the set of known field numbers to detect clashes from unknown fields.
-  @transient private lazy val fieldsNumbers =
-  messageDescriptor.getFields.asScala.map(f => f.getNumber).toSet
-
-  // Legacy deserializer using DynamicMessage for fallback path.
-  @transient private lazy val deserializer = new ProtobufDeserializer(messageDescriptor, dataType)
-
-  // If we are using the DynamicMessage path we store the result here.  This is
-  // transient because DynamicMessage is not serializable and the expression is.
-  @transient private var result: DynamicMessage = _
-
   // Determine parse mode once up front.
   @transient private lazy val parseMode: ParseMode = {
     val mode = protobufOptions.parseMode
@@ -96,7 +83,6 @@ private[backport] case class ProtobufDataToCatalyst(
     }
     mode
   }
-
 
   /**
    * Lazily attempt to load the compiled Protobuf class if the messageName
@@ -148,7 +134,7 @@ private[backport] case class ProtobufDataToCatalyst(
       case Some(_) =>
         try {
           // Convert DataType to StructType for WireFormatConverter
-          val structType = dataType.asInstanceOf[org.apache.spark.sql.types.StructType]
+          val structType = dataType
           // Generate optimized converter using code generation
           Some(WireFormatToRowGenerator.generateConverter(messageDescriptor, structType))
         } catch {
@@ -156,6 +142,21 @@ private[backport] case class ProtobufDataToCatalyst(
         }
       case None => None
     }
+
+  /**
+   * Lazily create a [[DynamicMessageConverter]] for the fallback DynamicMessage path.
+   * This converter wraps the existing ProtobufDeserializer logic and is used when neither
+   * compiled class nor wire format converters are available. It provides a consistent
+   * RowConverter interface while maintaining the original DynamicMessage deserialization behavior.
+   */
+  @transient private lazy val dynamicMessageConverterOpt: Option[RowConverter] = {
+    // Create when no other fast paths are available
+    if (rowConverterOpt.isEmpty && wireFormatConverterOpt.isEmpty) {
+      Some(new DynamicMessageConverter(messageDescriptor, dataType))
+    } else {
+      None
+    }
+  }
 
   /**
    * Handle an exception according to the configured parse mode.
@@ -178,59 +179,16 @@ private[backport] case class ProtobufDataToCatalyst(
   override def nullSafeEval(input: Any): Any = {
     val binary = input.asInstanceOf[Array[Byte]]
     try {
-      // Priority 1: If a rowConverter is defined (compiled class), use it for direct binary conversion
-      rowConverterOpt match {
-        case Some(converter) =>
-          return converter.convert(binary)
-        case None => // continue to check other fast paths
-      }
-      
-      // Priority 2: If a WireFormatConverter is available (binary descriptor set), use it
-      wireFormatConverterOpt match {
-        case Some(converter) =>
-          return converter.convert(binary)
-        case None => // fallback to DynamicMessage path
-      }
-      // DynamicMessage path: parse the binary using the message descriptor
-      result = DynamicMessage.parseFrom(messageDescriptor, binary)
-      // Check for unknown fields that clash with known field numbers; this indicates
-      // a mismatch between writer and reader schemas.  Use findFieldByNumber
-      // instead of indexing into getFields by number, because Protobuf field
-      // numbers are 1‑based and may not align with the list index.
-      result.getUnknownFields.asMap().keySet().asScala.find(fieldsNumbers.contains(_)) match {
-        case Some(number) =>
-          val conflictingField = Option(messageDescriptor.findFieldByNumber(number))
-            .getOrElse(messageDescriptor.getFields.get(number - 1))
-          throw QueryCompilationErrors.protobufFieldTypeMismatchError(conflictingField.toString)
-        case None => // no clash
-      }
-      val deserialized = deserializer.deserialize(result)
-      require(
-        deserialized.isDefined,
-        "Protobuf deserializer cannot return an empty result because filters are not pushed down")
-      // Convert any java.lang.String values in the deserialized result into UTF8String.
-      // This avoids ClassCastException when Spark expects UTF8String for StringType fields.
-      val rawValue = deserialized.get
+      // Try converters in priority order:
+      // 1. Compiled class converter (rowConverterOpt)
+      // 2. Wire format converter (wireFormatConverterOpt)
+      // 3. DynamicMessage converter (dynamicMessageConverterOpt)
+      val converter = rowConverterOpt
+        .orElse(wireFormatConverterOpt)
+        .orElse(dynamicMessageConverterOpt)
+        .getOrElse(throw new IllegalStateException("No converter available"))
 
-      def toInternalString(value: Any, dt: DataType): Any = (value, dt) match {
-        case (null, _) => null
-        case (s: String, _: org.apache.spark.sql.types.StringType) => UTF8String.fromString(s)
-        case (arr: scala.collection.Seq[_], at: org.apache.spark.sql.types.ArrayType) =>
-          // Convert each element according to the element type
-          arr.map(elem => toInternalString(elem, at.elementType))
-        case (row: org.apache.spark.sql.catalyst.InternalRow, st: org.apache.spark.sql.types.StructType) =>
-          val newValues = st.fields.zipWithIndex.map { case (field, idx) =>
-            toInternalString(row.get(idx, field.dataType), field.dataType)
-          }
-          org.apache.spark.sql.catalyst.InternalRow.fromSeq(newValues)
-        case (m: Map[_, _], mt: org.apache.spark.sql.types.MapType) =>
-          m.map { case (k, v) =>
-            toInternalString(k, mt.keyType) -> toInternalString(v, mt.valueType)
-          }
-        case _ => value
-      }
-
-      toInternalString(rawValue, dataType)
+      converter.convert(binary)
     } catch {
       case NonFatal(e) => handleException(e)
     }
@@ -239,8 +197,12 @@ private[backport] case class ProtobufDataToCatalyst(
   override def prettyName: String = "from_protobuf"
 
   override protected def doGenCode(ctx: CodegenContext, ev: ExprCode): ExprCode = {
-    // Check if we can generate optimized code using rowConverterOpt
-    rowConverterOpt match {
+    // Check if we can generate optimized code using any available converter
+    val converterOpt = rowConverterOpt
+      .orElse(wireFormatConverterOpt)
+      .orElse(dynamicMessageConverterOpt)
+
+    converterOpt match {
       case Some(converter) =>
         // Generate optimized code path using the RowConverter directly
         val expr = ctx.addReferenceObj("this", this)

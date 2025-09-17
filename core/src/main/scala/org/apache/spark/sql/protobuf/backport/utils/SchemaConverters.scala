@@ -24,7 +24,7 @@ import scala.collection.JavaConverters._
 object SchemaConverters extends Logging {
 
   /** Internal wrapper for SQL data type and nullability. */
-  case class SchemaType(dataType: DataType, nullable: Boolean)
+  case class SchemaType(dataType: StructType, nullable: Boolean)
 
   /**
    * Converts a Protobuf schema to a corresponding Spark SQL schema.

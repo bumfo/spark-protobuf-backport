@@ -5,12 +5,15 @@ import java.util.concurrent.TimeUnit
 import benchmark.{ComplexBenchmarkProtos, SimpleBenchmarkProtos, TestDataGenerator}
 import com.google.protobuf.{DescriptorProtos, Descriptors}
 import fastproto.{ProtoToRowGenerator, WireFormatConverter, WireFormatToRowGenerator}
+import org.apache.spark.sql.protobuf.backport.DynamicMessageConverter
 import org.apache.spark.sql.catalyst.expressions.Literal
 import org.apache.spark.sql.protobuf.backport.ProtobufDataToCatalyst
 import org.apache.spark.sql.protobuf.backport.utils.SchemaConverters
 import org.apache.spark.sql.types._
 import org.openjdk.jmh.annotations._
 import org.openjdk.jmh.infra.Blackhole
+
+import scala.collection.JavaConverters._
 
 
 /**
@@ -50,17 +53,13 @@ class ProtobufConversionJmhBenchmark {
 
   // Converters for simple schema
   var simpleDirectConverter: WireFormatConverter = _
-  // var simpleBinaryDescExpression: ProtobufDataToCatalyst = _
-  // var simpleDescriptorFileExpression: ProtobufDataToCatalyst = _
-  // var simpleCompiledConverter: fastproto.RowConverter = _
   var simpleGeneratedConverter: fastproto.AbstractWireFormatConverter = _
+  var simpleDynamicConverter: DynamicMessageConverter = _
 
   // Converters for complex schema
   var complexDirectConverter: WireFormatConverter = _
-  // var complexBinaryDescExpression: ProtobufDataToCatalyst = _
-  // var complexDescriptorFileExpression: ProtobufDataToCatalyst = _
-  // var complexCompiledConverter: fastproto.RowConverter = _
   var complexGeneratedConverter: fastproto.AbstractWireFormatConverter = _
+  var complexDynamicConverter: DynamicMessageConverter = _
 
   @Setup
   def setup(): Unit = {
@@ -102,6 +101,10 @@ class ProtobufConversionJmhBenchmark {
     simpleDirectConverter = new WireFormatConverter(simpleDescriptor, simpleSparkSchema)
     simpleGeneratedConverter = WireFormatToRowGenerator.generateConverter(simpleDescriptor, simpleSparkSchema)
 
+    val simpleFieldsNumbers = simpleDescriptor.getFields.asScala.map(_.getNumber).toSet
+    simpleDynamicConverter = new DynamicMessageConverter(
+      simpleDescriptor, simpleSparkSchema)
+
     // simpleBinaryDescExpression = ProtobufDataToCatalyst(
     //   child = Literal.create(simpleBinary, BinaryType),
     //   messageName = simpleDescriptor.getFullName,
@@ -127,6 +130,10 @@ class ProtobufConversionJmhBenchmark {
     // === Initialize Complex Schema Converters ===
     complexDirectConverter = new WireFormatConverter(complexDescriptor, complexSparkSchema)
     complexGeneratedConverter = WireFormatToRowGenerator.generateConverter(complexDescriptor, complexSparkSchema)
+
+    val complexFieldsNumbers = complexDescriptor.getFields.asScala.map(_.getNumber).toSet
+    complexDynamicConverter = new DynamicMessageConverter(
+      complexDescriptor, complexSparkSchema)
 
     // complexBinaryDescExpression = ProtobufDataToCatalyst(
     //   child = Literal.create(complexBinary, BinaryType),
@@ -167,6 +174,11 @@ class ProtobufConversionJmhBenchmark {
   @Benchmark
   def simpleDirectWireFormatConverter(bh: Blackhole): Unit = {
     bh.consume(simpleDirectConverter.convert(simpleBinary))
+  }
+
+  @Benchmark
+  def simpleDynamicMessageConverter(bh: Blackhole): Unit = {
+    bh.consume(simpleDynamicConverter.convert(simpleBinary))
   }
 
   // @Benchmark
