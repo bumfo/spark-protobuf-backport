@@ -31,7 +31,7 @@ sbt --error test
 sbt "core/testOnly benchmark.ProtobufConversionBenchmark -- -n benchmark.Benchmark"
 
 # Run JMH benchmarks
-sbt "core/Jmh/run"
+sbt "bench/Jmh/run"
 
 # Build shaded JAR with all dependencies
 sbt assembly
