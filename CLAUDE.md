@@ -18,6 +18,21 @@ The project includes three key optimizations:
 - **`shaded/`** - Shaded protobuf dependencies for conflict avoidance
 - **`uber/`** - Assembled JAR with all dependencies
 
+## Converter Architecture
+
+The project features a three-tier converter interface hierarchy optimized for different use cases:
+
+1. **`RowConverter`** - Base interface for simple protobuf binary → InternalRow conversion
+2. **`BufferSharingRowConverter`** - Base implementation with buffer sharing for efficient nested conversions
+3. **`MessageBasedConverter[T]`** - Interface for compiled protobuf message → InternalRow conversion
+
+### Performance Characteristics
+- **Generated converters (compiled class)**: ~1,844 ns/op (fastest)
+- **Wire format converters**: ~4,399 ns/op (2.4x slower)
+- **DynamicMessage converters**: ~24,992 ns/op (13.6x slower)
+
+See `core/CLAUDE.md` for detailed interface documentation and usage examples.
+
 ## Build Commands
 
 ```bash
