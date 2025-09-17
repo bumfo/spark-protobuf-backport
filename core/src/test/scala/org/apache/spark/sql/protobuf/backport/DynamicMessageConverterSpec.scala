@@ -44,20 +44,6 @@ class DynamicMessageConverterSpec extends AnyFunSpec with Matchers {
       nameValue.toString shouldBe "TestType"
     }
 
-    it("should throw UnsupportedOperationException for nested buffer sharing") {
-      val typeMsg = Type.newBuilder().setName("TestType").build()
-      val descriptor = typeMsg.getDescriptorForType
-      val dataType = SchemaConverters.toSqlType(descriptor).dataType
-
-      val converter = new DynamicMessageConverter(descriptor, dataType)
-      val mockWriter = null.asInstanceOf[UnsafeWriter] // We won't actually use it
-
-      val exception = intercept[UnsupportedOperationException] {
-        converter.convert(Array.empty[Byte], mockWriter)
-      }
-
-      exception.getMessage should include("does not support nested buffer sharing")
-    }
 
     it("should throw exception in fail-fast mode") {
       val typeMsg = Type.newBuilder().setName("TestType").build()

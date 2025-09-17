@@ -15,7 +15,7 @@ import java.io.IOException;
  * Provides optimized array writing methods with size parameters to eliminate
  * array slicing and reduce memory allocations.
  */
-public abstract class AbstractWireFormatConverter extends AbstractRowConverter {
+public abstract class AbstractWireFormatConverter extends BufferSharingRowConverter {
 
     public AbstractWireFormatConverter(StructType schema) {
         super(schema);
@@ -290,7 +290,7 @@ public abstract class AbstractWireFormatConverter extends AbstractRowConverter {
 
         for (int i = 0; i < size; i++) {
             int elemOffset = arrayWriter.cursor();
-            converter.convert(messageBytes[i], writer);
+            converter.convertWithSharedBuffer(messageBytes[i], writer);
             arrayWriter.setOffsetAndSizeFromPreviousCursor(i, elemOffset);
         }
 
@@ -305,7 +305,7 @@ public abstract class AbstractWireFormatConverter extends AbstractRowConverter {
      */
     protected void writeMessage(byte[] messageBytes, int ordinal, AbstractWireFormatConverter converter, UnsafeRowWriter writer) {
         int offset = writer.cursor();
-        converter.convert(messageBytes, writer);
+        converter.convertWithSharedBuffer(messageBytes, writer);
         writer.setOffsetAndSizeFromPreviousCursor(ordinal, offset);
     }
 

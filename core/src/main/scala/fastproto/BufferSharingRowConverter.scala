@@ -4,10 +4,10 @@ import org.apache.spark.sql.catalyst.InternalRow
 import org.apache.spark.sql.catalyst.expressions.codegen.{UnsafeRowWriter, UnsafeWriter}
 import org.apache.spark.sql.types.StructType
 
-abstract class AbstractRowConverter(val schema: StructType) extends RowConverter {
+abstract class BufferSharingRowConverter(val schema: StructType) extends RowConverter {
   protected val instanceWriter = new UnsafeRowWriter(schema.length)
 
-  protected def prepareWriter(parentWriter: UnsafeWriter): UnsafeRowWriter = {
+  protected def acquireWriter(parentWriter: UnsafeWriter): UnsafeRowWriter = {
     if (parentWriter == null) {
       instanceWriter.reset()
       instanceWriter.zeroOutNullBytes()
@@ -34,18 +34,28 @@ abstract class AbstractRowConverter(val schema: StructType) extends RowConverter
    * <li><b>Writer Contract:</b> Use provided writer without modifying its configuration</li>
    * </ul>
    * <p>
-   * This method is called by [[#convert(Array[Byte], UnsafeWriter)]] after writer preparation.
-   * The convert method handles buffer sharing and writer lifecycle, while writeData focuses
+   * This method is called by [[#convertWithSharedBuffer(Array[Byte], UnsafeWriter)]] after writer acquisition.
+   * The convert method handles buffer sharing and writer lifecycle, while parseAndWriteFields focuses
    * on parsing and field extraction logic.
    *
    * @param binary the protobuf binary data to parse
    * @param writer the UnsafeRowWriter to populate with parsed field data
    */
-  protected def writeData(binary: Array[Byte], writer: UnsafeRowWriter): Unit
+  protected def parseAndWriteFields(binary: Array[Byte], writer: UnsafeRowWriter): Unit
 
-  override def convert(binary: Array[Byte], parentWriter: UnsafeWriter): InternalRow = {
-    val writer = prepareWriter(parentWriter)
-    writeData(binary, writer)
+  /**
+   * Convert protobuf binary data using a shared UnsafeWriter for BufferHolder sharing.
+   * This method enables efficient nested conversions by sharing the underlying buffer
+   * across the entire row tree, reducing memory allocations. Moved from RowConverter trait
+   * to this class since only buffer-sharing converters support this functionality.
+   */
+  def convertWithSharedBuffer(binary: Array[Byte], parentWriter: UnsafeWriter): InternalRow = {
+    val writer = acquireWriter(parentWriter)
+    parseAndWriteFields(binary, writer)
     if (parentWriter == null) writer.getRow else null
+  }
+
+  override def convert(binary: Array[Byte]): InternalRow = {
+    convertWithSharedBuffer(binary, null)
   }
 }

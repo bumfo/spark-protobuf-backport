@@ -24,14 +24,14 @@ trait MessageBasedConverter[T] extends RowConverter {
    * @return an [[InternalRow]] containing the extracted field values
    */
   def convert(message: T): InternalRow = {
-    convert(message, null)
+    convertWithSharedBuffer(message, null)
   }
 
   /**
    * Convert a message using a shared UnsafeWriter for BufferHolder sharing.
    * This method enables efficient nested conversions by sharing the underlying
    * buffer across the entire row tree, reducing memory allocations.
-   * 
+   *
    * When parentWriter is provided, the implementation should create a new
    * UnsafeRowWriter that shares the BufferHolder from the parent writer.
    *
@@ -39,5 +39,5 @@ trait MessageBasedConverter[T] extends RowConverter {
    * @param parentWriter the parent UnsafeWriter to share BufferHolder with, can be null
    * @return an [[InternalRow]] containing the extracted field values
    */
-  def convert(message: T, parentWriter: org.apache.spark.sql.catalyst.expressions.codegen.UnsafeWriter): InternalRow
+  def convertWithSharedBuffer(message: T, parentWriter: org.apache.spark.sql.catalyst.expressions.codegen.UnsafeWriter): InternalRow
 }

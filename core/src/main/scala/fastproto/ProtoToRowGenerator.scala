@@ -485,7 +485,7 @@ object ProtoToRowGenerator {
           code ++= s"        arrayWriter.setNull(i);\n"
           code ++= s"      } else {\n"
           code ++= s"        int elemOffset = arrayWriter.cursor();\n"
-          code ++= s"        ${nestedConverterName}.convert(element, writer);\n"
+          code ++= s"        ${nestedConverterName}.convertWithSharedBuffer(element, writer);\n"
           code ++= s"        arrayWriter.setOffsetAndSizeFromPreviousCursor(i, elemOffset);\n"
           code ++= s"      }\n"
           code ++= s"    }\n"
@@ -513,7 +513,7 @@ object ProtoToRowGenerator {
               code ++= s"        writer.setNullAt($idx);\n"
               code ++= s"      } else {\n"
               code ++= s"        int offset = writer.cursor();\n"
-              code ++= s"        ${nestedConverterName}.convert(v, writer);\n"
+              code ++= s"        ${nestedConverterName}.convertWithSharedBuffer(v, writer);\n"
               code ++= s"        writer.setOffsetAndSizeFromPreviousCursor($idx, offset);\n"
               code ++= s"      }\n"
               code ++= s"    }\n"
@@ -523,7 +523,7 @@ object ProtoToRowGenerator {
               code ++= s"      writer.setNullAt($idx);\n"
               code ++= s"    } else {\n"
               code ++= s"      int offset = writer.cursor();\n"
-              code ++= s"      ${nestedConverterName}.convert(v, writer);\n"
+              code ++= s"      ${nestedConverterName}.convertWithSharedBuffer(v, writer);\n"
               code ++= s"      writer.setOffsetAndSizeFromPreviousCursor($idx, offset);\n"
               code ++= s"    }\n"
           }
@@ -533,9 +533,9 @@ object ProtoToRowGenerator {
       }
     }
 
-    // Override writeData to implement binary conversion with inlined parseFrom
+    // Override parseAndWriteFields to implement binary conversion with inlined parseFrom
     code ++= "  @Override\n"
-    code ++= "  protected void writeData(byte[] binary, UnsafeRowWriter writer) {\n"
+    code ++= "  protected void parseAndWriteFields(byte[] binary, UnsafeRowWriter writer) {\n"
     code ++= "    try {\n"
     code ++= "      // Direct parseFrom call - no reflection needed\n"
     code ++= s"      ${messageClass.getName} message = ${messageClass.getName}.parseFrom(binary);\n"
