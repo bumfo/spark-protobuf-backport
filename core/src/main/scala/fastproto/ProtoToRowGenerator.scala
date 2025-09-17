@@ -23,11 +23,12 @@ import scala.collection.JavaConverters._
  */
 object ProtoToRowGenerator {
 
-  // Thread-safe cache for generated converters to avoid redundant compilation
-  private val converterCache: ConcurrentHashMap[String, RowConverter] =
-    new ConcurrentHashMap()
+  // Thread-local cache for generated converters to avoid shared mutable state
+  private val converterCache: ThreadLocal[scala.collection.mutable.Map[String, RowConverter]] =
+    ThreadLocal.withInitial(() => scala.collection.mutable.Map.empty[String, RowConverter])
 
   // Thread-safe cache for computed schemas to avoid redundant schema generation
+  // Schemas are immutable, so global caching is safe
   private val schemaCache: ConcurrentHashMap[String, StructType] =
     new ConcurrentHashMap()
 
@@ -144,11 +145,12 @@ object ProtoToRowGenerator {
       descriptor: Descriptor,
       messageClass: Class[T]): MessageBasedConverter[T] = {
     val key = s"${messageClass.getName}_${descriptor.getFullName}"
+    val threadCache = converterCache.get()
 
-    // Check global cache first
-    converterCache.get(key) match {
-      case converter if converter != null => return converter.asInstanceOf[MessageBasedConverter[T]]
-      case _ => // Continue with generation
+    // Check thread-local cache first
+    threadCache.get(key) match {
+      case Some(converter) => return converter.asInstanceOf[MessageBasedConverter[T]]
+      case None => // Continue with generation
     }
 
     // Local map to track converters being built (excludes already cached ones)
@@ -161,9 +163,9 @@ object ProtoToRowGenerator {
     // Phase 2: Wire up dependencies
     wireDependencies(localConverters)
 
-    // Phase 3: Atomically update global cache
+    // Phase 3: Update thread-local cache
     localConverters.foreach { case (k, (conv, _)) =>
-      converterCache.putIfAbsent(k, conv)
+      threadCache(k) = conv
     }
 
     rootConverter.asInstanceOf[MessageBasedConverter[T]]
@@ -180,10 +182,11 @@ object ProtoToRowGenerator {
       localConverters: scala.collection.mutable.Map[String, (RowConverter, Set[String])]): RowConverter = {
     val key = s"${messageClass.getName}_${descriptor.getFullName}"
 
-    // Check global cache FIRST (important optimization!)
-    converterCache.get(key) match {
-      case converter if converter != null => return converter
-      case _ => // Not cached globally
+    // Check thread-local cache FIRST (important optimization!)
+    val threadCache = converterCache.get()
+    threadCache.get(key) match {
+      case Some(converter) => return converter
+      case None => // Not cached in this thread
     }
 
     // Check local map
@@ -216,12 +219,13 @@ object ProtoToRowGenerator {
    * Wire dependencies between converters after all have been created.
    */
   private def wireDependencies(localConverters: scala.collection.mutable.Map[String, (RowConverter, Set[String])]): Unit = {
+    val threadCache = converterCache.get()
     localConverters.foreach { case (converterKey, (converter, neededTypes)) =>
       // Set dependencies on this converter
       val dependencies = neededTypes.toSeq.map { typeKey =>
         localConverters.get(typeKey) match {
           case Some((nestedConverter, _)) => nestedConverter
-          case None => converterCache.get(typeKey)
+          case None => threadCache.getOrElse(typeKey, null)
         }
       }
       setConverterDependencies(converter, dependencies)

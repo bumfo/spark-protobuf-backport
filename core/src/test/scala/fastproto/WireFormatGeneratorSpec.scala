@@ -375,4 +375,51 @@ class WireFormatGeneratorSpec extends AnyFlatSpec with Matchers {
       row.getString(0) should equal("root")
     }
   }
+
+  it should "be thread-safe with concurrent converter generation and conversion" in {
+    import java.util.concurrent.{Executors, TimeUnit}
+    import scala.concurrent.duration._
+    import scala.concurrent.{Await, ExecutionContext, Future}
+
+    val executor = Executors.newFixedThreadPool(10)
+    implicit val ec: ExecutionContext = ExecutionContext.fromExecutor(executor)
+
+    val testBinary = createTestBinary()
+    val schema = StructType(Seq(
+      StructField("name", StringType, nullable = true),
+      StructField("fields", ArrayType(StructType(Seq(
+        StructField("name", StringType, nullable = true)
+      ))), nullable = true)
+    ))
+
+    try {
+      // Create multiple concurrent tasks that generate converters and convert data
+      val tasks = (1 to 20).map { i =>
+        Future {
+          // Each thread should get its own converter instance
+          val converter = WireFormatToRowGenerator.generateConverter(Type.getDescriptor, schema)
+          val results = (1 to 5).map { _ =>
+            val row = converter.convert(testBinary)
+            (row.getUTF8String(0).toString, row.getArray(1).numElements())
+          }
+          results
+        }
+      }
+
+      // Wait for all tasks to complete
+      val allResults = Await.result(Future.sequence(tasks), 10.seconds)
+
+      // Verify all threads got consistent results
+      allResults.foreach { threadResults =>
+        threadResults.foreach { case (name, numFields) =>
+          name should equal("test_message")
+          numFields should equal(2)
+        }
+      }
+
+    } finally {
+      executor.shutdown()
+      executor.awaitTermination(5, TimeUnit.SECONDS)
+    }
+  }
 }

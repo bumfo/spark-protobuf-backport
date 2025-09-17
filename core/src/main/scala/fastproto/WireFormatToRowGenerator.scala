@@ -5,7 +5,6 @@ import com.google.protobuf.WireFormat
 import org.apache.spark.sql.types._
 import org.codehaus.janino.SimpleCompiler
 
-import java.util.concurrent.ConcurrentHashMap
 import scala.collection.JavaConverters._
 
 /**
@@ -25,12 +24,14 @@ import scala.collection.JavaConverters._
  */
 object WireFormatToRowGenerator {
 
-  // Thread-safe cache for generated converters
-  private val converterCache: ConcurrentHashMap[String, AbstractWireFormatConverter] =
-    new ConcurrentHashMap()
+  // Thread-local cache for generated converters to avoid shared mutable state
+  private val converterCache: ThreadLocal[scala.collection.mutable.Map[String, AbstractWireFormatConverter]] =
+    ThreadLocal.withInitial(() => scala.collection.mutable.Map.empty[String, AbstractWireFormatConverter])
 
   /**
    * Generate or retrieve a cached converter for the given descriptor and schema.
+   * Uses thread-local caching to ensure each thread has its own converter instances,
+   * preventing data races on mutable converter state (arrays, counters, writers).
    *
    * @param descriptor the protobuf message descriptor
    * @param schema     the target Spark SQL schema
@@ -38,15 +39,16 @@ object WireFormatToRowGenerator {
    */
   def generateConverter(descriptor: Descriptor, schema: StructType): AbstractWireFormatConverter = {
     val key = s"${descriptor.getFullName}_${schema.hashCode()}"
+    val threadCache = converterCache.get()
 
-    // Check cache first
-    Option(converterCache.get(key)) match {
+    // Check thread-local cache first
+    threadCache.get(key) match {
       case Some(converter) => converter
       case None =>
-        // Generate new converter
+        // Generate new converter for this thread
         val converter = createConverterGraph(descriptor, schema)
-        // Try to cache it, but use the cached version if someone else beat us to it
-        Option(converterCache.putIfAbsent(key, converter)).getOrElse(converter)
+        threadCache(key) = converter
+        converter
     }
   }
 
@@ -133,8 +135,9 @@ object WireFormatToRowGenerator {
       }
 
       val nestedKey = s"${field.getMessageType.getFullName}_${nestedSchema.hashCode()}"
+      val threadCache = converterCache.get()
       val nestedConverter = localConverters.get(nestedKey).orElse(
-        Option(converterCache.get(nestedKey))
+        threadCache.get(nestedKey)
       ).getOrElse(
         throw new IllegalStateException(s"Nested converter not found: $nestedKey")
       )
