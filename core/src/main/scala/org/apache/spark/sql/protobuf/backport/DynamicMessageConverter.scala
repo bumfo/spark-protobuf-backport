@@ -60,11 +60,6 @@ class DynamicMessageConverter(
     convertToInternalTypes(rawValue, schema).asInstanceOf[InternalRow]
   }
 
-  override def convert(binary: Array[Byte], parentWriter: UnsafeWriter): InternalRow = {
-    throw new UnsupportedOperationException(
-      "DynamicMessageConverter does not support nested buffer sharing. " +
-        "Use convert(binary: Array[Byte]) instead.")
-  }
 
   /**
    * Convert String values to UTF8String recursively throughout the data structure.

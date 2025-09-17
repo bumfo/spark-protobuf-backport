@@ -374,7 +374,7 @@ object WireFormatToRowGenerator {
     code ++= "  }\n\n"
 
     // Main parsing method
-    generateWriteDataMethod(code, descriptor, schema)
+    generateParseAndWriteFieldsMethod(code, descriptor, schema)
 
     // Nested converter setter methods
     generateNestedConverterSetters(code, descriptor, schema)
@@ -507,11 +507,11 @@ object WireFormatToRowGenerator {
   }
 
   /**
-   * Generate the main writeData method with optimized field parsing.
+   * Generate the main parseAndWriteFields method with optimized field parsing.
    */
-  private def generateWriteDataMethod(code: StringBuilder, descriptor: Descriptor, schema: StructType): Unit = {
+  private def generateParseAndWriteFieldsMethod(code: StringBuilder, descriptor: Descriptor, schema: StructType): Unit = {
     code ++= "  @Override\n"
-    code ++= "  protected void writeData(byte[] binary, UnsafeRowWriter writer) {\n"
+    code ++= "  protected void parseAndWriteFields(byte[] binary, UnsafeRowWriter writer) {\n"
     code ++= "    CodedInputStream input = CodedInputStream.newInstance(binary);\n\n"
 
     // Reset repeated field counters

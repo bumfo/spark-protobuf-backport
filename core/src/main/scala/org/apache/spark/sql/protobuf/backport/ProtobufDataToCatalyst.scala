@@ -16,7 +16,7 @@
 package org.apache.spark.sql.protobuf.backport
 
 import com.google.protobuf.{Message => PbMessage}
-import fastproto.{AbstractRowConverter, ProtoToRowGenerator, RowConverter, WireFormatToRowGenerator}
+import fastproto.{BufferSharingRowConverter, ProtoToRowGenerator, RowConverter, WireFormatToRowGenerator}
 import org.apache.spark.sql.catalyst.expressions.codegen.{CodeGenerator, CodegenContext, ExprCode}
 import org.apache.spark.sql.catalyst.expressions.{ExpectsInputTypes, Expression, UnaryExpression}
 import org.apache.spark.sql.catalyst.util.{FailFastMode, ParseMode, PermissiveMode}
@@ -129,7 +129,7 @@ private[backport] case class ProtobufDataToCatalyst(
    * optimized converters with inlined field parsing and JIT-friendly branch prediction.
    * Falls back to DynamicMessage if code generation fails.
    */
-  @transient private lazy val wireFormatConverterOpt: Option[AbstractRowConverter] =
+  @transient private lazy val wireFormatConverterOpt: Option[BufferSharingRowConverter] =
     binaryDescriptorSet match {
       case Some(_) =>
         try {

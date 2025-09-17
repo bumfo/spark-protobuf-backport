@@ -25,7 +25,7 @@ import scala.collection.mutable
 class WireFormatConverter(
     descriptor: Descriptor,
     override val schema: StructType)
-  extends AbstractRowConverter(schema) {
+  extends BufferSharingRowConverter(schema) {
 
   import WireFormatConverter._
 
@@ -38,7 +38,7 @@ class WireFormatConverter(
   // Track repeated field values during parsing - use array for O(1) lookup
   private val repeatedFieldValuesArray: Array[mutable.ArrayBuffer[Any]] = new Array(maxFieldNumber + 1)
 
-  override protected def writeData(binary: Array[Byte], writer: UnsafeRowWriter): Unit = {
+  override protected def parseAndWriteFields(binary: Array[Byte], writer: UnsafeRowWriter): Unit = {
     val input = CodedInputStream.newInstance(binary)
 
     // Clear repeated field buffers for this conversion
@@ -226,7 +226,7 @@ class WireFormatConverter(
     if (converter != null) {
       // Use writer sharing pattern like ProtoToRowGenerator
       val offset = writer.cursor()
-      converter.convert(messageBytes, writer)
+      converter.convertWithSharedBuffer(messageBytes, writer)
       writer.setOffsetAndSizeFromPreviousCursor(mapping.rowOrdinal, offset)
     } else {
       throw new IllegalStateException(s"No nested converter found for field ${mapping.fieldDescriptor.getName}")
@@ -324,7 +324,7 @@ class WireFormatConverter(
         for (i <- values.indices) {
           val messageBytes = values(i).asInstanceOf[Array[Byte]]
           val elemOffset = arrayWriter.cursor()
-          converter.convert(messageBytes, writer)
+          converter.convertWithSharedBuffer(messageBytes, writer)
           arrayWriter.setOffsetAndSizeFromPreviousCursor(i, elemOffset)
         }
       } else {
