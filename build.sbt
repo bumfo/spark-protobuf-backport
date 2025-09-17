@@ -138,3 +138,7 @@ lazy val root = (project in file("."))
     publish / skip := true,
     sourcesInBase := false
   )
+
+// Command aliases for convenience
+addCommandAlias("jmh", "bench/Test/compile; bench/Jmh/run")
+addCommandAlias("jmhQuick", "bench/Test/compile; bench/Jmh/run -wi 2 -i 3 -f 1")
