@@ -16,7 +16,7 @@
 package org.apache.spark.sql.protobuf.backport
 
 import com.google.protobuf.{DynamicMessage, Message => PbMessage}
-import fastproto.{ProtoToRowGenerator, RowConverter, WireFormatConverter}
+import fastproto.{ProtoToRowGenerator, RowConverter, WireFormatConverter, WireFormatToRowGenerator, AbstractRowConverter}
 import org.apache.spark.sql.catalyst.expressions.codegen.{CodeGenerator, CodegenContext, ExprCode}
 import org.apache.spark.sql.catalyst.expressions.{ExpectsInputTypes, Expression, UnaryExpression}
 import org.apache.spark.sql.catalyst.util.{FailFastMode, ParseMode, PermissiveMode}
@@ -137,18 +137,20 @@ private[backport] case class ProtobufDataToCatalyst(
   }
 
   /**
-   * Lazily create a [[fastproto.WireFormatConverter]] for binary descriptor sets.
-   * This provides a fast path for direct wire format parsing when using binary
-   * descriptor sets, avoiding DynamicMessage overhead. Falls back to DynamicMessage
-   * if WireFormatConverter initialization fails (e.g., unsupported field types).
+   * Lazily create a generated [[fastproto.AbstractWireFormatConverter]] for binary descriptor sets.
+   * This provides an optimized fast path for direct wire format parsing when using binary
+   * descriptor sets, avoiding DynamicMessage overhead. Uses code generation to create
+   * optimized converters with inlined field parsing and JIT-friendly branch prediction.
+   * Falls back to DynamicMessage if code generation fails.
    */
-  @transient private lazy val wireFormatConverterOpt: Option[WireFormatConverter] =
+  @transient private lazy val wireFormatConverterOpt: Option[AbstractRowConverter] =
     binaryDescriptorSet match {
       case Some(_) =>
         try {
           // Convert DataType to StructType for WireFormatConverter
           val structType = dataType.asInstanceOf[org.apache.spark.sql.types.StructType]
-          Some(new WireFormatConverter(messageDescriptor, structType))
+          // Generate optimized converter using code generation
+          Some(WireFormatToRowGenerator.generateConverter(messageDescriptor, structType))
         } catch {
           case _: Throwable => None // Fall back to DynamicMessage for unsupported cases
         }

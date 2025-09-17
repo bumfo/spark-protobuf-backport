@@ -113,3 +113,20 @@ This approach eliminates hardcoded class assumptions and **automatically support
 **Note**: The fallback case (`None`) should theoretically never occur when `rowConverterOpt` is `Some`, but is included for defensive programming.
 
 This provides better performance potential when Spark actually executes generated code (vs pre-computed paths).
+
+## AbstractRowConverter Interface Design
+
+The `AbstractRowConverter` defines the core interface for converting protobuf binary data into Spark's `UnsafeRow` structures.
+
+### Method Contract
+
+- **`writeData(binary, writer)`**: Abstract method that writes to absolute ordinals (0, 1, 2)
+- **`convert(binary, parentWriter)`**: Handles writer preparation and buffer sharing
+
+### Usage Pattern
+
+For nested message arrays, always use `convert()` which manages buffer sharing properly. Direct `writeData()` usage in nested contexts can overwrite parent row data.
+
+### Interface Benefits
+
+This design separates parsing logic (`writeData`) from writer management (`convert`), enabling both standalone conversion and efficient nested message handling with shared buffers.

@@ -31,7 +31,7 @@ sbt --error test
 sbt "core/testOnly benchmark.ProtobufConversionBenchmark -- -n benchmark.Benchmark"
 
 # Run JMH benchmarks
-sbt "core/Jmh/run"
+sbt "bench/Jmh/run"
 
 # Build shaded JAR with all dependencies
 sbt assembly
@@ -41,6 +41,15 @@ sbt clean
 ```
 
 The assembled JAR includes shaded protobuf dependencies to avoid conflicts with Spark's own protobuf runtime.
+
+## Performance Reporting
+
+Use unambiguous terminology for performance improvements:
+- **"1.5x speedup"** (ratio of old time to new time)
+- **"33% reduction in execution time"** (percent time saved)
+- **"Reduced from 2000ns to 1500ns"** (direct comparison)
+
+Avoid ambiguous phrasing like "1.5x faster" which could mean either direction.
 
 ## Git Workflow
 

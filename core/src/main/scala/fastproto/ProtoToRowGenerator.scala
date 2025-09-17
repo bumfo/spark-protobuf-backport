@@ -23,11 +23,16 @@ import scala.collection.JavaConverters._
  */
 object ProtoToRowGenerator {
 
-  // Thread-safe cache for generated converters to avoid redundant compilation
-  private val converterCache: ConcurrentHashMap[String, RowConverter] =
+  // Global cache for compiled classes (classes are immutable and thread-safe)
+  private val classCache: ConcurrentHashMap[String, Class[_ <: RowConverter]] =
     new ConcurrentHashMap()
 
+  // Thread-local cache for converter instances (instances have mutable state)
+  private val instanceCache: ThreadLocal[scala.collection.mutable.Map[String, RowConverter]] =
+    ThreadLocal.withInitial(() => scala.collection.mutable.Map.empty[String, RowConverter])
+
   // Thread-safe cache for computed schemas to avoid redundant schema generation
+  // Schemas are immutable, so global caching is safe
   private val schemaCache: ConcurrentHashMap[String, StructType] =
     new ConcurrentHashMap()
 
@@ -144,11 +149,12 @@ object ProtoToRowGenerator {
       descriptor: Descriptor,
       messageClass: Class[T]): MessageBasedConverter[T] = {
     val key = s"${messageClass.getName}_${descriptor.getFullName}"
+    val threadInstances = instanceCache.get()
 
-    // Check global cache first
-    converterCache.get(key) match {
-      case converter if converter != null => return converter.asInstanceOf[MessageBasedConverter[T]]
-      case _ => // Continue with generation
+    // Check thread-local instance cache first
+    threadInstances.get(key) match {
+      case Some(converter) => return converter.asInstanceOf[MessageBasedConverter[T]]
+      case None => // Continue with generation
     }
 
     // Local map to track converters being built (excludes already cached ones)
@@ -161,9 +167,9 @@ object ProtoToRowGenerator {
     // Phase 2: Wire up dependencies
     wireDependencies(localConverters)
 
-    // Phase 3: Atomically update global cache
+    // Phase 3: Update thread-local cache
     localConverters.foreach { case (k, (conv, _)) =>
-      converterCache.putIfAbsent(k, conv)
+      threadInstances(k) = conv
     }
 
     rootConverter.asInstanceOf[MessageBasedConverter[T]]
@@ -180,10 +186,11 @@ object ProtoToRowGenerator {
       localConverters: scala.collection.mutable.Map[String, (RowConverter, Set[String])]): RowConverter = {
     val key = s"${messageClass.getName}_${descriptor.getFullName}"
 
-    // Check global cache FIRST (important optimization!)
-    converterCache.get(key) match {
-      case converter if converter != null => return converter
-      case _ => // Not cached globally
+    // Check thread-local cache FIRST (important optimization!)
+    val threadInstances = instanceCache.get()
+    threadInstances.get(key) match {
+      case Some(converter) => return converter
+      case None => // Not cached in this thread
     }
 
     // Check local map
@@ -216,12 +223,13 @@ object ProtoToRowGenerator {
    * Wire dependencies between converters after all have been created.
    */
   private def wireDependencies(localConverters: scala.collection.mutable.Map[String, (RowConverter, Set[String])]): Unit = {
+    val threadInstances = instanceCache.get()
     localConverters.foreach { case (converterKey, (converter, neededTypes)) =>
       // Set dependencies on this converter
       val dependencies = neededTypes.toSeq.map { typeKey =>
         localConverters.get(typeKey) match {
           case Some((nestedConverter, _)) => nestedConverter
-          case None => converterCache.get(typeKey)
+          case None => threadInstances.getOrElse(typeKey, null)
         }
       }
       setConverterDependencies(converter, dependencies)
@@ -623,6 +631,25 @@ object ProtoToRowGenerator {
   }
 
   /**
+   * Get or compile converter class using global class cache.
+   */
+  private def getOrCompileClass(sourceCode: StringBuilder, className: String, key: String): Class[_ <: RowConverter] = {
+    // Check global class cache first
+    Option(classCache.get(key)) match {
+      case Some(clazz) => clazz
+      case None =>
+        // Compile the generated Java code using Janino
+        val compiler = new SimpleCompiler()
+        compiler.setParentClassLoader(this.getClass.getClassLoader)
+        compiler.cook(sourceCode.toString)
+        val generatedClass = compiler.getClassLoader.loadClass(className).asInstanceOf[Class[_ <: RowConverter]]
+
+        // Cache the compiled class globally and return
+        Option(classCache.putIfAbsent(key, generatedClass)).getOrElse(generatedClass)
+    }
+  }
+
+  /**
    * Compile the generated Java source code using Janino and instantiate the converter.
    *
    * @param sourceCode the complete Java source code
@@ -634,14 +661,12 @@ object ProtoToRowGenerator {
     // Build the Spark SQL schema corresponding to this descriptor
     val schema: StructType = getCachedSchema(descriptor)
 
-    // Compile the generated Java code using Janino
-    val compiler = new SimpleCompiler()
-    compiler.setParentClassLoader(this.getClass.getClassLoader)
-    compiler.cook(sourceCode.toString)
-    val generatedClass = compiler.getClassLoader.loadClass(className)
+    // Get or compile the class globally
+    val key = s"${className}_${descriptor.getFullName}"
+    val converterClass = getOrCompileClass(sourceCode, className, key)
 
     // Create converter with just schema - dependencies will be set via setters
-    val constructor = generatedClass.getConstructor(classOf[StructType])
+    val constructor = converterClass.getConstructor(classOf[StructType])
     constructor.newInstance(schema).asInstanceOf[RowConverter]
   }
 }
