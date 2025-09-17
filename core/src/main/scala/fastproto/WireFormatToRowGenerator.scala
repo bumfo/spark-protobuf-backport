@@ -324,9 +324,9 @@ object WireFormatToRowGenerator {
       code ++= "  // Repeated field accumulators\n"
       repeatedFields.foreach { field =>
         field.getType match {
-          case FieldDescriptor.Type.INT32 | FieldDescriptor.Type.SINT32 | FieldDescriptor.Type.SFIXED32 =>
+          case FieldDescriptor.Type.INT32 | FieldDescriptor.Type.SINT32 =>
             code ++= s"  private final IntList field${field.getNumber}_list = new IntList();\n"
-          case FieldDescriptor.Type.INT64 | FieldDescriptor.Type.SINT64 | FieldDescriptor.Type.SFIXED64 =>
+          case FieldDescriptor.Type.INT64 | FieldDescriptor.Type.SINT64 =>
             code ++= s"  private final LongList field${field.getNumber}_list = new LongList();\n"
           case _ =>
             val javaType = getJavaElementType(field.getType)
@@ -348,9 +348,9 @@ object WireFormatToRowGenerator {
 
     repeatedFields.foreach { field =>
       field.getType match {
-        case FieldDescriptor.Type.INT32 | FieldDescriptor.Type.SINT32 | FieldDescriptor.Type.SFIXED32 =>
+        case FieldDescriptor.Type.INT32 | FieldDescriptor.Type.SINT32 =>
           // IntList is initialized in field declaration, no initialization needed
-        case FieldDescriptor.Type.INT64 | FieldDescriptor.Type.SINT64 | FieldDescriptor.Type.SFIXED64 =>
+        case FieldDescriptor.Type.INT64 | FieldDescriptor.Type.SINT64 =>
           // LongList is initialized in field declaration, no initialization needed
         case _ =>
           val javaType = getJavaElementType(field.getType)
@@ -381,9 +381,9 @@ object WireFormatToRowGenerator {
     )
     repeatedFields.foreach { field =>
       field.getType match {
-        case FieldDescriptor.Type.INT32 | FieldDescriptor.Type.SINT32 | FieldDescriptor.Type.SFIXED32 =>
+        case FieldDescriptor.Type.INT32 | FieldDescriptor.Type.SINT32 =>
           code ++= s"    field${field.getNumber}_list.count = 0;\n"
-        case FieldDescriptor.Type.INT64 | FieldDescriptor.Type.SINT64 | FieldDescriptor.Type.SFIXED64 =>
+        case FieldDescriptor.Type.INT64 | FieldDescriptor.Type.SINT64 =>
           code ++= s"    field${field.getNumber}_list.count = 0;\n"
         case _ =>
           code ++= s"    field${field.getNumber}_count = 0;\n"
@@ -429,13 +429,13 @@ object WireFormatToRowGenerator {
         val ordinal = schema.fieldIndex(field.getName)
 
         field.getType match {
-          case FieldDescriptor.Type.INT32 | FieldDescriptor.Type.SINT32 | FieldDescriptor.Type.SFIXED32 =>
+          case FieldDescriptor.Type.INT32 | FieldDescriptor.Type.SINT32 =>
             // Use IntList
             code ++= s"    if (field${fieldNum}_list.count > 0) {\n"
             code ++= s"      writeIntArray(field${fieldNum}_list.array, field${fieldNum}_list.count, $ordinal, writer);\n"
             code ++= s"    }\n"
 
-          case FieldDescriptor.Type.INT64 | FieldDescriptor.Type.SINT64 | FieldDescriptor.Type.SFIXED64 =>
+          case FieldDescriptor.Type.INT64 | FieldDescriptor.Type.SINT64 =>
             // Use LongList
             code ++= s"    if (field${fieldNum}_list.count > 0) {\n"
             code ++= s"      writeLongArray(field${fieldNum}_list.array, field${fieldNum}_list.count, $ordinal, writer);\n"
@@ -453,9 +453,9 @@ object WireFormatToRowGenerator {
                 code ++= s"      writeStringArray(field${fieldNum}_values, field${fieldNum}_count, $ordinal, writer);\n"
               case FieldDescriptor.Type.BYTES =>
                 code ++= s"      writeBytesArray(field${fieldNum}_values, field${fieldNum}_count, $ordinal, writer);\n"
-              case FieldDescriptor.Type.INT32 =>
+              case FieldDescriptor.Type.INT32 | FieldDescriptor.Type.FIXED32 | FieldDescriptor.Type.SFIXED32 =>
                 code ++= s"      writeIntArray(field${fieldNum}_values, field${fieldNum}_count, $ordinal, writer);\n"
-              case FieldDescriptor.Type.INT64 =>
+              case FieldDescriptor.Type.INT64 | FieldDescriptor.Type.FIXED64 | FieldDescriptor.Type.SFIXED64 =>
                 code ++= s"      writeLongArray(field${fieldNum}_values, field${fieldNum}_count, $ordinal, writer);\n"
               case FieldDescriptor.Type.FLOAT =>
                 code ++= s"      writeFloatArray(field${fieldNum}_values, field${fieldNum}_count, $ordinal, writer);\n"
@@ -572,12 +572,12 @@ object WireFormatToRowGenerator {
     val fieldNum = field.getNumber
 
     field.getType match {
-      case FieldDescriptor.Type.INT32 | FieldDescriptor.Type.SINT32 | FieldDescriptor.Type.SFIXED32 |
+      case FieldDescriptor.Type.INT32 | FieldDescriptor.Type.SINT32 |
            FieldDescriptor.Type.UINT32 | FieldDescriptor.Type.ENUM =>
         // Use IntList with new parsePackedInts method (reads length internally)
         code ++= s"            parsePackedInts(input, field${fieldNum}_list);\n"
 
-      case FieldDescriptor.Type.INT64 | FieldDescriptor.Type.SINT64 | FieldDescriptor.Type.SFIXED64 |
+      case FieldDescriptor.Type.INT64 | FieldDescriptor.Type.SINT64 |
            FieldDescriptor.Type.UINT64 =>
         // Use LongList with new parsePackedLongs method (reads length internally)
         code ++= s"            parsePackedLongs(input, field${fieldNum}_list);\n"
@@ -592,10 +592,10 @@ object WireFormatToRowGenerator {
           case FieldDescriptor.Type.BOOL => ("parsePackedBooleans", 1)
 
           // Variable-length types that should never reach this point
-          case FieldDescriptor.Type.INT32 | FieldDescriptor.Type.SINT32 | FieldDescriptor.Type.SFIXED32 |
+          case FieldDescriptor.Type.INT32 | FieldDescriptor.Type.SINT32 |
                FieldDescriptor.Type.UINT32 | FieldDescriptor.Type.ENUM =>
             throw new IllegalArgumentException(s"Packed field type ${field.getType} should be handled by IntList path, not fallback array path")
-          case FieldDescriptor.Type.INT64 | FieldDescriptor.Type.SINT64 | FieldDescriptor.Type.SFIXED64 |
+          case FieldDescriptor.Type.INT64 | FieldDescriptor.Type.SINT64 |
                FieldDescriptor.Type.UINT64 =>
             throw new IllegalArgumentException(s"Packed field type ${field.getType} should be handled by LongList path, not fallback array path")
           case _ =>
@@ -619,11 +619,11 @@ object WireFormatToRowGenerator {
     val fieldNum = field.getNumber
 
     field.getType match {
-      case FieldDescriptor.Type.INT32 | FieldDescriptor.Type.SINT32 | FieldDescriptor.Type.SFIXED32 =>
+      case FieldDescriptor.Type.INT32 | FieldDescriptor.Type.SINT32 =>
         // Use IntList for int32 types
         code ++= s"            field${fieldNum}_list.add(input.readInt32());\n"
 
-      case FieldDescriptor.Type.INT64 | FieldDescriptor.Type.SINT64 | FieldDescriptor.Type.SFIXED64 =>
+      case FieldDescriptor.Type.INT64 | FieldDescriptor.Type.SINT64 =>
         // Use LongList for int64 types
         code ++= s"            field${fieldNum}_list.add(input.readInt64());\n"
 
@@ -631,8 +631,8 @@ object WireFormatToRowGenerator {
         // Use existing array-based approach for other types
         code ++= s"            if (field${fieldNum}_count >= field${fieldNum}_values.length) {\n"
         val resizeMethod = field.getType match {
-          case FieldDescriptor.Type.INT32 => "resizeIntArray"
-          case FieldDescriptor.Type.INT64 => "resizeLongArray"
+          case FieldDescriptor.Type.INT32 | FieldDescriptor.Type.FIXED32 | FieldDescriptor.Type.SFIXED32 => "resizeIntArray"
+          case FieldDescriptor.Type.INT64 | FieldDescriptor.Type.FIXED64 | FieldDescriptor.Type.SFIXED64 => "resizeLongArray"
           case FieldDescriptor.Type.FLOAT => "resizeFloatArray"
           case FieldDescriptor.Type.DOUBLE => "resizeDoubleArray"
           case FieldDescriptor.Type.BOOL => "resizeBooleanArray"
@@ -648,6 +648,14 @@ object WireFormatToRowGenerator {
             code ++= s"            field${fieldNum}_values[field${fieldNum}_count++] = input.readInt32();\n"
           case FieldDescriptor.Type.INT64 =>
             code ++= s"            field${fieldNum}_values[field${fieldNum}_count++] = input.readInt64();\n"
+          case FieldDescriptor.Type.FIXED32 =>
+            code ++= s"            field${fieldNum}_values[field${fieldNum}_count++] = input.readFixed32();\n"
+          case FieldDescriptor.Type.FIXED64 =>
+            code ++= s"            field${fieldNum}_values[field${fieldNum}_count++] = input.readFixed64();\n"
+          case FieldDescriptor.Type.SFIXED32 =>
+            code ++= s"            field${fieldNum}_values[field${fieldNum}_count++] = input.readSFixed32();\n"
+          case FieldDescriptor.Type.SFIXED64 =>
+            code ++= s"            field${fieldNum}_values[field${fieldNum}_count++] = input.readSFixed64();\n"
           case FieldDescriptor.Type.FLOAT =>
             code ++= s"            field${fieldNum}_values[field${fieldNum}_count++] = input.readFloat();\n"
           case FieldDescriptor.Type.DOUBLE =>

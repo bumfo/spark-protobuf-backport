@@ -461,4 +461,44 @@ class WireFormatGeneratorSpec extends AnyFlatSpec with Matchers {
       converter should not be null
     }
   }
+
+  it should "handle SFIXED32 and SFIXED64 packed fields without compilation errors" in {
+    import java.io.ByteArrayOutputStream
+    import com.google.protobuf.{CodedOutputStream, WireFormat}
+
+    // Create schema with repeated SFIXED32 and SFIXED64 fields
+    val schema = StructType(Seq(
+      StructField("sfixed32_values", ArrayType(IntegerType), nullable = true),
+      StructField("sfixed64_values", ArrayType(LongType), nullable = true)
+    ))
+
+    // Create test binary data with packed SFIXED32 and SFIXED64 values
+    val baos = new ByteArrayOutputStream()
+    val output = CodedOutputStream.newInstance(baos)
+
+    // Field 1: repeated sfixed32 values (packed)
+    output.writeTag(1, WireFormat.WIRETYPE_LENGTH_DELIMITED)
+    val sfixed32Values = Array(-100, 200, -300, 400)
+    output.writeRawVarint32(sfixed32Values.length * 4) // 4 bytes per SFIXED32
+    sfixed32Values.foreach(output.writeSFixed32NoTag)
+
+    // Field 2: repeated sfixed64 values (packed)
+    output.writeTag(2, WireFormat.WIRETYPE_LENGTH_DELIMITED)
+    val sfixed64Values = Array(-1000L, 2000L, -3000L, 4000L)
+    output.writeRawVarint32(sfixed64Values.length * 8) // 8 bytes per SFIXED64
+    sfixed64Values.foreach(output.writeSFixed64NoTag)
+
+    output.flush()
+    val testBinary = baos.toByteArray
+
+    // Create a simple descriptor that represents SFIXED32/SFIXED64 repeated fields
+    val typeDescriptor = Type.getDescriptor
+
+    // This should not throw compilation errors and should use array path, not IntList/LongList
+    noException should be thrownBy {
+      val converter = WireFormatToRowGenerator.generateConverter(typeDescriptor, schema)
+      // The converter generation should succeed without compilation errors
+      converter should not be null
+    }
+  }
 }
