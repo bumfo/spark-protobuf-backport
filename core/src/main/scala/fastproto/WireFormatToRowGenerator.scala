@@ -5,6 +5,7 @@ import com.google.protobuf.WireFormat
 import org.apache.spark.sql.types._
 import org.codehaus.janino.SimpleCompiler
 
+import java.util.concurrent.ConcurrentHashMap
 import scala.collection.JavaConverters._
 
 /**
@@ -24,14 +25,18 @@ import scala.collection.JavaConverters._
  */
 object WireFormatToRowGenerator {
 
-  // Thread-local cache for generated converters to avoid shared mutable state
-  private val converterCache: ThreadLocal[scala.collection.mutable.Map[String, AbstractWireFormatConverter]] =
+  // Global cache for compiled classes (classes are immutable and thread-safe)
+  private val classCache: ConcurrentHashMap[String, Class[_ <: AbstractWireFormatConverter]] =
+    new ConcurrentHashMap()
+
+  // Thread-local cache for converter instances (instances have mutable state)
+  private val instanceCache: ThreadLocal[scala.collection.mutable.Map[String, AbstractWireFormatConverter]] =
     ThreadLocal.withInitial(() => scala.collection.mutable.Map.empty[String, AbstractWireFormatConverter])
 
   /**
    * Generate or retrieve a cached converter for the given descriptor and schema.
-   * Uses thread-local caching to ensure each thread has its own converter instances,
-   * preventing data races on mutable converter state (arrays, counters, writers).
+   * Uses two-tier caching: globally cached compiled classes + thread-local instances.
+   * This avoids redundant compilation while ensuring thread safety.
    *
    * @param descriptor the protobuf message descriptor
    * @param schema     the target Spark SQL schema
@@ -39,15 +44,15 @@ object WireFormatToRowGenerator {
    */
   def generateConverter(descriptor: Descriptor, schema: StructType): AbstractWireFormatConverter = {
     val key = s"${descriptor.getFullName}_${schema.hashCode()}"
-    val threadCache = converterCache.get()
+    val threadInstances = instanceCache.get()
 
-    // Check thread-local cache first
-    threadCache.get(key) match {
+    // Check thread-local instance cache first
+    threadInstances.get(key) match {
       case Some(converter) => converter
       case None =>
-        // Generate new converter for this thread
+        // Create new converter instance for this thread (handles compilation and dependencies)
         val converter = createConverterGraph(descriptor, schema)
-        threadCache(key) = converter
+        threadInstances(key) = converter
         converter
     }
   }
@@ -135,9 +140,9 @@ object WireFormatToRowGenerator {
       }
 
       val nestedKey = s"${field.getMessageType.getFullName}_${nestedSchema.hashCode()}"
-      val threadCache = converterCache.get()
+      val threadInstances = instanceCache.get()
       val nestedConverter = localConverters.get(nestedKey).orElse(
-        threadCache.get(nestedKey)
+        threadInstances.get(nestedKey)
       ).getOrElse(
         throw new IllegalStateException(s"Nested converter not found: $nestedKey")
       )
@@ -162,20 +167,37 @@ object WireFormatToRowGenerator {
   }
 
   /**
-   * Compile a single converter using Janino.
+   * Get or compile converter class using global class cache.
+   */
+  private def getOrCompileClass(descriptor: Descriptor, schema: StructType, key: String): Class[_ <: AbstractWireFormatConverter] = {
+    // Check global class cache first
+    Option(classCache.get(key)) match {
+      case Some(clazz) => clazz
+      case None =>
+        // Compile new class
+        val className = s"GeneratedWireConverter_${descriptor.getName}_${Math.abs(key.hashCode)}"
+        val sourceCode = generateSourceCode(className, descriptor, schema)
+
+        // Compile using Janino
+        val compiler = new SimpleCompiler()
+        compiler.setParentClassLoader(this.getClass.getClassLoader)
+        compiler.cook(sourceCode.toString)
+        val generatedClass = compiler.getClassLoader.loadClass(className).asInstanceOf[Class[_ <: AbstractWireFormatConverter]]
+
+        // Cache the compiled class globally and return
+        Option(classCache.putIfAbsent(key, generatedClass)).getOrElse(generatedClass)
+    }
+  }
+
+  /**
+   * Compile and instantiate a single converter.
    */
   private def compileConverter(descriptor: Descriptor, schema: StructType): AbstractWireFormatConverter = {
-    val className = s"GeneratedWireConverter_${descriptor.getName}_${System.nanoTime()}"
-    val sourceCode = generateSourceCode(className, descriptor, schema)
-
-    // Compile using Janino
-    val compiler = new SimpleCompiler()
-    compiler.setParentClassLoader(this.getClass.getClassLoader)
-    compiler.cook(sourceCode.toString)
-    val generatedClass = compiler.getClassLoader.loadClass(className)
+    val key = s"${descriptor.getFullName}_${schema.hashCode()}"
+    val converterClass = getOrCompileClass(descriptor, schema, key)
 
     // Instantiate converter
-    val constructor = generatedClass.getConstructor(classOf[StructType])
+    val constructor = converterClass.getConstructor(classOf[StructType])
     constructor.newInstance(schema).asInstanceOf[AbstractWireFormatConverter]
   }
 

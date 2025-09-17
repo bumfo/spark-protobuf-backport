@@ -396,10 +396,15 @@ class WireFormatGeneratorSpec extends AnyFlatSpec with Matchers {
       // Create multiple concurrent tasks that generate converters and convert data
       val tasks = (1 to 20).map { i =>
         Future {
-          // Each thread should get its own converter instance
-          val converter = WireFormatToRowGenerator.generateConverter(Type.getDescriptor, schema)
+          // Each thread should get its own converter instance but share compiled classes
+          val converter1 = WireFormatToRowGenerator.generateConverter(Type.getDescriptor, schema)
+          val converter2 = WireFormatToRowGenerator.generateConverter(Type.getDescriptor, schema)
+
+          // Within same thread, should get same instance (cached)
+          converter1 should be theSameInstanceAs converter2
+
           val results = (1 to 5).map { _ =>
-            val row = converter.convert(testBinary)
+            val row = converter1.convert(testBinary)
             (row.getUTF8String(0).toString, row.getArray(1).numElements())
           }
           results
