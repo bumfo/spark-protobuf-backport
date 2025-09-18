@@ -7,7 +7,7 @@ import java.io.{File, FileInputStream, PrintWriter}
 import java.nio.file.StandardCopyOption
 
 /**
- * Code generator that uses ProtoToRowGenerator to create converter implementations
+ * Code generator that uses ProtoToRowGenerator to create parser implementations
  * for protobuf messages defined in descriptor files. Supports both SBT task mode
  * and command-line usage.
  * 
@@ -53,8 +53,8 @@ object GenerateParsersTask {
     java.nio.file.Files.copy(descriptorFile.toPath, targetDescriptor.toPath, 
       StandardCopyOption.REPLACE_EXISTING)
     
-    // Generate converter code
-    println(s"Generating converter code using ProtoToRowGenerator")
+    // Generate parser code
+    println(s"Generating parser code using ProtoToRowGenerator")
     generateFromDescriptor(descriptorFile, targetDir)
     
     println(s"Code generation completed. Output directory: ${targetDir}")
@@ -71,7 +71,7 @@ object GenerateParsersTask {
 
     try {
       generateFromDescriptor(descriptorFile, outputDir)
-      println(s"Generated converter code in: ${outputDir}")
+      println(s"Generated parser code in: ${outputDir}")
     } catch {
       case e: Exception =>
         println(s"Code generation failed: ${e.getMessage}")
@@ -110,7 +110,7 @@ object GenerateParsersTask {
     val packageName = descriptor.getFile.getOptions.getJavaPackage
     val fullClassName = if (packageName.nonEmpty) s"${packageName}.${messageName}" else messageName
     
-    println(s"Generating converter for message: ${fullClassName}")
+    println(s"Generating parser for message: ${fullClassName}")
 
     // Count distinct nested message types (same logic as createParserGraph)
     import scala.collection.JavaConverters._
@@ -120,7 +120,7 @@ object GenerateParsersTask {
     val distinctNestedTypes = nestedMessageFields.map(_.getMessageType.getFullName).toSet
     val nestedMessageCount = distinctNestedTypes.size
     
-    // Generate the converter code using ProtoToRowGenerator's source code generation method
+    // Generate the parser code using ProtoToRowGenerator's source code generation method
     val className = s"${messageName}Parser"
     val code = ProtoToRowGenerator.generateParserSourceCode(
       className, 

@@ -7,7 +7,7 @@ import org.apache.spark.sql.types._
 import java.io.{File, FileInputStream, PrintWriter}
 
 /**
- * Code generator that uses WireFormatToRowGenerator to create optimized converter implementations
+ * Code generator that uses WireFormatToRowGenerator to create optimized parser implementations
  * for protobuf messages defined in descriptor files. Supports both SBT task mode
  * and command-line usage.
  *
@@ -44,7 +44,7 @@ object GenerateWireFormatTask {
     val typeMsg = com.google.protobuf.Type.newBuilder().build()
     val descriptor = typeMsg.getDescriptorForType
 
-    println(s"Generating WireFormat converter code for: ${descriptor.getFullName}")
+    println(s"Generating WireFormat parser code for: ${descriptor.getFullName}")
 
     // Create a sample Spark schema that matches some Type fields
     val sparkSchema = StructType(Seq(
@@ -81,8 +81,8 @@ object GenerateWireFormatTask {
       StructField("syntax", StringType, nullable = true)
     ))
 
-    // Generate converter code
-    println("Generating WireFormat converter code using WireFormatToRowGenerator")
+    // Generate parser code
+    println("Generating WireFormat parser code using WireFormatToRowGenerator")
     generateParserForMessage(descriptor, sparkSchema, targetDir)
 
     // Also generate a simplified version for comparison
@@ -91,7 +91,7 @@ object GenerateWireFormatTask {
       StructField("syntax", StringType, nullable = true)
     ))
 
-    println("Generating simplified WireFormat converter for comparison")
+    println("Generating simplified WireFormat parser for comparison")
     generateParserForMessage(descriptor, simpleSchema, targetDir, "Simple")
 
     println(s"WireFormat code generation completed. Output directory: ${targetDir}")
@@ -108,7 +108,7 @@ object GenerateWireFormatTask {
 
     try {
       generateFromDescriptor(descriptorFile, outputDir)
-      println(s"Generated WireFormat converter code in: ${outputDir}")
+      println(s"Generated WireFormat parser code in: ${outputDir}")
     } catch {
       case e: Exception =>
         println(s"Code generation failed: ${e.getMessage}")
@@ -155,9 +155,9 @@ object GenerateWireFormatTask {
     val fullClassName = if (packageName.nonEmpty) s"${packageName}.${messageName}" else messageName
 
     val className = s"${messageName}${suffix}WireFormatParser"
-    println(s"Generating WireFormat converter for message: ${fullClassName} -> ${className}")
+    println(s"Generating WireFormat parser for message: ${fullClassName} -> ${className}")
 
-    // Generate the converter code using WireFormatToRowGenerator's source code generation method
+    // Generate the parser code using WireFormatToRowGenerator's source code generation method
     val code = generateWireFormatParserSource(className, descriptor, schema)
 
     // Write the generated code to a file
@@ -165,7 +165,7 @@ object GenerateWireFormatTask {
     val writer = new PrintWriter(outputFile)
     try {
       writer.write(code.toString())
-      println(s"Generated WireFormat converter: ${outputFile}")
+      println(s"Generated WireFormat parser: ${outputFile}")
     } finally {
       writer.close()
     }

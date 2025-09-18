@@ -1,12 +1,11 @@
 package fastproto
 
 import org.apache.spark.sql.catalyst.InternalRow
-import org.apache.spark.sql.catalyst.expressions.codegen.UnsafeWriter
 import org.apache.spark.sql.types.StructType
 
 /**
  * Base interface for converting protobuf binary data into Spark's
- * [[org.apache.spark.sql.catalyst.InternalRow]]. This interface supports
+ * [[InternalRow]]. This interface supports
  * both direct binary conversion and message-based conversion through
  * its sub-interfaces.
  *
@@ -25,7 +24,7 @@ trait Parser extends Serializable {
   def parse(binary: Array[Byte]): InternalRow
 
   /**
-   * The Catalyst schema corresponding to this converter.  This schema
+   * The Catalyst schema corresponding to this parser.  This schema
    * describes the structure of the [[InternalRow]] produced by [[parse]].
    * Implementations should return the [[StructType]] used to build the
    * UnsafeRow.  This allows callers to inspect the field names and types
