@@ -1,7 +1,7 @@
 package org.apache.spark.sql.protobuf.backport
 
 import com.google.protobuf.{Descriptors, DynamicMessage}
-import fastproto.Parser
+import fastproto.MessageParser
 import org.apache.spark.sql.catalyst.InternalRow
 import org.apache.spark.sql.protobuf.backport.shims.QueryCompilationErrors
 import org.apache.spark.sql.types.{DataType, StructType}
@@ -24,17 +24,16 @@ import scala.collection.JavaConverters._
  */
 class DynamicMessageParser(
     messageDescriptor: Descriptors.Descriptor,
-    val schema: StructType) extends Parser {
+    val schema: StructType) extends MessageParser[DynamicMessage] {
 
   @transient private lazy val fieldsNumbers0 =
     messageDescriptor.getFields.asScala.map(f => f.getNumber).toSet
 
   private val deserializer = new ProtobufDeserializer(messageDescriptor, schema)
 
-  override def parse(binary: Array[Byte]): InternalRow = {
-    // Parse using DynamicMessage
-    val message = DynamicMessage.parseFrom(messageDescriptor, binary)
+  override def parse(binary: Array[Byte]): InternalRow = parse(DynamicMessage.parseFrom(messageDescriptor, binary))
 
+  override def parse(message: DynamicMessage): InternalRow = {
     // Check for unknown fields that clash with known field numbers; this indicates
     // a mismatch between writer and reader schemas.  Use findFieldByNumber
     // instead of indexing into getFields by number, because Protobuf field
@@ -58,7 +57,6 @@ class DynamicMessageParser(
     val rawValue = deserialized.get
     convertToInternalTypes(rawValue, schema).asInstanceOf[InternalRow]
   }
-
 
   /**
    * Convert String values to UTF8String recursively throughout the data structure.
