@@ -1,11 +1,10 @@
 package fastproto
 
-import com.google.protobuf.Descriptors.{Descriptor, FileDescriptor}
 import com.google.protobuf.DescriptorProtos.FileDescriptorSet
+import com.google.protobuf.Descriptors.{Descriptor, FileDescriptor}
 import org.apache.spark.sql.types._
 
 import java.io.{File, FileInputStream, PrintWriter}
-import java.nio.file.StandardCopyOption
 
 /**
  * Code generator that uses WireFormatToRowGenerator to create optimized converter implementations
@@ -17,7 +16,7 @@ import java.nio.file.StandardCopyOption
  * protobuf wire format directly to Spark SQL rows with performance optimizations.
  *
  * Command-line Mode (2 args):
- *   GenerateWireFormatTask <descriptor-file> <output-directory>
+ * GenerateWireFormatTask <descriptor-file> <output-directory>
  */
 object GenerateWireFormatTask {
 
@@ -180,152 +179,23 @@ object GenerateWireFormatTask {
       descriptor: Descriptor,
       schema: StructType): StringBuilder = {
 
-    // Use reflection to access the private generateSourceCode method from WireFormatToRowGenerator
-    try {
-      val generatorClass = WireFormatToRowGenerator.getClass
-      val generateSourceCodeMethod = generatorClass.getDeclaredMethod(
-        "generateSourceCode",
-        classOf[String],
-        classOf[com.google.protobuf.Descriptors.Descriptor],
-        classOf[StructType]
-      )
-      generateSourceCodeMethod.setAccessible(true)
+    val generatorClass = WireFormatToRowGenerator.getClass
+    val generateSourceCodeMethod = generatorClass.getDeclaredMethod(
+      "generateSourceCode",
+      classOf[String],
+      classOf[com.google.protobuf.Descriptors.Descriptor],
+      classOf[StructType]
+    )
+    generateSourceCodeMethod.setAccessible(true)
 
-      val sourceCode = generateSourceCodeMethod.invoke(
-        WireFormatToRowGenerator,
-        className,
-        descriptor,
-        schema
-      ).asInstanceOf[StringBuilder]
+    val sourceCode = generateSourceCodeMethod.invoke(
+      WireFormatToRowGenerator,
+      className,
+      descriptor,
+      schema
+    ).asInstanceOf[StringBuilder]
 
-      sourceCode
-    } catch {
-      case e: Exception =>
-        println(s"Warning: Could not access generateSourceCode method: ${e.getMessage}")
-        // Return a template showing what would be generated
-        createExampleWireFormatSource(className, descriptor, schema)
-    }
-  }
-
-  private def createExampleWireFormatSource(
-      className: String,
-      descriptor: Descriptor,
-      schema: StructType): StringBuilder = {
-
-    val code = new StringBuilder
-
-    code ++= s"""// This is an example of what WireFormatToRowGenerator would generate
-// for message: ${descriptor.getFullName}
-//
-// The actual generated code would be produced by calling:
-// WireFormatToRowGenerator.generateConverter(descriptor, schema)
-
-import com.google.protobuf.CodedInputStream;
-import com.google.protobuf.WireFormat;
-import org.apache.spark.sql.catalyst.expressions.codegen.UnsafeRowWriter;
-import org.apache.spark.sql.types.StructType;
-import org.apache.spark.unsafe.types.UTF8String;
-import fastproto.AbstractWireFormatConverter;
-
-public final class $className extends AbstractWireFormatConverter {
-
-  // Field ordinal constants for compile-time optimization
-"""
-
-    // Generate field constants
-    import scala.collection.JavaConverters._
-    descriptor.getFields.asScala.foreach { field =>
-      try {
-        val ordinal = schema.fieldIndex(field.getName)
-        val wireType = getWireTypeForField(field)
-        code ++= s"  private static final int FIELD_${field.getNumber}_ORDINAL = $ordinal;\n"
-        code ++= s"  private static final int FIELD_${field.getNumber}_WIRE_TYPE = $wireType;\n"
-      } catch {
-        case _: IllegalArgumentException => // Field not in schema
-      }
-    }
-
-    code ++= s"""
-  public $className(StructType schema) {
-    super(schema);
-  }
-
-  @Override
-  protected void writeData(byte[] binary, UnsafeRowWriter writer) {
-    CodedInputStream input = CodedInputStream.newInstance(binary);
-
-    try {
-      while (!input.isAtEnd()) {
-        int tag = input.readTag();
-        int fieldNumber = WireFormat.getTagFieldNumber(tag);
-        int wireType = WireFormat.getTagWireType(tag);
-
-        // Generated field parsing with inlined type information
-        // This eliminates runtime type checking and branching
-"""
-
-    // Generate sample field parsing
-    val schemaFields = descriptor.getFields.asScala
-      .filter(field => schema.fieldNames.contains(field.getName))
-      .take(3) // Show first 3 fields as example
-
-    schemaFields.zipWithIndex.foreach { case (field, index) =>
-      val ifClause = if (index == 0) "if" else "} else if"
-      code ++= s"""        $ifClause (fieldNumber == ${field.getNumber}) {
-          // Parse ${field.getName} (${field.getType})
-          if (wireType == FIELD_${field.getNumber}_WIRE_TYPE) {
-            // Inlined parsing logic for ${field.getType}
-            ${generateParsingLogicExample(field)}
-          } else {
-            input.skipField(tag);
-          }
-"""
-    }
-
-    if (schemaFields.nonEmpty) {
-      code ++= "        } else {\n"
-    }
-
-    code ++= """          // Unknown field - skip
-          input.skipField(tag);
-        }
-      }
-    } catch (Exception e) {
-      throw new RuntimeException("Failed to parse wire format", e);
-    }
-  }
-
-  // Generated helper methods would appear here for:
-  // - Enum value lookups with switch statements
-  // - Repeated field array writing
-  // - Nested message processing
-}
-
-// Key Performance Optimizations in Generated Code:
-// 1. Field ordinals and wire types are constants (no runtime lookup)
-// 2. Field parsing is inlined (no method calls or switch statements)
-// 3. Type-specific parsing eliminates runtime type checking
-// 4. Branch prediction friendly ordered field dispatch
-// 5. Primitive arrays used to avoid boxing overhead
-"""
-
-    code
-  }
-
-  private def generateParsingLogicExample(field: com.google.protobuf.Descriptors.FieldDescriptor): String = {
-    import com.google.protobuf.Descriptors.FieldDescriptor
-    field.getType match {
-      case FieldDescriptor.Type.STRING =>
-        s"writer.write(FIELD_${field.getNumber}_ORDINAL, UTF8String.fromBytes(input.readBytes().toByteArray()));"
-      case FieldDescriptor.Type.INT32 =>
-        s"writer.write(FIELD_${field.getNumber}_ORDINAL, input.readInt32());"
-      case FieldDescriptor.Type.ENUM =>
-        s"writer.write(FIELD_${field.getNumber}_ORDINAL, UTF8String.fromString(getEnumName${field.getNumber}(input.readEnum())));"
-      case FieldDescriptor.Type.MESSAGE =>
-        s"writeMessage(input.readBytes().toByteArray(), ${field.getNumber}, FIELD_${field.getNumber}_ORDINAL, writer);"
-      case _ =>
-        s"// ${field.getType} parsing logic would be generated here"
-    }
+    sourceCode
   }
 
   private def getWireTypeForField(field: com.google.protobuf.Descriptors.FieldDescriptor): Int = {
@@ -357,7 +227,7 @@ public final class $className extends AbstractWireFormatConverter {
     val writer = new PrintWriter(infoFile)
     try {
       writer.println("WireFormat Code Generator Analysis")
-      writer.println("="*50)
+      writer.println("=" * 50)
       writer.println(s"Message: ${descriptor.getFullName}")
       writer.println(s"Package: ${descriptor.getFile.getOptions.getJavaPackage}")
       writer.println()
@@ -414,6 +284,6 @@ public final class $className extends AbstractWireFormatConverter {
       StructField(field.getName, finalType, nullable = true)
     }
 
-    StructType(fields.toSeq)
+    StructType(fields)
   }
 }

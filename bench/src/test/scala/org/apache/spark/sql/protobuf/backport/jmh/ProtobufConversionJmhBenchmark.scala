@@ -176,7 +176,7 @@ class ProtobufConversionJmhBenchmark {
     bh.consume(simpleDirectConverter.convert(simpleBinary))
   }
 
-  @Benchmark
+  // @Benchmark
   def simpleDynamicMessageConverter(bh: Blackhole): Unit = {
     bh.consume(simpleDynamicConverter.convert(simpleBinary))
   }
