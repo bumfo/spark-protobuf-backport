@@ -197,7 +197,7 @@ private[backport] case class ProtobufDataToCatalyst(
       case Some(parser) =>
         // Generate optimized code path using the parser directly
         val expr = ctx.addReferenceObj("this", this)
-        val converterRef = ctx.addReferenceObj("parser", parser)
+        val parserRef = ctx.addReferenceObj("parser", parser)
 
         nullSafeCodeGen(
           ctx,
@@ -208,7 +208,7 @@ private[backport] case class ProtobufDataToCatalyst(
             s"""
                |// Optimized codegen path using parser with direct binary conversion
                |try {
-               |  $dt $result = ($dt) $converterRef.convert($eval);
+               |  $dt $result = ($dt) $parserRef.parse($eval);
                |  if ($result == null) {
                |    ${ev.isNull} = true;
                |  } else {
