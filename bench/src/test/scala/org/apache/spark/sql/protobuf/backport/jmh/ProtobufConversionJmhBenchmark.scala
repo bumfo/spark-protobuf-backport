@@ -53,12 +53,12 @@ class ProtobufConversionJmhBenchmark {
 
   // Converters for simple schema
   var simpleDirectConverter: WireFormatConverter = _
-  var simpleGeneratedConverter: fastproto.CodedInputStreamConverter = _
+  var simpleGeneratedConverter: fastproto.StreamWireConverter = _
   var simpleDynamicConverter: DynamicMessageConverter = _
 
   // Converters for complex schema
   var complexDirectConverter: WireFormatConverter = _
-  var complexGeneratedConverter: fastproto.CodedInputStreamConverter = _
+  var complexGeneratedConverter: fastproto.StreamWireConverter = _
   var complexDynamicConverter: DynamicMessageConverter = _
 
   @Setup

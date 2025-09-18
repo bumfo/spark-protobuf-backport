@@ -2,7 +2,7 @@ package fastproto
 
 import com.google.protobuf.Descriptors.{Descriptor, FieldDescriptor}
 import com.google.protobuf.{CodedInputStream, WireFormat}
-import fastproto.CodedInputStreamConverter._
+import fastproto.StreamWireConverter._
 import org.apache.spark.sql.catalyst.expressions.codegen.UnsafeRowWriter
 import org.apache.spark.sql.types.{ArrayType, StructType}
 import org.apache.spark.unsafe.types.UTF8String
@@ -14,9 +14,9 @@ import scala.collection.JavaConverters._
  * using CodedInputStream, bypassing the need to materialize intermediate Message objects.
  *
  * This optimized converter provides significant performance improvements by:
- * - Extending CodedInputStreamConverter for optimized helper methods
+ * - Extending StreamWireConverter for optimized helper methods
  * - Using type-specific primitive accumulators (no boxing)
- * - Leveraging packed field parsing methods from CodedInputStreamConverter
+ * - Leveraging packed field parsing methods from StreamWireConverter
  * - Direct byte copying for strings/bytes/messages
  * - Single-pass streaming parse to UnsafeRow
  *
@@ -26,7 +26,7 @@ import scala.collection.JavaConverters._
 class WireFormatConverter(
     descriptor: Descriptor,
     override val schema: StructType)
-  extends CodedInputStreamConverter(schema) {
+  extends StreamWireConverter(schema) {
 
   import WireFormatConverter._
 
@@ -340,7 +340,7 @@ class WireFormatConverter(
     val messageBytes = input.readByteArray()
     val converter = nestedConvertersArray(mapping.fieldDescriptor.getNumber)
     if (converter != null) {
-      // Use helper method from CodedInputStreamConverter
+      // Use helper method from StreamWireConverter
       writeMessage(messageBytes, mapping.rowOrdinal, converter, writer)
     } else {
       throw new IllegalStateException(s"No nested converter found for field ${mapping.fieldDescriptor.getName}")
@@ -376,7 +376,7 @@ class WireFormatConverter(
           case list: ByteArrayList if list.count > 0 =>
             mapping.fieldDescriptor.getType match {
               case FieldDescriptor.Type.MESSAGE =>
-                val converter = nestedConvertersArray(fieldNumber).asInstanceOf[CodedInputStreamConverter]
+                val converter = nestedConvertersArray(fieldNumber).asInstanceOf[StreamWireConverter]
                 writeMessageArray(list.array, list.count, mapping.rowOrdinal, converter, writer)
               case FieldDescriptor.Type.STRING =>
                 writeStringArray(list.array, list.count, mapping.rowOrdinal, writer)

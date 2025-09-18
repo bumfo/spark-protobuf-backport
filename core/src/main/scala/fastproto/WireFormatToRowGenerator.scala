@@ -9,7 +9,7 @@ import java.util.concurrent.ConcurrentHashMap
 import scala.collection.JavaConverters._
 
 /**
- * Factory object for generating optimized [[CodedInputStreamConverter]] instances.
+ * Factory object for generating optimized [[StreamWireConverter]] instances.
  *
  * Given a protobuf [[Descriptor]] and corresponding Spark SQL schema, this object
  * generates specialized Java code that directly parses wire format data into
@@ -26,12 +26,12 @@ import scala.collection.JavaConverters._
 object WireFormatToRowGenerator {
 
   // Global cache for compiled classes (classes are immutable and thread-safe)
-  private val classCache: ConcurrentHashMap[String, Class[_ <: CodedInputStreamConverter]] =
+  private val classCache: ConcurrentHashMap[String, Class[_ <: StreamWireConverter]] =
     new ConcurrentHashMap()
 
   // Thread-local cache for converter instances (instances have mutable state)
-  private val instanceCache: ThreadLocal[scala.collection.mutable.Map[String, CodedInputStreamConverter]] =
-    ThreadLocal.withInitial(() => scala.collection.mutable.Map.empty[String, CodedInputStreamConverter])
+  private val instanceCache: ThreadLocal[scala.collection.mutable.Map[String, StreamWireConverter]] =
+    ThreadLocal.withInitial(() => scala.collection.mutable.Map.empty[String, StreamWireConverter])
 
   // ========== Wire Format Type Categorization ==========
 
@@ -184,7 +184,7 @@ object WireFormatToRowGenerator {
    * @param schema     the target Spark SQL schema
    * @return an optimized converter for wire format parsing
    */
-  def generateConverter(descriptor: Descriptor, schema: StructType): CodedInputStreamConverter = {
+  def generateConverter(descriptor: Descriptor, schema: StructType): StreamWireConverter = {
     val key = s"${descriptor.getFullName}_${schema.hashCode()}"
     val threadInstances = instanceCache.get()
 
@@ -202,9 +202,9 @@ object WireFormatToRowGenerator {
   /**
    * Create a converter with all its nested dependencies.
    */
-  private def createConverterGraph(descriptor: Descriptor, schema: StructType): CodedInputStreamConverter = {
+  private def createConverterGraph(descriptor: Descriptor, schema: StructType): StreamWireConverter = {
     // Create local converter map for this generation cycle
-    val localConverters = scala.collection.mutable.Map[String, CodedInputStreamConverter]()
+    val localConverters = scala.collection.mutable.Map[String, StreamWireConverter]()
 
     // Generate converters for nested types
     val rootConverter = generateConverterInternal(descriptor, schema, localConverters)
@@ -221,8 +221,8 @@ object WireFormatToRowGenerator {
   private def generateConverterInternal(
       descriptor: Descriptor,
       schema: StructType,
-      localConverters: scala.collection.mutable.Map[String, CodedInputStreamConverter]
-  ): CodedInputStreamConverter = {
+      localConverters: scala.collection.mutable.Map[String, StreamWireConverter]
+  ): StreamWireConverter = {
     val key = s"${descriptor.getFullName}_${schema.hashCode()}"
 
     // Check if already being generated
@@ -259,7 +259,7 @@ object WireFormatToRowGenerator {
    * Wire up nested converter dependencies after all converters are created.
    */
   private def wireDependencies(
-      localConverters: scala.collection.mutable.Map[String, CodedInputStreamConverter],
+      localConverters: scala.collection.mutable.Map[String, StreamWireConverter],
       descriptor: Descriptor,
       schema: StructType
   ): Unit = {
@@ -289,7 +289,7 @@ object WireFormatToRowGenerator {
         throw new IllegalStateException(s"Nested converter not found: $nestedKey")
       )
 
-      val setterMethod = converter.getClass.getMethod(s"setNestedConverter${field.getNumber}", classOf[CodedInputStreamConverter])
+      val setterMethod = converter.getClass.getMethod(s"setNestedConverter${field.getNumber}", classOf[StreamWireConverter])
       setterMethod.invoke(converter, nestedConverter)
     }
 
@@ -311,7 +311,7 @@ object WireFormatToRowGenerator {
   /**
    * Get or compile converter class using global class cache.
    */
-  private def getOrCompileClass(descriptor: Descriptor, schema: StructType, key: String): Class[_ <: CodedInputStreamConverter] = {
+  private def getOrCompileClass(descriptor: Descriptor, schema: StructType, key: String): Class[_ <: StreamWireConverter] = {
     // Check global class cache first
     Option(classCache.get(key)) match {
       case Some(clazz) => clazz
@@ -324,7 +324,7 @@ object WireFormatToRowGenerator {
         val compiler = new SimpleCompiler()
         compiler.setParentClassLoader(this.getClass.getClassLoader)
         compiler.cook(sourceCode.toString)
-        val generatedClass = compiler.getClassLoader.loadClass(className).asInstanceOf[Class[_ <: CodedInputStreamConverter]]
+        val generatedClass = compiler.getClassLoader.loadClass(className).asInstanceOf[Class[_ <: StreamWireConverter]]
 
         // Cache the compiled class globally and return
         Option(classCache.putIfAbsent(key, generatedClass)).getOrElse(generatedClass)
@@ -334,7 +334,7 @@ object WireFormatToRowGenerator {
   /**
    * Compile and instantiate a single converter.
    */
-  private def compileConverter(descriptor: Descriptor, schema: StructType): CodedInputStreamConverter = {
+  private def compileConverter(descriptor: Descriptor, schema: StructType): StreamWireConverter = {
     val key = s"${descriptor.getFullName}_${schema.hashCode()}"
     val converterClass = getOrCompileClass(descriptor, schema, key)
 
@@ -355,13 +355,13 @@ object WireFormatToRowGenerator {
     code ++= "import org.apache.spark.sql.catalyst.expressions.codegen.UnsafeRowWriter;\n"
     code ++= "import org.apache.spark.sql.types.StructType;\n"
     code ++= "import org.apache.spark.unsafe.types.UTF8String;\n"
-    code ++= "import fastproto.CodedInputStreamConverter;\n"
+    code ++= "import fastproto.StreamWireConverter;\n"
     code ++= "import java.io.IOException;\n"
     code ++= "import fastproto.IntList;\n"
     code ++= "import fastproto.LongList;\n\n"
 
     // Class declaration
-    code ++= s"public final class $className extends CodedInputStreamConverter {\n"
+    code ++= s"public final class $className extends StreamWireConverter {\n"
 
     // Field mappings and constants
     generateFieldConstants(code, descriptor, schema)
@@ -402,7 +402,7 @@ object WireFormatToRowGenerator {
     if (messageFields.nonEmpty) {
       code ++= "  // Nested converter fields\n"
       messageFields.foreach { field =>
-        code ++= s"  private CodedInputStreamConverter nestedConv${field.getNumber};\n"
+        code ++= s"  private StreamWireConverter nestedConv${field.getNumber};\n"
       }
       code ++= "\n"
     }
@@ -418,7 +418,7 @@ object WireFormatToRowGenerator {
 
     messageFields.foreach { field =>
       val fieldNum = field.getNumber
-      code ++= s"  public void setNestedConverter${fieldNum}(CodedInputStreamConverter conv) {\n"
+      code ++= s"  public void setNestedConverter${fieldNum}(StreamWireConverter conv) {\n"
       code ++= s"    this.nestedConv${fieldNum} = conv;\n"
       code ++= "  }\n\n"
     }
