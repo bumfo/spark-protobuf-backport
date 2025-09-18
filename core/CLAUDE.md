@@ -185,3 +185,15 @@ For nested message arrays, always use `convertWithSharedBuffer()` which manages 
 ### Interface Benefits
 
 This design separates parsing logic (`parseAndWriteFields`) from writer management (`convertWithSharedBuffer`), enabling both standalone conversion and efficient nested message handling with shared buffers. The `acquireWriter` method provides a clean abstraction for writer lifecycle management.
+
+## Wire Format Optimization Tips
+
+**Raw method usage**: Replace wrapper methods with direct raw methods to avoid indirection:
+- `readInt32/readUInt32` → `readRawVarint32`
+- `readInt64/readUInt64` → `readRawVarint64`
+- `readFixed32/readSFixed32` → `readRawLittleEndian32`
+- `readFixed64/readSFixed64` → `readRawLittleEndian64`
+
+**Byte handling optimizations**:
+- UnsafeRow strings can be written from bytes directly without `UTF8String.fromBytes` intermediate
+- Use `readByteArray()` instead of `readBytes().toByteArray()` for cleaner code
