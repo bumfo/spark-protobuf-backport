@@ -3,7 +3,6 @@ package fastproto;
 import com.google.protobuf.CodedInputStream;
 import org.apache.spark.sql.catalyst.expressions.codegen.UnsafeArrayWriter;
 import org.apache.spark.sql.catalyst.expressions.codegen.UnsafeRowWriter;
-import org.apache.spark.sql.catalyst.InternalRow;
 import org.apache.spark.sql.types.StructType;
 
 import java.io.IOException;
@@ -312,50 +311,6 @@ public abstract class AbstractWireFormatConverter extends BufferSharingRowConver
     // ========== Packed Field Parsing Methods ==========
 
     /**
-     * Parse packed repeated varint32 values (INT32, UINT32, ENUM) from a LENGTH_DELIMITED wire format.
-     * Resizes array internally if needed and returns the (potentially new) array.
-     */
-    protected static int[] parsePackedVarint32s(CodedInputStream input, int[] buffer, int currentCount, int packedLength) throws IOException {
-        int oldLimit = input.pushLimit(packedLength);
-
-        // Calculate required capacity (varints are variable length, estimate conservatively)
-        int maxNewValues = packedLength; // Worst case: 1 byte per varint
-        if (buffer.length < currentCount + maxNewValues) {
-            buffer = resizeIntArray(buffer, currentCount, currentCount + maxNewValues);
-        }
-
-        int index = currentCount;
-        while (input.getBytesUntilLimit() > 0) {
-            buffer[index++] = input.readRawVarint32();
-        }
-
-        input.popLimit(oldLimit);
-        return buffer;
-    }
-
-    /**
-     * Parse packed repeated SINT32 values from a LENGTH_DELIMITED wire format.
-     * Resizes array internally if needed and returns the (potentially new) array.
-     */
-    protected static int[] parsePackedSInt32s(CodedInputStream input, int[] buffer, int currentCount, int packedLength) throws IOException {
-        int oldLimit = input.pushLimit(packedLength);
-
-        // Calculate required capacity (varints are variable length, estimate conservatively)
-        int maxNewValues = packedLength; // Worst case: 1 byte per varint
-        if (buffer.length < currentCount + maxNewValues) {
-            buffer = resizeIntArray(buffer, currentCount, currentCount + maxNewValues);
-        }
-
-        int index = currentCount;
-        while (input.getBytesUntilLimit() > 0) {
-            buffer[index++] = input.readSInt32();
-        }
-
-        input.popLimit(oldLimit);
-        return buffer;
-    }
-
-    /**
      * Parse packed repeated fixed32 values (FIXED32, SFIXED32) from a LENGTH_DELIMITED wire format.
      * Resizes array internally if needed and returns the (potentially new) array.
      */
@@ -371,50 +326,6 @@ public abstract class AbstractWireFormatConverter extends BufferSharingRowConver
         int index = currentCount;
         while (input.getBytesUntilLimit() > 0) {
             buffer[index++] = input.readRawLittleEndian32();
-        }
-
-        input.popLimit(oldLimit);
-        return buffer;
-    }
-
-    /**
-     * Parse packed repeated varint64 values (INT64, UINT64) from a LENGTH_DELIMITED wire format.
-     * Resizes array internally if needed and returns the (potentially new) array.
-     */
-    protected static long[] parsePackedVarint64s(CodedInputStream input, long[] buffer, int currentCount, int packedLength) throws IOException {
-        int oldLimit = input.pushLimit(packedLength);
-
-        // Calculate required capacity (varints are variable length, estimate conservatively)
-        int maxNewValues = packedLength; // Worst case: 1 byte per varint
-        if (buffer.length < currentCount + maxNewValues) {
-            buffer = resizeLongArray(buffer, currentCount, currentCount + maxNewValues);
-        }
-
-        int index = currentCount;
-        while (input.getBytesUntilLimit() > 0) {
-            buffer[index++] = input.readRawVarint64();
-        }
-
-        input.popLimit(oldLimit);
-        return buffer;
-    }
-
-    /**
-     * Parse packed repeated SINT64 values from a LENGTH_DELIMITED wire format.
-     * Resizes array internally if needed and returns the (potentially new) array.
-     */
-    protected static long[] parsePackedSInt64s(CodedInputStream input, long[] buffer, int currentCount, int packedLength) throws IOException {
-        int oldLimit = input.pushLimit(packedLength);
-
-        // Calculate required capacity (varints are variable length, estimate conservatively)
-        int maxNewValues = packedLength; // Worst case: 1 byte per varint
-        if (buffer.length < currentCount + maxNewValues) {
-            buffer = resizeLongArray(buffer, currentCount, currentCount + maxNewValues);
-        }
-
-        int index = currentCount;
-        while (input.getBytesUntilLimit() > 0) {
-            buffer[index++] = input.readSInt64();
         }
 
         input.popLimit(oldLimit);
@@ -568,34 +479,6 @@ public abstract class AbstractWireFormatConverter extends BufferSharingRowConver
     }
 
     /**
-     * Parse packed repeated fixed32 values (FIXED32, SFIXED32) using IntList for efficient storage.
-     * Reads the packed length from input and updates the list's count and may resize the array.
-     */
-    protected static void parsePackedFixed32s(CodedInputStream input, IntList list) throws IOException {
-        int packedLength = input.readRawVarint32();
-        int oldLimit = input.pushLimit(packedLength);
-
-        // Local variables for performance
-        int[] array = list.array;
-        int count = list.count;
-
-        // Parse all values in the packed field
-        while (input.getBytesUntilLimit() > 0) {
-            // Check capacity and grow if needed
-            if (count >= array.length) {
-                list.grow(count);
-                array = list.array;  // Update local reference after resize
-            }
-            array[count++] = input.readRawLittleEndian32();
-        }
-
-        // Write back the count
-        list.count = count;
-
-        input.popLimit(oldLimit);
-    }
-
-    /**
      * Parse packed repeated varint64 values (INT64, UINT64) using LongList for efficient storage.
      * Reads the packed length from input and updates the list's count and may resize the array.
      */
@@ -643,34 +526,6 @@ public abstract class AbstractWireFormatConverter extends BufferSharingRowConver
                 array = list.array;  // Update local reference after resize
             }
             array[count++] = input.readSInt64();
-        }
-
-        // Write back the count
-        list.count = count;
-
-        input.popLimit(oldLimit);
-    }
-
-    /**
-     * Parse packed repeated fixed64 values (FIXED64, SFIXED64) using LongList for efficient storage.
-     * Reads the packed length from input and updates the list's count and may resize the array.
-     */
-    protected static void parsePackedFixed64s(CodedInputStream input, LongList list) throws IOException {
-        int packedLength = input.readRawVarint32();
-        int oldLimit = input.pushLimit(packedLength);
-
-        // Local variables for performance
-        long[] array = list.array;
-        int count = list.count;
-
-        // Parse all values in the packed field
-        while (input.getBytesUntilLimit() > 0) {
-            // Check capacity and grow if needed
-            if (count >= array.length) {
-                list.grow(count);
-                array = list.array;  // Update local reference after resize
-            }
-            array[count++] = input.readRawLittleEndian64();
         }
 
         // Write back the count
