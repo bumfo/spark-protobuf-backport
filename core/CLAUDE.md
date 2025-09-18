@@ -22,51 +22,67 @@ This file provides guidance to Claude Code (claude.ai/code) when working with th
 - `ProtobufDeserializer` - Converts `DynamicMessage` to Catalyst rows
 
 **Fast Proto Integration** (`src/main/scala/fastproto/`):
-- `ProtoToRowGenerator` - Generates optimized `Parser` implementations using Janino
-- `Parser` - Base interface for simple protobuf binary → `InternalRow` conversion
-- `BufferSharingParser` - Base implementation with buffer sharing for nested conversions
-- `MessageParser` - Interface for compiled protobuf message → `InternalRow` conversion
-- `WireFormatParser` - Direct wire format parsing to UnsafeRow without intermediate message objects
-- `DynamicMessageParser` - Fallback parser using traditional DynamicMessage approach
+- `Parser` - Base interface for protobuf binary → `InternalRow` conversion
+- `BufferSharingParser` - Abstract base with buffer sharing for nested conversions
+- `MessageParser[T]` - Interface for compiled protobuf message → `InternalRow` conversion
+- `ProtoToRowGenerator` - Generates message parsers using Janino
+- `WireFormatToRowGenerator` - Generates wire format parsers using Janino
+- `StreamWireParser` - Java base class for CodedInputStream-based parsing
+- `WireFormatParser` - Direct wire format parsing for binary descriptor sets
+- `AbstractMessageParser[T]` - Base for generated message parsers with buffer sharing
+- `DynamicMessageParser` - Fallback parser using DynamicMessage approach
 
 **Spark Compatibility Shims** (`shims/` subdirectory):
 - Error handling and query compilation compatibility layer for Spark 3.2.1
 
 ### Key Design Patterns
 
-1. **Dual execution paths**: Compiled classes use generated parsers; descriptor-only uses `DynamicMessage`
+1. **Three-tier execution paths**: Generated message parsers (fastest) → Wire format parsers → DynamicMessage (fallback)
 2. **Binary descriptor set support**: Eliminates executor file access requirements
-3. **Schema inference caching**: Lazy computation of Spark schemas from protobuf descriptors
+3. **Buffer sharing optimization**: Memory-efficient nested conversions via shared UnsafeRowWriter
 4. **Parse mode handling**: Supports both permissive (null on error) and fail-fast modes
-5. **Enhanced code generation**: `doGenCode` method generates optimized code when `parserOpt` is available
-6. **Wire format optimization**: Direct parsing for binary descriptor sets when possible
+5. **Code generation**: Janino-based parser generation for optimal performance
 
 ## Parser Architecture
 
-The project uses a three-tier parser interface hierarchy for optimal separation of concerns:
+The project uses a layered parser interface hierarchy optimized for different protobuf conversion scenarios:
 
-### 1. Base Interface: `Parser`
-- **Purpose**: Simple trait for basic protobuf-to-row conversion
-- **Method**: `parse(binary: Array[Byte]): InternalRow`
-- **Usage**: Minimal interface implemented by all parsers
-- **Example**: `DynamicMessageParser` which doesn't support buffer sharing
+### Interface Hierarchy
 
-### 2. Buffer Sharing Implementation: `BufferSharingParser`
-- **Purpose**: Base implementation class with buffer sharing capabilities for nested conversions
-- **Key Methods**:
-  - `parseInto(binary, writer)` - Core parsing logic (abstract)
-  - `parseWithSharedBuffer(binary, parentWriter)` - Enables nested buffer sharing
-  - `acquireWriter(parentWriter)` - Manages writer acquisition for child structures
-- **Usage**: Extended by wire format parsers and generated code
-- **Examples**: `WireFormatParser`, generated wire format parsers
+```
+Parser (trait) - Base interface for protobuf → InternalRow
+├── BufferSharingParser (abstract - buffer sharing impl)
+│   ├── StreamWireParser (abstract - CodedInputStream impl)
+│   │   ├── WireFormatParser
+│   │   └── (generated wire parsers)
+│   └── AbstractMessageParser[T] (message parsing base)
+│       └── (generated message parsers)
+└── MessageParser[T] (trait - compiled message interface)
+    ├── AbstractMessageParser[T] (also)
+    └── DynamicMessageParser
+```
 
-### 3. Message-Based Interface: `MessageParser[T]`
-- **Purpose**: Interface for compiled protobuf message objects (not binary data)
-- **Key Methods**:
-  - `parse(message: T): InternalRow` - Basic message conversion
-  - `parseWithSharedBuffer(message: T, parentWriter)` - Message conversion with buffer sharing
-- **Usage**: Implemented by generated parsers for compiled protobuf classes
-- **Examples**: Generated parsers from `ProtoToRowGenerator`
+### Core Interfaces
+
+**`Parser`** - Base trait with `parse(binary: Array[Byte]): InternalRow` for all parsers
+
+**`MessageParser[T]`** - Interface for compiled message objects:
+- `parse(message: T): InternalRow` - Direct message conversion
+
+### Implementation Classes
+
+**`BufferSharingParser`** - Abstract base for memory-efficient nested conversions:
+- `parseInto(binary, writer)` - Core parsing logic (abstract)
+- `parseWithSharedBuffer()` - Enables buffer sharing for nested structures
+
+**`StreamWireParser`** - Abstract base for CodedInputStream-based parsing (extends BufferSharingParser)
+
+**`WireFormatParser`** - Direct wire format parsing for binary descriptor sets
+
+**`AbstractMessageParser[T]`** - Abstract base for generated message parsers with buffer sharing support:
+- `parseWithSharedBuffer(message, parentWriter)` - Message conversion with buffer sharing
+
+**`DynamicMessageParser`** - Fallback parser using DynamicMessage (no buffer sharing)
 
 ### Performance Characteristics
 
@@ -105,88 +121,33 @@ The tests verify three usage patterns: compiled class, descriptor file, and bina
 
 ## Performance Benchmarking
 
-The project includes comprehensive benchmarking infrastructure to validate optimization impact:
-
-- **Compiled class path**: Uses generated `Parser` via Janino for direct `UnsafeRow` conversion
-- **Wire format path**: Uses `WireFormatParser` for direct binary parsing with binary descriptor sets  
-- **Dynamic message path**: Uses `DynamicMessage` parsing for maximum compatibility
-
-### Benchmarking Infrastructure
-
-The project integrates JMH (Java Microbenchmark Harness) for professional performance validation:
-- Fork isolation prevents JVM warmup contamination between benchmarks
-- Statistical analysis provides confidence intervals
-- Enables tracking optimization impact over time
+The project uses JMH (Java Microbenchmark Harness) for performance validation:
 
 ### Running Benchmarks
-
 ```bash
-# Run traditional ScalaTest benchmarks
-sbt "testOnly *ProtobufConversionBenchmark*"
-
-# Run JMH benchmarks (all)
+# Run JMH benchmarks
 sbt "core/Jmh/run"
 
-# Run specific JMH benchmarks
+# Run specific benchmarks
 sbt "core/Jmh/run .*WireFormatParser.*"
 
-# Quick JMH test with minimal iterations
-sbt "core/Jmh/run -wi 2 -i 3 -f 1"
+# Traditional ScalaTest benchmarks
+sbt "testOnly *ProtobufConversionBenchmark*"
 ```
 
-The benchmarking infrastructure provides a foundation for measuring and tracking performance improvements as the codebase evolves.
+## Implementation Notes
 
-## Code Generation Optimization
+### Code Generation
+- **ProtobufDataToCatalyst**: Generates optimized code paths when parsers are available
+- **Runtime class resolution**: Supports both shaded and non-shaded protobuf usage
+- **Parser priority**: Generated message parsers → Wire format parsers → DynamicMessage fallback
 
-The `ProtobufDataToCatalyst.doGenCode` method has been enhanced to generate two distinct code paths:
+### Buffer Sharing Pattern
+- **`parseInto(binary, writer)`**: Core parsing logic that writes to UnsafeRowWriter
+- **`parseWithSharedBuffer()`**: Manages writer lifecycle and buffer sharing for nested structures
+- **Memory efficiency**: Shared buffers reduce allocations in nested message conversions
 
-1. **When `parserOpt` is available**: Generates optimized code that directly calls:
-   - `parseCompiled(binary)` to get compiled protobuf message
-   - `parser.parse(message)` to parse to InternalRow
-
-2. **When `parserOpt` is `None`**: Falls back to calling `nullSafeEval()`
-
-### Class Name Handling
-
-The generated code uses **runtime-determined class names** instead of hardcoded ones:
-
-- **Primary path**: Uses `messageClassOpt.get.getName` to get the actual protobuf class name
-- **Fallback path**: Uses `classOf[PbMessage].getName` which automatically resolves based on runtime classpath:
-  - **Non-shaded**: `com.google.protobuf.Message`  
-  - **Shaded**: `org.sparkproject.spark_protobuf.protobuf.Message`
-- **Generated code**: Casts to specific message type for better JIT optimization potential
-
-**Example generated code**:
-```java
-// Before: com.google.protobuf.Message parsedMsg = (com.google.protobuf.Message) msg.get();
-// After:  com.example.MyMessage parsedMsg = (com.example.MyMessage) msg.get();
-```
-
-This approach eliminates hardcoded class assumptions and **automatically supports both shaded and non-shaded protobuf usage** based on the runtime classpath.
-
-**Note**: The fallback case (`None`) should theoretically never occur when `parserOpt` is `Some`, but is included for defensive programming.
-
-This provides better performance potential when Spark actually executes generated code (vs pre-computed paths).
-
-## BufferSharingParser Implementation Details
-
-The `BufferSharingParser` provides the foundation for parsers that support nested buffer sharing for memory-efficient nested message handling.
-
-### Method Contract
-
-- **`parseInto(binary, writer)`**: Abstract method that parses protobuf and writes to absolute ordinals (0, 1, 2)
-- **`parseWithSharedBuffer(binary, parentWriter)`**: Handles writer preparation and buffer sharing
-- **`acquireWriter(parentWriter)`**: Manages writer acquisition and reuse for child structures
-
-### Usage Pattern
-
-For nested message arrays, always use `parseWithSharedBuffer()` which manages buffer sharing properly. Direct `parseInto()` usage in nested contexts can overwrite parent row data.
-
-### Interface Benefits
-
-This design separates parsing logic (`parseInto`) from writer management (`parseWithSharedBuffer`), enabling both standalone conversion and efficient nested message handling with shared buffers. The `acquireWriter` method provides a clean abstraction for writer lifecycle management.
-
-## Wire Format Optimization Tips
+### Wire Format Optimization Tips
 
 **Raw method usage**: Replace wrapper methods with direct raw methods to avoid indirection:
 - `readInt32/readUInt32` → `readRawVarint32`
