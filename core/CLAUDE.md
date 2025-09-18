@@ -70,9 +70,9 @@ The project uses a three-tier parser interface hierarchy for optimal separation 
 
 ### Performance Characteristics
 
-- **Generated parsers (compiled class)**: ~1,844 ns/op (fastest)
-- **Wire format parsers**: ~4,399 ns/op (2.4x slower than generated)
-- **DynamicMessage parsers**: ~24,992 ns/op (13.6x slower than generated)
+- **Generated parsers (compiled class)**: ~1,649 ns/op (fastest)
+- **Wire format parsers**: ~2,442 ns/op (1.48x slower than generated)
+- **DynamicMessage parsers**: ~24,992 ns/op (15.1x slower than generated)
 
 ### Usage Examples
 

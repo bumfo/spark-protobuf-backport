@@ -27,9 +27,9 @@ The project features a three-tier parser interface hierarchy optimized for diffe
 3. **`MessageParser[T]`** - Interface for compiled protobuf message → InternalRow conversion
 
 ### Performance Characteristics
-- **Generated parsers (compiled class)**: ~1,844 ns/op (fastest)
-- **Wire format parsers**: ~4,399 ns/op (2.4x slower)
-- **DynamicMessage parsers**: ~24,992 ns/op (13.6x slower)
+- **Generated parsers (compiled class)**: ~1,649 ns/op (fastest)
+- **Wire format parsers**: ~2,442 ns/op (1.48x slower)
+- **DynamicMessage parsers**: ~24,992 ns/op (15.1x slower)
 
 See `core/CLAUDE.md` for detailed interface documentation and usage examples.
 
