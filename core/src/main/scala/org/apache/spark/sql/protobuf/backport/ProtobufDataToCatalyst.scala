@@ -17,6 +17,7 @@ package org.apache.spark.sql.protobuf.backport
 
 import com.google.protobuf.{Message => PbMessage}
 import fastproto.{Parser, ProtoToRowGenerator, StreamWireParser, WireFormatToRowGenerator}
+import org.apache.spark.internal.Logging
 import org.apache.spark.sql.catalyst.expressions.codegen.{CodeGenerator, CodegenContext, ExprCode}
 import org.apache.spark.sql.catalyst.expressions.{ExpectsInputTypes, Expression, UnaryExpression}
 import org.apache.spark.sql.catalyst.util.{FailFastMode, ParseMode, PermissiveMode}
@@ -58,7 +59,8 @@ private[backport] case class ProtobufDataToCatalyst(
     options: Map[String, String] = Map.empty,
     binaryDescriptorSet: Option[Array[Byte]] = None)
   extends UnaryExpression
-    with ExpectsInputTypes {
+    with ExpectsInputTypes
+    with Logging {
 
   override def inputTypes: Seq[AbstractDataType] = Seq(BinaryType)
 
@@ -129,8 +131,15 @@ private[backport] case class ProtobufDataToCatalyst(
   @transient private lazy val wireFormatParserOpt: Option[StreamWireParser] = binaryDescriptorSet match {
     // todo always prefer wireFormatParser
     case Some(_) =>
-      // Generate optimized parser using code generation
-      Some(WireFormatToRowGenerator.generateParser(messageDescriptor, dataType))
+      try {
+        // Generate optimized parser using code generation
+        Some(WireFormatToRowGenerator.generateParser(messageDescriptor, dataType))
+      } catch {
+        case NonFatal(e) if parseMode == PermissiveMode =>
+          logWarning(s"Failed to generate wire format parser for message $messageName, " +
+            s"falling back to DynamicMessage parsing: ${e.getMessage}")
+          None
+      }
     case None => None
   }
 
