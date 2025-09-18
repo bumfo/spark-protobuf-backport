@@ -193,7 +193,7 @@ class WireFormatConverter(
         case INT32 =>
           val list = mapping.accumulator.asInstanceOf[IntList]
           if (wireType == WireFormat.WIRETYPE_LENGTH_DELIMITED) {
-            parsePackedInts(input, list)
+            parsePackedVarint32s(input, list)
           } else {
             list.add(input.readInt32())
           }
@@ -201,7 +201,7 @@ class WireFormatConverter(
         case SINT32 =>
           val list = mapping.accumulator.asInstanceOf[IntList]
           if (wireType == WireFormat.WIRETYPE_LENGTH_DELIMITED) {
-            parsePackedInts(input, list)
+            parsePackedSInt32s(input, list)
           } else {
             list.add(input.readSInt32())
           }
@@ -209,7 +209,7 @@ class WireFormatConverter(
         case UINT32 =>
           val list = mapping.accumulator.asInstanceOf[IntList]
           if (wireType == WireFormat.WIRETYPE_LENGTH_DELIMITED) {
-            parsePackedInts(input, list)
+            parsePackedVarint32s(input, list)
           } else {
             list.add(input.readUInt32())
           }
@@ -217,7 +217,7 @@ class WireFormatConverter(
         case ENUM =>
           val list = mapping.accumulator.asInstanceOf[IntList]
           if (wireType == WireFormat.WIRETYPE_LENGTH_DELIMITED) {
-            parsePackedInts(input, list)
+            parsePackedVarint32s(input, list)
           } else {
             list.add(input.readEnum())
           }
@@ -226,7 +226,7 @@ class WireFormatConverter(
         case INT64 =>
           val list = mapping.accumulator.asInstanceOf[LongList]
           if (wireType == WireFormat.WIRETYPE_LENGTH_DELIMITED) {
-            parsePackedLongs(input, list)
+            parsePackedVarint64s(input, list)
           } else {
             list.add(input.readInt64())
           }
@@ -234,7 +234,7 @@ class WireFormatConverter(
         case SINT64 =>
           val list = mapping.accumulator.asInstanceOf[LongList]
           if (wireType == WireFormat.WIRETYPE_LENGTH_DELIMITED) {
-            parsePackedLongs(input, list)
+            parsePackedSInt64s(input, list)
           } else {
             list.add(input.readSInt64())
           }
@@ -242,7 +242,7 @@ class WireFormatConverter(
         case UINT64 =>
           val list = mapping.accumulator.asInstanceOf[LongList]
           if (wireType == WireFormat.WIRETYPE_LENGTH_DELIMITED) {
-            parsePackedLongs(input, list)
+            parsePackedVarint64s(input, list)
           } else {
             list.add(input.readUInt64())
           }
@@ -252,7 +252,7 @@ class WireFormatConverter(
           val list = mapping.accumulator.asInstanceOf[IntList]
           if (wireType == WireFormat.WIRETYPE_LENGTH_DELIMITED) {
             val packedLength = input.readRawVarint32()
-            list.array = parsePackedInts(input, list.array, list.count, packedLength)
+            list.array = parsePackedFixed32s(input, list.array, list.count, packedLength)
             list.count += packedLength / 4
           } else {
             list.add(input.readFixed32())
@@ -262,7 +262,7 @@ class WireFormatConverter(
           val list = mapping.accumulator.asInstanceOf[IntList]
           if (wireType == WireFormat.WIRETYPE_LENGTH_DELIMITED) {
             val packedLength = input.readRawVarint32()
-            list.array = parsePackedInts(input, list.array, list.count, packedLength)
+            list.array = parsePackedFixed32s(input, list.array, list.count, packedLength)
             list.count += packedLength / 4
           } else {
             list.add(input.readSFixed32())
@@ -273,7 +273,7 @@ class WireFormatConverter(
           val list = mapping.accumulator.asInstanceOf[LongList]
           if (wireType == WireFormat.WIRETYPE_LENGTH_DELIMITED) {
             val packedLength = input.readRawVarint32()
-            list.array = parsePackedLongs(input, list.array, list.count, packedLength)
+            list.array = parsePackedFixed64s(input, list.array, list.count, packedLength)
             list.count += packedLength / 8
           } else {
             list.add(input.readFixed64())
@@ -283,7 +283,7 @@ class WireFormatConverter(
           val list = mapping.accumulator.asInstanceOf[LongList]
           if (wireType == WireFormat.WIRETYPE_LENGTH_DELIMITED) {
             val packedLength = input.readRawVarint32()
-            list.array = parsePackedLongs(input, list.array, list.count, packedLength)
+            list.array = parsePackedFixed64s(input, list.array, list.count, packedLength)
             list.count += packedLength / 8
           } else {
             list.add(input.readSFixed64())
