@@ -21,7 +21,7 @@ abstract class AbstractMessageParser[T](schema: StructType)
    * @param parentWriter the parent UnsafeWriter to share BufferHolder with, can be null
    * @return an [[InternalRow]] containing the extracted field values
    */
-  protected def parseWithSharedBuffer(message: T, parentWriter: UnsafeWriter): InternalRow = {
+  def parseWithSharedBuffer(message: T, parentWriter: UnsafeWriter): InternalRow = {
     val writer = acquireWriter(parentWriter)
     parseInto(message, writer)
     if (parentWriter == null) writer.getRow else null
