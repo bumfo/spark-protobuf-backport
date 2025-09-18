@@ -3,7 +3,6 @@ package fastproto
 import com.google.protobuf.Descriptors.{Descriptor, FieldDescriptor}
 import com.google.protobuf.{CodedInputStream, WireFormat}
 import fastproto.CodedInputStreamConverter._
-import java.io.IOException
 import org.apache.spark.sql.catalyst.expressions.codegen.UnsafeRowWriter
 import org.apache.spark.sql.types.{ArrayType, StructType}
 import org.apache.spark.unsafe.types.UTF8String
@@ -43,7 +42,7 @@ class WireFormatConverter(
     resetAccumulators()
 
     // Parse the wire format
-    while (!input.isAtEnd()) {
+    while (!input.isAtEnd) {
       val tag = input.readTag()
       val fieldNumber = WireFormat.getTagFieldNumber(tag)
       val wireType = WireFormat.getTagWireType(tag)

@@ -340,7 +340,7 @@ object WireFormatToRowGenerator {
 
     // Instantiate converter
     val constructor = converterClass.getConstructor(classOf[StructType])
-    constructor.newInstance(schema).asInstanceOf[CodedInputStreamConverter]
+    constructor.newInstance(schema)
   }
 
   /**
@@ -577,7 +577,6 @@ object WireFormatToRowGenerator {
    * Generate switch cases for a specific field's tags.
    */
   private def generateFieldTagCases(code: StringBuilder, field: FieldDescriptor, schema: StructType): Unit = {
-    val fieldNum = field.getNumber
     val ordinal = schema.fieldIndex(field.getName)
 
     if (field.isRepeated) {
