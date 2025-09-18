@@ -43,30 +43,42 @@ This file provides guidance to Claude Code (claude.ai/code) when working with th
 
 ## Parser Architecture
 
-The project uses a three-tier parser interface hierarchy for optimal separation of concerns:
+The project uses a layered parser interface hierarchy optimized for different protobuf conversion scenarios:
 
-### 1. Base Interface: `Parser`
-- **Purpose**: Simple trait for basic protobuf-to-row conversion
-- **Method**: `parse(binary: Array[Byte]): InternalRow`
-- **Usage**: Minimal interface implemented by all parsers
-- **Example**: `DynamicMessageParser` which doesn't support buffer sharing
+### Interface Hierarchy
 
-### 2. Buffer Sharing Implementation: `BufferSharingParser`
-- **Purpose**: Base implementation class with buffer sharing capabilities for nested conversions
-- **Key Methods**:
-  - `parseInto(binary, writer)` - Core parsing logic (abstract)
-  - `parseWithSharedBuffer(binary, parentWriter)` - Enables nested buffer sharing
-  - `acquireWriter(parentWriter)` - Manages writer acquisition for child structures
-- **Usage**: Extended by wire format parsers and generated code
-- **Examples**: `WireFormatParser`, generated wire format parsers
+```
+Parser (trait) - Base interface for protobuf → InternalRow
+├── BufferSharingParser (abstract - buffer sharing impl)
+│   ├── StreamWireParser (abstract - CodedInputStream impl)
+│   │   ├── WireFormatParser
+│   │   └── (generated wire parsers)
+│   └── AbstractMessageParser[T] (message parsing base)
+│       └── (generated message parsers)
+└── MessageParser[T] (trait - compiled message interface)
+    ├── AbstractMessageParser[T] (also)
+    └── DynamicMessageParser
+```
 
-### 3. Message-Based Interface: `MessageParser[T]`
-- **Purpose**: Interface for compiled protobuf message objects (not binary data)
-- **Key Methods**:
-  - `parse(message: T): InternalRow` - Basic message conversion
-  - `parseWithSharedBuffer(message: T, parentWriter)` - Message conversion with buffer sharing
-- **Usage**: Implemented by generated parsers for compiled protobuf classes
-- **Examples**: Generated parsers from `ProtoToRowGenerator`
+### Core Interfaces
+
+**`Parser`** - Base trait with `parse(binary: Array[Byte]): InternalRow` for all parsers
+
+**`MessageParser[T]`** - Interface for compiled message objects:
+- `parse(message: T): InternalRow` - Direct message conversion
+
+### Implementation Classes
+
+**`BufferSharingParser`** - Abstract base for memory-efficient nested conversions:
+- `parseInto(binary, writer)` - Core parsing logic (abstract)
+- `parseWithSharedBuffer()` - Enables buffer sharing for nested structures
+
+**`StreamWireParser`** - Abstract base for CodedInputStream-based parsing (extends BufferSharingParser)
+**`WireFormatParser`** - Direct wire format parsing for binary descriptor sets
+**`AbstractMessageParser[T]`** - Abstract base for generated message parsers with buffer sharing support:
+- `parseWithSharedBuffer(message, parentWriter)` - Message conversion with buffer sharing
+
+**`DynamicMessageParser`** - Fallback parser using DynamicMessage (no buffer sharing)
 
 ### Performance Characteristics
 
