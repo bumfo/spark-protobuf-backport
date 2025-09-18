@@ -1,11 +1,11 @@
 package fastproto
 
-import com.google.protobuf.{Type, CodedOutputStream, WireFormat}
+import com.google.protobuf.{CodedOutputStream, Type, WireFormat}
 import org.apache.spark.sql.types._
 import org.scalatest.flatspec.AnyFlatSpec
 import org.scalatest.matchers.should.Matchers
+
 import java.io.ByteArrayOutputStream
-import scala.collection.JavaConverters._
 
 class WireFormatGeneratorSpec extends AnyFlatSpec with Matchers {
 
@@ -124,7 +124,7 @@ class WireFormatGeneratorSpec extends AnyFlatSpec with Matchers {
     baos.toByteArray
   }
 
-  "WireFormatToRowGenerator" should "generate converter for simple message" in {
+  "WireFormatToRowGenerator" should "generate parser for simple message" in {
     val typeMsg = Type.newBuilder().build()
     val descriptor = typeMsg.getDescriptorForType
 
@@ -136,9 +136,9 @@ class WireFormatGeneratorSpec extends AnyFlatSpec with Matchers {
       StructField("syntax", StringType, nullable = true)
     ))
 
-    val converter = WireFormatToRowGenerator.generateConverter(descriptor, schema)
-    converter should not be null
-    converter.schema shouldEqual schema
+    val parser = WireFormatToRowGenerator.generateParser(descriptor, schema)
+    parser should not be null
+    parser.schema shouldEqual schema
   }
 
   it should "parse simple protobuf message correctly" in {
@@ -155,8 +155,8 @@ class WireFormatGeneratorSpec extends AnyFlatSpec with Matchers {
       StructField("syntax", StringType, nullable = true) // ENUM maps to StringType
     ))
 
-    val converter = WireFormatToRowGenerator.generateConverter(descriptor, schema)
-    val row = converter.convert(binary)
+    val parser = WireFormatToRowGenerator.generateParser(descriptor, schema)
+    val row = parser.parse(binary)
 
     row.numFields should equal(3)
     row.getString(0) should equal("test_message")
@@ -176,16 +176,6 @@ class WireFormatGeneratorSpec extends AnyFlatSpec with Matchers {
   it should "handle primitive types correctly" in {
     val binary = createPrimitivesBinary()
 
-    // Create a simple descriptor for primitive types
-    val schema = StructType(Seq(
-      StructField("int32_field", IntegerType, nullable = true),
-      StructField("int64_field", LongType, nullable = true),
-      StructField("float_field", FloatType, nullable = true),
-      StructField("double_field", DoubleType, nullable = true),
-      StructField("bool_field", BooleanType, nullable = true),
-      StructField("bytes_field", BinaryType, nullable = true)
-    ))
-
     // We need to create a custom descriptor for this test
     // For now, let's create a minimal test with Type descriptor
     val typeMsg = Type.newBuilder().build()
@@ -195,11 +185,11 @@ class WireFormatGeneratorSpec extends AnyFlatSpec with Matchers {
       StructField("name", StringType, nullable = true)
     ))
 
-    val converter = WireFormatToRowGenerator.generateConverter(descriptor, simpleSchema)
+    val parser = WireFormatToRowGenerator.generateParser(descriptor, simpleSchema)
 
     // This should not crash even with primitive data
     noException should be thrownBy {
-      converter.convert(binary)
+      parser.parse(binary)
     }
   }
 
@@ -212,11 +202,11 @@ class WireFormatGeneratorSpec extends AnyFlatSpec with Matchers {
       StructField("name", StringType, nullable = true)
     ))
 
-    val converter = WireFormatToRowGenerator.generateConverter(descriptor, schema)
+    val parser = WireFormatToRowGenerator.generateParser(descriptor, schema)
 
     // Should parse without error even if schema doesn't match exactly
     noException should be thrownBy {
-      val row = converter.convert(binary)
+      val row = parser.parse(binary)
       row.numFields should equal(1)
     }
   }
@@ -239,17 +229,17 @@ class WireFormatGeneratorSpec extends AnyFlatSpec with Matchers {
       StructField("syntax", StringType, nullable = true)
     ))
 
-    val converter = WireFormatToRowGenerator.generateConverter(descriptor, schema)
+    val parser = WireFormatToRowGenerator.generateParser(descriptor, schema)
 
     // Should not crash due to wire type mismatch
     noException should be thrownBy {
-      val row = converter.convert(binaryWithMismatch)
+      val row = parser.parse(binaryWithMismatch)
       row.numFields should equal(1)
       // Field should be null due to wire type mismatch
     }
   }
 
-  it should "cache generated converters" in {
+  it should "cache generated parsers" in {
     val typeMsg = Type.newBuilder().build()
     val descriptor = typeMsg.getDescriptorForType
 
@@ -257,11 +247,11 @@ class WireFormatGeneratorSpec extends AnyFlatSpec with Matchers {
       StructField("name", StringType, nullable = true)
     ))
 
-    val converter1 = WireFormatToRowGenerator.generateConverter(descriptor, schema)
-    val converter2 = WireFormatToRowGenerator.generateConverter(descriptor, schema)
+    val parser1 = WireFormatToRowGenerator.generateParser(descriptor, schema)
+    val parser2 = WireFormatToRowGenerator.generateParser(descriptor, schema)
 
     // Should return the same cached instance
-    converter1 should be theSameInstanceAs converter2
+    parser1 should be theSameInstanceAs parser2
   }
 
   it should "handle empty messages" in {
@@ -277,8 +267,8 @@ class WireFormatGeneratorSpec extends AnyFlatSpec with Matchers {
       StructField("name", StringType, nullable = true)
     ))
 
-    val converter = WireFormatToRowGenerator.generateConverter(descriptor, schema)
-    val row = converter.convert(emptyBinary)
+    val parser = WireFormatToRowGenerator.generateParser(descriptor, schema)
+    val row = parser.parse(emptyBinary)
 
     row.numFields should equal(1)
     if (row.isNullAt(0)) {
@@ -313,8 +303,8 @@ class WireFormatGeneratorSpec extends AnyFlatSpec with Matchers {
       StructField("name", StringType, nullable = true)
     ))
 
-    val converter = WireFormatToRowGenerator.generateConverter(descriptor, schema)
-    val row = converter.convert(binaryWithUnknownField)
+    val parser = WireFormatToRowGenerator.generateParser(descriptor, schema)
+    val row = parser.parse(binaryWithUnknownField)
 
     row.numFields should equal(1)
     row.getString(0) should equal("known_value")
@@ -366,17 +356,17 @@ class WireFormatGeneratorSpec extends AnyFlatSpec with Matchers {
       ))), nullable = true)
     ))
 
-    val converter = WireFormatToRowGenerator.generateConverter(descriptor, schema)
+    val parser = WireFormatToRowGenerator.generateParser(descriptor, schema)
 
     // Should handle nested structure gracefully
     noException should be thrownBy {
-      val row = converter.convert(nestedBinary)
+      val row = parser.parse(nestedBinary)
       row.numFields should equal(2)
       row.getString(0) should equal("root")
     }
   }
 
-  it should "be thread-safe with concurrent converter generation and conversion" in {
+  it should "be thread-safe with concurrent parser generation and conversion" in {
     import java.util.concurrent.{Executors, TimeUnit}
     import scala.concurrent.duration._
     import scala.concurrent.{Await, ExecutionContext, Future}
@@ -393,18 +383,18 @@ class WireFormatGeneratorSpec extends AnyFlatSpec with Matchers {
     ))
 
     try {
-      // Create multiple concurrent tasks that generate converters and convert data
-      val tasks = (1 to 20).map { i =>
+      // Create multiple concurrent tasks that generate parsers and convert data
+      val tasks = (1 to 20).map { _ =>
         Future {
-          // Each thread should get its own converter instance but share compiled classes
-          val converter1 = WireFormatToRowGenerator.generateConverter(Type.getDescriptor, schema)
-          val converter2 = WireFormatToRowGenerator.generateConverter(Type.getDescriptor, schema)
+          // Each thread should get its own parser instance but share compiled classes
+          val parser1 = WireFormatToRowGenerator.generateParser(Type.getDescriptor, schema)
+          val parser2 = WireFormatToRowGenerator.generateParser(Type.getDescriptor, schema)
 
           // Within same thread, should get same instance (cached)
-          converter1 should be theSameInstanceAs converter2
+          parser1 should be theSameInstanceAs parser2
 
           val results = (1 to 5).map { _ =>
-            val row = converter1.convert(testBinary)
+            val row = parser1.parse(testBinary)
             (row.getUTF8String(0).toString, row.getArray(1).numElements())
           }
           results
@@ -429,8 +419,9 @@ class WireFormatGeneratorSpec extends AnyFlatSpec with Matchers {
   }
 
   it should "handle FIXED32 packed fields without compilation errors" in {
-    import java.io.ByteArrayOutputStream
     import com.google.protobuf.{CodedOutputStream, WireFormat}
+
+    import java.io.ByteArrayOutputStream
 
     // Create a schema with FIXED32 repeated field
     val schema = StructType(Seq(
@@ -445,26 +436,26 @@ class WireFormatGeneratorSpec extends AnyFlatSpec with Matchers {
     // Tag for field 1 with LENGTH_DELIMITED wire type = (1 << 3) | 2 = 10
     output.writeTag(1, WireFormat.WIRETYPE_LENGTH_DELIMITED)
     val fixed32Values = Array(100, 200, 300, 400)
-    output.writeRawVarint32(fixed32Values.length * 4) // 4 bytes per FIXED32
+    output.writeUInt32NoTag(fixed32Values.length * 4) // 4 bytes per FIXED32
     fixed32Values.foreach(output.writeFixed32NoTag)
 
     output.flush()
-    val testBinary = baos.toByteArray
 
     // Create a simple descriptor that represents FIXED32 repeated field
     val typeDescriptor = Type.getDescriptor
 
     // This should not throw compilation errors
     noException should be thrownBy {
-      val converter = WireFormatToRowGenerator.generateConverter(typeDescriptor, schema)
-      // The converter generation should succeed without compilation errors
-      converter should not be null
+      val parser = WireFormatToRowGenerator.generateParser(typeDescriptor, schema)
+      // The parser generation should succeed without compilation errors
+      parser should not be null
     }
   }
 
   it should "handle SFIXED32 and SFIXED64 packed fields without compilation errors" in {
-    import java.io.ByteArrayOutputStream
     import com.google.protobuf.{CodedOutputStream, WireFormat}
+
+    import java.io.ByteArrayOutputStream
 
     // Create schema with repeated SFIXED32 and SFIXED64 fields
     val schema = StructType(Seq(
@@ -479,26 +470,25 @@ class WireFormatGeneratorSpec extends AnyFlatSpec with Matchers {
     // Field 1: repeated sfixed32 values (packed)
     output.writeTag(1, WireFormat.WIRETYPE_LENGTH_DELIMITED)
     val sfixed32Values = Array(-100, 200, -300, 400)
-    output.writeRawVarint32(sfixed32Values.length * 4) // 4 bytes per SFIXED32
+    output.writeUInt32NoTag(sfixed32Values.length * 4) // 4 bytes per SFIXED32
     sfixed32Values.foreach(output.writeSFixed32NoTag)
 
     // Field 2: repeated sfixed64 values (packed)
     output.writeTag(2, WireFormat.WIRETYPE_LENGTH_DELIMITED)
     val sfixed64Values = Array(-1000L, 2000L, -3000L, 4000L)
-    output.writeRawVarint32(sfixed64Values.length * 8) // 8 bytes per SFIXED64
+    output.writeUInt32NoTag(sfixed64Values.length * 8) // 8 bytes per SFIXED64
     sfixed64Values.foreach(output.writeSFixed64NoTag)
 
     output.flush()
-    val testBinary = baos.toByteArray
 
     // Create a simple descriptor that represents SFIXED32/SFIXED64 repeated fields
     val typeDescriptor = Type.getDescriptor
 
     // This should not throw compilation errors and should use array path, not IntList/LongList
     noException should be thrownBy {
-      val converter = WireFormatToRowGenerator.generateConverter(typeDescriptor, schema)
-      // The converter generation should succeed without compilation errors
-      converter should not be null
+      val parser = WireFormatToRowGenerator.generateParser(typeDescriptor, schema)
+      // The parser generation should succeed without compilation errors
+      parser should not be null
     }
   }
 }

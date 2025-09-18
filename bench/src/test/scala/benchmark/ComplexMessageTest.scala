@@ -10,7 +10,7 @@ import org.scalatest.matchers.should.Matchers
 /**
  * Unit tests for ComplexMessage wireformat code generation path.
  *
- * Tests the optimized wireformat converter generation for complex messages
+ * Tests the optimized wireformat parser generation for complex messages
  * with nested structures and recursive relationships (A ↔ B).
  */
 class ComplexMessageTest extends AnyFunSuite with Matchers {
@@ -31,9 +31,9 @@ class ComplexMessageTest extends AnyFunSuite with Matchers {
     messageBField.get.dataType shouldBe a[StructType]
   }
 
-  test("Generated WireFormat converter should handle ComplexMessage") {
-    val converter = WireFormatToRowGenerator.generateConverter(descriptor, sparkSchema)
-    val row = converter.convert(binaryData)
+  test("Generated WireFormat parser should handle ComplexMessage") {
+    val parser = WireFormatToRowGenerator.generateParser(descriptor, sparkSchema)
+    val row = parser.parse(binaryData)
 
     row should not be null
 
@@ -62,9 +62,9 @@ class ComplexMessageTest extends AnyFunSuite with Matchers {
     tagsArray.getUTF8String(2).toString shouldBe "protobuf"
   }
 
-  test("Generated WireFormat converter should handle nested MessageB") {
-    val converter = WireFormatToRowGenerator.generateConverter(descriptor, sparkSchema)
-    val row = converter.convert(binaryData)
+  test("Generated WireFormat parser should handle nested MessageB") {
+    val parser = WireFormatToRowGenerator.generateParser(descriptor, sparkSchema)
+    val row = parser.parse(binaryData)
 
     // Find the message_b field index
     val messageBFieldIndex = sparkSchema.fieldIndex("message_b")
@@ -83,9 +83,9 @@ class ComplexMessageTest extends AnyFunSuite with Matchers {
     new String(payloadField, "UTF-8") shouldBe "deterministic_payload_b"
   }
 
-  test("Generated WireFormat converter should handle nested NestedData") {
-    val converter = WireFormatToRowGenerator.generateConverter(descriptor, sparkSchema)
-    val row = converter.convert(binaryData)
+  test("Generated WireFormat parser should handle nested NestedData") {
+    val parser = WireFormatToRowGenerator.generateParser(descriptor, sparkSchema)
+    val row = parser.parse(binaryData)
 
     // Navigate to message_b -> nested_data
     val messageBFieldIndex = sparkSchema.fieldIndex("message_b")
@@ -111,12 +111,12 @@ class ComplexMessageTest extends AnyFunSuite with Matchers {
     keysArray.getUTF8String(1).toString shouldBe "key2"
   }
 
-  ignore("Compiled message converter should produce same results as WireFormat") {
-    val wireFormatConverter = WireFormatToRowGenerator.generateConverter(descriptor, sparkSchema)
-    val compiledConverter = ProtoToRowGenerator.generateConverter(descriptor, classOf[ComplexBenchmarkProtos.ComplexMessageA])
+  ignore("Compiled message parser should produce same results as WireFormat") {
+    val WireFormatParser = WireFormatToRowGenerator.generateParser(descriptor, sparkSchema)
+    val compiledParser = ProtoToRowGenerator.generateParser(descriptor, classOf[ComplexBenchmarkProtos.ComplexMessageA])
 
-    val wireFormatRow = wireFormatConverter.convert(binaryData)
-    val compiledRow = compiledConverter.convert(binaryData)
+    val wireFormatRow = WireFormatParser.parse(binaryData)
+    val compiledRow = compiledParser.parse(binaryData)
 
     // Both should produce identical results for scalar fields
     wireFormatRow.numFields shouldBe compiledRow.numFields
@@ -131,9 +131,9 @@ class ComplexMessageTest extends AnyFunSuite with Matchers {
     wireFormatRow.getBinary(4) shouldBe compiledRow.getBinary(4)  // data
   }
 
-  test("WireFormat converter should handle repeated nested messages") {
-    val converter = WireFormatToRowGenerator.generateConverter(descriptor, sparkSchema)
-    val row = converter.convert(binaryData)
+  test("WireFormat parser should handle repeated nested messages") {
+    val parser = WireFormatToRowGenerator.generateParser(descriptor, sparkSchema)
+    val row = parser.parse(binaryData)
 
     // Find the nested_messages field (repeated MessageB)
     val nestedMessagesFieldIndex = sparkSchema.fieldIndex("nested_messages")
@@ -150,13 +150,13 @@ class ComplexMessageTest extends AnyFunSuite with Matchers {
     nestedMessageRow.getUTF8String(1).toString shouldBe "test_message_b"  // label
   }
 
-  test("WireFormat converter should be reusable for complex messages") {
-    val converter = WireFormatToRowGenerator.generateConverter(descriptor, sparkSchema)
+  test("WireFormat parser should be reusable for complex messages") {
+    val parser = WireFormatToRowGenerator.generateParser(descriptor, sparkSchema)
 
     // Convert the same data multiple times
-    val row1 = converter.convert(binaryData)
-    val row2 = converter.convert(binaryData)
-    val row3 = converter.convert(binaryData)
+    val row1 = parser.parse(binaryData)
+    val row2 = parser.parse(binaryData)
+    val row3 = parser.parse(binaryData)
 
     // All results should be identical
     row1.numFields shouldBe row2.numFields
@@ -170,7 +170,7 @@ class ComplexMessageTest extends AnyFunSuite with Matchers {
     row2.getUTF8String(1).toString shouldBe row3.getUTF8String(1).toString
   }
 
-  test("WireFormat converter should handle deterministic complex binary data") {
+  test("WireFormat parser should handle deterministic complex binary data") {
     // Generate the same message multiple times
     val message1 = TestDataGenerator.createComplexMessage()
     val message2 = TestDataGenerator.createComplexMessage()
@@ -178,9 +178,9 @@ class ComplexMessageTest extends AnyFunSuite with Matchers {
     // Binary data should be identical
     message1.toByteArray shouldBe message2.toByteArray
 
-    val converter = WireFormatToRowGenerator.generateConverter(descriptor, sparkSchema)
-    val row1 = converter.convert(message1.toByteArray)
-    val row2 = converter.convert(message2.toByteArray)
+    val parser = WireFormatToRowGenerator.generateParser(descriptor, sparkSchema)
+    val row1 = parser.parse(message1.toByteArray)
+    val row2 = parser.parse(message2.toByteArray)
 
     // Results should be identical
     row1.getInt(0) shouldBe row2.getInt(0)  // id

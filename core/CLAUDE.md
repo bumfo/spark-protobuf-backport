@@ -22,74 +22,74 @@ This file provides guidance to Claude Code (claude.ai/code) when working with th
 - `ProtobufDeserializer` - Converts `DynamicMessage` to Catalyst rows
 
 **Fast Proto Integration** (`src/main/scala/fastproto/`):
-- `ProtoToRowGenerator` - Generates optimized `RowConverter` implementations using Janino
-- `RowConverter` - Base interface for simple protobuf binary → `InternalRow` conversion
-- `BufferSharingRowConverter` - Base implementation with buffer sharing for nested conversions
-- `MessageBasedConverter` - Interface for compiled protobuf message → `InternalRow` conversion
-- `WireFormatConverter` - Direct wire format parsing to UnsafeRow without intermediate message objects
-- `DynamicMessageConverter` - Fallback converter using traditional DynamicMessage approach
+- `ProtoToRowGenerator` - Generates optimized `Parser` implementations using Janino
+- `Parser` - Base interface for simple protobuf binary → `InternalRow` conversion
+- `BufferSharingParser` - Base implementation with buffer sharing for nested conversions
+- `MessageParser` - Interface for compiled protobuf message → `InternalRow` conversion
+- `WireFormatParser` - Direct wire format parsing to UnsafeRow without intermediate message objects
+- `DynamicMessageParser` - Fallback parser using traditional DynamicMessage approach
 
 **Spark Compatibility Shims** (`shims/` subdirectory):
 - Error handling and query compilation compatibility layer for Spark 3.2.1
 
 ### Key Design Patterns
 
-1. **Dual execution paths**: Compiled classes use generated converters; descriptor-only uses `DynamicMessage`
+1. **Dual execution paths**: Compiled classes use generated parsers; descriptor-only uses `DynamicMessage`
 2. **Binary descriptor set support**: Eliminates executor file access requirements
 3. **Schema inference caching**: Lazy computation of Spark schemas from protobuf descriptors
 4. **Parse mode handling**: Supports both permissive (null on error) and fail-fast modes
-5. **Enhanced code generation**: `doGenCode` method generates optimized code when `rowConverterOpt` is available
+5. **Enhanced code generation**: `doGenCode` method generates optimized code when `parserOpt` is available
 6. **Wire format optimization**: Direct parsing for binary descriptor sets when possible
 
-## Converter Architecture
+## Parser Architecture
 
-The project uses a three-tier converter interface hierarchy for optimal separation of concerns:
+The project uses a three-tier parser interface hierarchy for optimal separation of concerns:
 
-### 1. Base Interface: `RowConverter`
+### 1. Base Interface: `Parser`
 - **Purpose**: Simple trait for basic protobuf-to-row conversion
-- **Method**: `convert(binary: Array[Byte]): InternalRow`
-- **Usage**: Minimal interface implemented by all converters
-- **Example**: `DynamicMessageConverter` which doesn't support buffer sharing
+- **Method**: `parse(binary: Array[Byte]): InternalRow`
+- **Usage**: Minimal interface implemented by all parsers
+- **Example**: `DynamicMessageParser` which doesn't support buffer sharing
 
-### 2. Buffer Sharing Implementation: `BufferSharingRowConverter`
+### 2. Buffer Sharing Implementation: `BufferSharingParser`
 - **Purpose**: Base implementation class with buffer sharing capabilities for nested conversions
 - **Key Methods**:
-  - `parseAndWriteFields(binary, writer)` - Core parsing logic (abstract)
-  - `convertWithSharedBuffer(binary, parentWriter)` - Enables nested buffer sharing
+  - `parseInto(binary, writer)` - Core parsing logic (abstract)
+  - `parseWithSharedBuffer(binary, parentWriter)` - Enables nested buffer sharing
   - `acquireWriter(parentWriter)` - Manages writer acquisition for child structures
-- **Usage**: Extended by wire format converters and generated code
-- **Examples**: `WireFormatConverter`, generated wire format converters
+- **Usage**: Extended by wire format parsers and generated code
+- **Examples**: `WireFormatParser`, generated wire format parsers
 
-### 3. Message-Based Interface: `MessageBasedConverter[T]`
+### 3. Message-Based Interface: `MessageParser[T]`
 - **Purpose**: Interface for compiled protobuf message objects (not binary data)
 - **Key Methods**:
-  - `convert(message: T): InternalRow` - Basic message conversion
-  - `convertWithSharedBuffer(message: T, parentWriter)` - Message conversion with buffer sharing
-- **Usage**: Implemented by generated converters for compiled protobuf classes
-- **Examples**: Generated converters from `ProtoToRowGenerator`
+  - `parse(message: T): InternalRow` - Basic message conversion
+  - `parseWithSharedBuffer(message: T, parentWriter)` - Message conversion with buffer sharing
+- **Usage**: Implemented by generated parsers for compiled protobuf classes
+- **Examples**: Generated parsers from `ProtoToRowGenerator`
 
 ### Performance Characteristics
 
-- **Generated converters (compiled class)**: ~1,844 ns/op (fastest)
-- **Wire format converters**: ~4,399 ns/op (2.4x slower than generated)
-- **DynamicMessage converters**: ~24,992 ns/op (13.6x slower than generated)
+- **Generated parsers (compiled class)**: ~1,649 ns/op (fastest)
+- **Wire format parsers**: ~2,442 ns/op (1.48x slower than generated)
+- **DynamicMessage parsers**: ~24,992 ns/op (15.1x slower than generated)
 
 ### Usage Examples
 
 ```scala
-// Simple conversion (DynamicMessageConverter)
-val converter = new DynamicMessageConverter(descriptor, schema)
-val row = converter.convert(binaryData)  // No buffer sharing support
+// Simple conversion (DynamicMessageParser)
+val parser = new DynamicMessageParser(descriptor, schema)
+val row = parser.parse(binaryData)  // No buffer sharing support
 
-// Wire format conversion (BufferSharingRowConverter)
-val converter = new WireFormatConverter(descriptor, schema)
-val row = converter.convert(binaryData)  // Standalone conversion
-converter.convertWithSharedBuffer(binaryData, parentWriter)  // Nested with buffer sharing
+// Wire format conversion (BufferSharingParser)
+val parser = new WireFormatParser(descriptor, schema)
+val row = parser.parse(binaryData)  // Standalone conversion
+parser.parseWithSharedBuffer(binaryData, parentWriter)  // Nested with buffer sharing
 
 // Message-based conversion (Generated code)
-val converter = ProtoToRowGenerator.generateConverter(descriptor, messageClass)
-val row = converter.convert(message)  // Convert compiled message
-converter.convertWithSharedBuffer(message, parentWriter)  // Nested message conversion
+val parser = ProtoToRowGenerator.generateParser(descriptor, messageClass)
+val row = parser.parse(message)  // Parse compiled message
+parser.parseWithSharedBuffer(message, parentWriter)  // Nested message conversion
 ```
 
 ## Development Notes
@@ -107,8 +107,8 @@ The tests verify three usage patterns: compiled class, descriptor file, and bina
 
 The project includes comprehensive benchmarking infrastructure to validate optimization impact:
 
-- **Compiled class path**: Uses generated `RowConverter` via Janino for direct `UnsafeRow` conversion
-- **Wire format path**: Uses `WireFormatConverter` for direct binary parsing with binary descriptor sets  
+- **Compiled class path**: Uses generated `Parser` via Janino for direct `UnsafeRow` conversion
+- **Wire format path**: Uses `WireFormatParser` for direct binary parsing with binary descriptor sets  
 - **Dynamic message path**: Uses `DynamicMessage` parsing for maximum compatibility
 
 ### Benchmarking Infrastructure
@@ -128,7 +128,7 @@ sbt "testOnly *ProtobufConversionBenchmark*"
 sbt "core/Jmh/run"
 
 # Run specific JMH benchmarks
-sbt "core/Jmh/run .*WireFormatConverter.*"
+sbt "core/Jmh/run .*WireFormatParser.*"
 
 # Quick JMH test with minimal iterations
 sbt "core/Jmh/run -wi 2 -i 3 -f 1"
@@ -140,11 +140,11 @@ The benchmarking infrastructure provides a foundation for measuring and tracking
 
 The `ProtobufDataToCatalyst.doGenCode` method has been enhanced to generate two distinct code paths:
 
-1. **When `rowConverterOpt` is available**: Generates optimized code that directly calls:
+1. **When `parserOpt` is available**: Generates optimized code that directly calls:
    - `parseCompiled(binary)` to get compiled protobuf message
-   - `rowConverter.convert(message)` to convert to InternalRow
+   - `parser.parse(message)` to parse to InternalRow
 
-2. **When `rowConverterOpt` is `None`**: Falls back to calling `nullSafeEval()`
+2. **When `parserOpt` is `None`**: Falls back to calling `nullSafeEval()`
 
 ### Class Name Handling
 
@@ -164,27 +164,27 @@ The generated code uses **runtime-determined class names** instead of hardcoded 
 
 This approach eliminates hardcoded class assumptions and **automatically supports both shaded and non-shaded protobuf usage** based on the runtime classpath.
 
-**Note**: The fallback case (`None`) should theoretically never occur when `rowConverterOpt` is `Some`, but is included for defensive programming.
+**Note**: The fallback case (`None`) should theoretically never occur when `parserOpt` is `Some`, but is included for defensive programming.
 
 This provides better performance potential when Spark actually executes generated code (vs pre-computed paths).
 
-## BufferSharingRowConverter Implementation Details
+## BufferSharingParser Implementation Details
 
-The `BufferSharingRowConverter` provides the foundation for converters that support nested buffer sharing for memory-efficient nested message handling.
+The `BufferSharingParser` provides the foundation for parsers that support nested buffer sharing for memory-efficient nested message handling.
 
 ### Method Contract
 
-- **`parseAndWriteFields(binary, writer)`**: Abstract method that parses protobuf and writes to absolute ordinals (0, 1, 2)
-- **`convertWithSharedBuffer(binary, parentWriter)`**: Handles writer preparation and buffer sharing
+- **`parseInto(binary, writer)`**: Abstract method that parses protobuf and writes to absolute ordinals (0, 1, 2)
+- **`parseWithSharedBuffer(binary, parentWriter)`**: Handles writer preparation and buffer sharing
 - **`acquireWriter(parentWriter)`**: Manages writer acquisition and reuse for child structures
 
 ### Usage Pattern
 
-For nested message arrays, always use `convertWithSharedBuffer()` which manages buffer sharing properly. Direct `parseAndWriteFields()` usage in nested contexts can overwrite parent row data.
+For nested message arrays, always use `parseWithSharedBuffer()` which manages buffer sharing properly. Direct `parseInto()` usage in nested contexts can overwrite parent row data.
 
 ### Interface Benefits
 
-This design separates parsing logic (`parseAndWriteFields`) from writer management (`convertWithSharedBuffer`), enabling both standalone conversion and efficient nested message handling with shared buffers. The `acquireWriter` method provides a clean abstraction for writer lifecycle management.
+This design separates parsing logic (`parseInto`) from writer management (`parseWithSharedBuffer`), enabling both standalone conversion and efficient nested message handling with shared buffers. The `acquireWriter` method provides a clean abstraction for writer lifecycle management.
 
 ## Wire Format Optimization Tips
 

@@ -1,11 +1,10 @@
 package org.apache.spark.sql.protobuf.backport.jmh
 
 import java.util.concurrent.TimeUnit
-
 import benchmark.{ComplexBenchmarkProtos, SimpleBenchmarkProtos, TestDataGenerator}
 import com.google.protobuf.{DescriptorProtos, Descriptors}
-import fastproto.{ProtoToRowGenerator, WireFormatConverter, WireFormatToRowGenerator}
-import org.apache.spark.sql.protobuf.backport.DynamicMessageConverter
+import fastproto.{ProtoToRowGenerator, StreamWireParser, WireFormatParser, WireFormatToRowGenerator}
+import org.apache.spark.sql.protobuf.backport.DynamicMessageParser
 import org.apache.spark.sql.catalyst.expressions.Literal
 import org.apache.spark.sql.protobuf.backport.ProtobufDataToCatalyst
 import org.apache.spark.sql.protobuf.backport.utils.SchemaConverters
@@ -51,15 +50,15 @@ class ProtobufConversionJmhBenchmark {
   var simpleTempDescFile: java.io.File = _
   var complexTempDescFile: java.io.File = _
 
-  // Converters for simple schema
-  var simpleDirectConverter: WireFormatConverter = _
-  var simpleGeneratedConverter: fastproto.AbstractWireFormatConverter = _
-  var simpleDynamicConverter: DynamicMessageConverter = _
+  // Parsers for simple schema
+  var simpleDirectParser: WireFormatParser = _
+  var simpleGeneratedParser: StreamWireParser = _
+  var simpleDynamicParser: DynamicMessageParser = _
 
-  // Converters for complex schema
-  var complexDirectConverter: WireFormatConverter = _
-  var complexGeneratedConverter: fastproto.AbstractWireFormatConverter = _
-  var complexDynamicConverter: DynamicMessageConverter = _
+  // Parsers for complex schema
+  var complexDirectParser: WireFormatParser = _
+  var complexGeneratedParser: StreamWireParser = _
+  var complexDynamicParser: DynamicMessageParser = _
 
   @Setup
   def setup(): Unit = {
@@ -97,12 +96,12 @@ class ProtobufConversionJmhBenchmark {
     java.nio.file.Files.write(complexTempDescFile.toPath, complexDescSet)
     complexTempDescFile.deleteOnExit()
 
-    // === Initialize Simple Schema Converters ===
-    simpleDirectConverter = new WireFormatConverter(simpleDescriptor, simpleSparkSchema)
-    simpleGeneratedConverter = WireFormatToRowGenerator.generateConverter(simpleDescriptor, simpleSparkSchema)
+    // === Initialize Simple Schema Parsers ===
+    simpleDirectParser = new WireFormatParser(simpleDescriptor, simpleSparkSchema)
+    simpleGeneratedParser = WireFormatToRowGenerator.generateParser(simpleDescriptor, simpleSparkSchema)
 
     val simpleFieldsNumbers = simpleDescriptor.getFields.asScala.map(_.getNumber).toSet
-    simpleDynamicConverter = new DynamicMessageConverter(
+    simpleDynamicParser = new DynamicMessageParser(
       simpleDescriptor, simpleSparkSchema)
 
     // simpleBinaryDescExpression = ProtobufDataToCatalyst(
@@ -121,18 +120,18 @@ class ProtobufConversionJmhBenchmark {
     //   binaryDescriptorSet = None
     // )
     //
-    // simpleCompiledConverter = ProtoToRowGenerator.generateConverter(
+    // simpleCompiledParser = ProtoToRowGenerator.generateParser(
     //   simpleDescriptor,
     //   classOf[SimpleBenchmarkProtos.SimpleMessage]
     // )
 
 
-    // === Initialize Complex Schema Converters ===
-    complexDirectConverter = new WireFormatConverter(complexDescriptor, complexSparkSchema)
-    complexGeneratedConverter = WireFormatToRowGenerator.generateConverter(complexDescriptor, complexSparkSchema)
+    // === Initialize Complex Schema Parsers ===
+    complexDirectParser = new WireFormatParser(complexDescriptor, complexSparkSchema)
+    complexGeneratedParser = WireFormatToRowGenerator.generateParser(complexDescriptor, complexSparkSchema)
 
     val complexFieldsNumbers = complexDescriptor.getFields.asScala.map(_.getNumber).toSet
-    complexDynamicConverter = new DynamicMessageConverter(
+    complexDynamicParser = new DynamicMessageParser(
       complexDescriptor, complexSparkSchema)
 
     // complexBinaryDescExpression = ProtobufDataToCatalyst(
@@ -151,7 +150,7 @@ class ProtobufConversionJmhBenchmark {
     //   binaryDescriptorSet = None
     // )
     //
-    // complexCompiledConverter = ProtoToRowGenerator.generateConverter(
+    // complexCompiledParser = ProtoToRowGenerator.generateParser(
     //   complexDescriptor,
     //   classOf[ComplexBenchmarkProtos.ComplexMessageA]
     // )
@@ -167,23 +166,23 @@ class ProtobufConversionJmhBenchmark {
   // === Simple Schema Benchmarks (120 fields) ===
 
   @Benchmark
-  def simpleGeneratedWireFormatConverter(bh: Blackhole): Unit = {
-    bh.consume(simpleGeneratedConverter.convert(simpleBinary))
+  def simpleGeneratedWireFormatParser(bh: Blackhole): Unit = {
+    bh.consume(simpleGeneratedParser.parse(simpleBinary))
   }
 
   @Benchmark
-  def simpleDirectWireFormatConverter(bh: Blackhole): Unit = {
-    bh.consume(simpleDirectConverter.convert(simpleBinary))
+  def simpleDirectWireFormatParser(bh: Blackhole): Unit = {
+    bh.consume(simpleDirectParser.parse(simpleBinary))
   }
 
   // @Benchmark
-  def simpleDynamicMessageConverter(bh: Blackhole): Unit = {
-    bh.consume(simpleDynamicConverter.convert(simpleBinary))
+  def simpleDynamicMessageParser(bh: Blackhole): Unit = {
+    bh.consume(simpleDynamicParser.parse(simpleBinary))
   }
 
   // @Benchmark
-  // def simpleCompiledMessageConverter(bh: Blackhole): Unit = {
-  //   bh.consume(simpleCompiledConverter.convert(simpleBinary))
+  // def simpleCompiledMessageParser(bh: Blackhole): Unit = {
+  //   bh.consume(simpleCompiledParser.convert(simpleBinary))
   // }
   //
   // @Benchmark
@@ -199,18 +198,18 @@ class ProtobufConversionJmhBenchmark {
   // === Complex Schema Benchmarks (Recursive A <=> B) ===
 
   // @Benchmark
-  // def complexGeneratedWireFormatConverter(bh: Blackhole): Unit = {
-  //   bh.consume(complexGeneratedConverter.convert(complexBinary))
+  // def complexGeneratedWireFormatParser(bh: Blackhole): Unit = {
+  //   bh.consume(complexGeneratedParser.convert(complexBinary))
   // }
   //
   // @Benchmark
-  // def complexDirectWireFormatConverter(bh: Blackhole): Unit = {
-  //   bh.consume(complexDirectConverter.convert(complexBinary))
+  // def complexDirectWireFormatParser(bh: Blackhole): Unit = {
+  //   bh.consume(complexDirectParser.convert(complexBinary))
   // }
   //
   // @Benchmark
-  // def complexCompiledMessageConverter(bh: Blackhole): Unit = {
-  //   bh.consume(complexCompiledConverter.convert(complexBinary))
+  // def complexCompiledMessageParser(bh: Blackhole): Unit = {
+  //   bh.consume(complexCompiledParser.convert(complexBinary))
   // }
   //
   // @Benchmark

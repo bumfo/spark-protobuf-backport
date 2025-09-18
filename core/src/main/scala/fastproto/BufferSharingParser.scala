@@ -4,7 +4,7 @@ import org.apache.spark.sql.catalyst.InternalRow
 import org.apache.spark.sql.catalyst.expressions.codegen.{UnsafeRowWriter, UnsafeWriter}
 import org.apache.spark.sql.types.StructType
 
-abstract class BufferSharingRowConverter(val schema: StructType) extends RowConverter {
+abstract class BufferSharingParser(val schema: StructType) extends Parser {
   protected val instanceWriter = new UnsafeRowWriter(schema.length)
 
   protected def acquireWriter(parentWriter: UnsafeWriter): UnsafeRowWriter = {
@@ -34,28 +34,26 @@ abstract class BufferSharingRowConverter(val schema: StructType) extends RowConv
    * <li><b>Writer Contract:</b> Use provided writer without modifying its configuration</li>
    * </ul>
    * <p>
-   * This method is called by [[#convertWithSharedBuffer(Array[Byte], UnsafeWriter)]] after writer acquisition.
-   * The convert method handles buffer sharing and writer lifecycle, while parseAndWriteFields focuses
+   * This method is called by [[parseWithSharedBuffer(Array[Byte], UnsafeWriter)]] after writer acquisition.
+   * The convert method handles buffer sharing and writer lifecycle, while parseInto focuses
    * on parsing and field extraction logic.
    *
    * @param binary the protobuf binary data to parse
    * @param writer the UnsafeRowWriter to populate with parsed field data
    */
-  protected def parseAndWriteFields(binary: Array[Byte], writer: UnsafeRowWriter): Unit
+  protected def parseInto(binary: Array[Byte], writer: UnsafeRowWriter): Unit
 
   /**
    * Convert protobuf binary data using a shared UnsafeWriter for BufferHolder sharing.
    * This method enables efficient nested conversions by sharing the underlying buffer
-   * across the entire row tree, reducing memory allocations. Moved from RowConverter trait
-   * to this class since only buffer-sharing converters support this functionality.
+   * across the entire row tree, reducing memory allocations. Moved from Parser trait
+   * to this class since only buffer-sharing parsers support this functionality.
    */
-  def convertWithSharedBuffer(binary: Array[Byte], parentWriter: UnsafeWriter): InternalRow = {
+  def parseWithSharedBuffer(binary: Array[Byte], parentWriter: UnsafeWriter): InternalRow = {
     val writer = acquireWriter(parentWriter)
-    parseAndWriteFields(binary, writer)
+    parseInto(binary, writer)
     if (parentWriter == null) writer.getRow else null
   }
 
-  override def convert(binary: Array[Byte]): InternalRow = {
-    convertWithSharedBuffer(binary, null)
-  }
+  override def parse(binary: Array[Byte]): InternalRow = parseWithSharedBuffer(binary, null)
 }
