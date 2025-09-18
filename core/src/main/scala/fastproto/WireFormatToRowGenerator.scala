@@ -111,8 +111,12 @@ object WireFormatToRowGenerator {
   private def getPackedParseMethod(fieldType: FieldDescriptor.Type): String = {
     import FieldDescriptor.Type._
     fieldType match {
-      case t if isVarint32(t) || isFixedInt32(t) => "parsePackedInts"
-      case t if isVarint64(t) || isFixedInt64(t) => "parsePackedLongs"
+      case INT32 | UINT32 | ENUM => "parsePackedVarint32s"
+      case SINT32 => "parsePackedSInt32s"
+      case FIXED32 | SFIXED32 => "parsePackedFixed32s"
+      case INT64 | UINT64 => "parsePackedVarint64s"
+      case SINT64 => "parsePackedSInt64s"
+      case FIXED64 | SFIXED64 => "parsePackedFixed64s"
       case FLOAT => "parsePackedFloats"
       case DOUBLE => "parsePackedDoubles"
       case BOOL => "parsePackedBooleans"
@@ -662,17 +666,25 @@ object WireFormatToRowGenerator {
    * Generate packed field parsing logic.
    */
   private def generatePackedFieldParsing(code: StringBuilder, field: FieldDescriptor): Unit = {
+    import FieldDescriptor.Type._
     val fieldNum = field.getNumber
 
-    if (isVarint32(field.getType)) {
-      // Variable-length int32 types use IntList for efficient parsing
-      code ++= s"            parsePackedInts(input, field${fieldNum}_list);\n"
-    } else if (isVarint64(field.getType)) {
-      // Variable-length int64 types use LongList for efficient parsing
-      code ++= s"            parsePackedLongs(input, field${fieldNum}_list);\n"
-    } else {
-      // Fixed-size types use array with pre-calculated count
-      generateFixedSizePackedParsing(code, fieldNum, field.getType)
+    field.getType match {
+      case INT32 | UINT32 | ENUM =>
+        // Variable-length int32 types use IntList for efficient parsing
+        code ++= s"            parsePackedVarint32s(input, field${fieldNum}_list);\n"
+      case SINT32 =>
+        // SINT32 uses ZigZag encoding with IntList
+        code ++= s"            parsePackedSInt32s(input, field${fieldNum}_list);\n"
+      case INT64 | UINT64 =>
+        // Variable-length int64 types use LongList for efficient parsing
+        code ++= s"            parsePackedVarint64s(input, field${fieldNum}_list);\n"
+      case SINT64 =>
+        // SINT64 uses ZigZag encoding with LongList
+        code ++= s"            parsePackedSInt64s(input, field${fieldNum}_list);\n"
+      case _ =>
+        // Fixed-size types use array with pre-calculated count
+        generateFixedSizePackedParsing(code, fieldNum, field.getType)
     }
   }
 

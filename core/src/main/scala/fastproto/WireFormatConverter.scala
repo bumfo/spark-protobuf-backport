@@ -190,103 +190,67 @@ class WireFormatConverter(
       // For repeated fields, accumulate values using type-specific accumulators
       mapping.fieldDescriptor.getType match {
         // Variable-length int32 types
-        case INT32 =>
+        case INT32 | UINT32 =>
           val list = mapping.accumulator.asInstanceOf[IntList]
           if (wireType == WireFormat.WIRETYPE_LENGTH_DELIMITED) {
-            parsePackedInts(input, list)
+            parsePackedVarint32s(input, list)
           } else {
-            list.add(input.readInt32())
-          }
-
-        case SINT32 =>
-          val list = mapping.accumulator.asInstanceOf[IntList]
-          if (wireType == WireFormat.WIRETYPE_LENGTH_DELIMITED) {
-            parsePackedInts(input, list)
-          } else {
-            list.add(input.readSInt32())
-          }
-
-        case UINT32 =>
-          val list = mapping.accumulator.asInstanceOf[IntList]
-          if (wireType == WireFormat.WIRETYPE_LENGTH_DELIMITED) {
-            parsePackedInts(input, list)
-          } else {
-            list.add(input.readUInt32())
+            list.add(input.readRawVarint32())
           }
 
         case ENUM =>
           val list = mapping.accumulator.asInstanceOf[IntList]
           if (wireType == WireFormat.WIRETYPE_LENGTH_DELIMITED) {
-            parsePackedInts(input, list)
+            parsePackedVarint32s(input, list)
           } else {
             list.add(input.readEnum())
           }
 
+        case SINT32 =>
+          val list = mapping.accumulator.asInstanceOf[IntList]
+          if (wireType == WireFormat.WIRETYPE_LENGTH_DELIMITED) {
+            parsePackedSInt32s(input, list)
+          } else {
+            list.add(input.readSInt32())
+          }
+
         // Variable-length int64 types
-        case INT64 =>
+        case INT64 | UINT64 =>
           val list = mapping.accumulator.asInstanceOf[LongList]
           if (wireType == WireFormat.WIRETYPE_LENGTH_DELIMITED) {
-            parsePackedLongs(input, list)
+            parsePackedVarint64s(input, list)
           } else {
-            list.add(input.readInt64())
+            list.add(input.readRawVarint64())
           }
 
         case SINT64 =>
           val list = mapping.accumulator.asInstanceOf[LongList]
           if (wireType == WireFormat.WIRETYPE_LENGTH_DELIMITED) {
-            parsePackedLongs(input, list)
+            parsePackedSInt64s(input, list)
           } else {
             list.add(input.readSInt64())
           }
 
-        case UINT64 =>
-          val list = mapping.accumulator.asInstanceOf[LongList]
-          if (wireType == WireFormat.WIRETYPE_LENGTH_DELIMITED) {
-            parsePackedLongs(input, list)
-          } else {
-            list.add(input.readUInt64())
-          }
-
         // Fixed-size int32 types
-        case FIXED32 =>
+        case FIXED32 | SFIXED32 =>
           val list = mapping.accumulator.asInstanceOf[IntList]
           if (wireType == WireFormat.WIRETYPE_LENGTH_DELIMITED) {
             val packedLength = input.readRawVarint32()
-            list.array = parsePackedInts(input, list.array, list.count, packedLength)
+            list.array = parsePackedFixed32s(input, list.array, list.count, packedLength)
             list.count += packedLength / 4
           } else {
-            list.add(input.readFixed32())
-          }
-
-        case SFIXED32 =>
-          val list = mapping.accumulator.asInstanceOf[IntList]
-          if (wireType == WireFormat.WIRETYPE_LENGTH_DELIMITED) {
-            val packedLength = input.readRawVarint32()
-            list.array = parsePackedInts(input, list.array, list.count, packedLength)
-            list.count += packedLength / 4
-          } else {
-            list.add(input.readSFixed32())
+            list.add(input.readRawLittleEndian32())
           }
 
         // Fixed-size int64 types
-        case FIXED64 =>
+        case FIXED64 | SFIXED64 =>
           val list = mapping.accumulator.asInstanceOf[LongList]
           if (wireType == WireFormat.WIRETYPE_LENGTH_DELIMITED) {
             val packedLength = input.readRawVarint32()
-            list.array = parsePackedLongs(input, list.array, list.count, packedLength)
+            list.array = parsePackedFixed64s(input, list.array, list.count, packedLength)
             list.count += packedLength / 8
           } else {
-            list.add(input.readFixed64())
-          }
-
-        case SFIXED64 =>
-          val list = mapping.accumulator.asInstanceOf[LongList]
-          if (wireType == WireFormat.WIRETYPE_LENGTH_DELIMITED) {
-            val packedLength = input.readRawVarint32()
-            list.array = parsePackedLongs(input, list.array, list.count, packedLength)
-            list.count += packedLength / 8
-          } else {
-            list.add(input.readSFixed64())
+            list.add(input.readRawLittleEndian64())
           }
 
         // Float type
@@ -337,16 +301,14 @@ class WireFormatConverter(
           writer.write(mapping.rowOrdinal, input.readDouble())
         case FLOAT =>
           writer.write(mapping.rowOrdinal, input.readFloat())
-        case INT64 =>
-          writer.write(mapping.rowOrdinal, input.readInt64())
-        case UINT64 =>
-          writer.write(mapping.rowOrdinal, input.readUInt64())
-        case INT32 =>
-          writer.write(mapping.rowOrdinal, input.readInt32())
-        case FIXED64 =>
-          writer.write(mapping.rowOrdinal, input.readFixed64())
-        case FIXED32 =>
-          writer.write(mapping.rowOrdinal, input.readFixed32())
+        case INT64 | UINT64 =>
+          writer.write(mapping.rowOrdinal, input.readRawVarint64())
+        case INT32 | UINT32 =>
+          writer.write(mapping.rowOrdinal, input.readRawVarint32())
+        case FIXED64 | SFIXED64 =>
+          writer.write(mapping.rowOrdinal, input.readRawLittleEndian64())
+        case FIXED32 | SFIXED32 =>
+          writer.write(mapping.rowOrdinal, input.readRawLittleEndian32())
         case BOOL =>
           writer.write(mapping.rowOrdinal, input.readBool())
         case STRING =>
@@ -354,18 +316,12 @@ class WireFormatConverter(
           writer.write(mapping.rowOrdinal, UTF8String.fromBytes(bytes))
         case BYTES =>
           writer.write(mapping.rowOrdinal, input.readByteArray())
-        case UINT32 =>
-          writer.write(mapping.rowOrdinal, input.readUInt32())
         case ENUM =>
           val enumValue = input.readEnum()
           val enumDescriptor = mapping.fieldDescriptor.getEnumType
           val enumValueDescriptor = enumDescriptor.findValueByNumber(enumValue)
           val enumName = if (enumValueDescriptor != null) enumValueDescriptor.getName else enumValue.toString
           writer.write(mapping.rowOrdinal, UTF8String.fromString(enumName))
-        case SFIXED32 =>
-          writer.write(mapping.rowOrdinal, input.readSFixed32())
-        case SFIXED64 =>
-          writer.write(mapping.rowOrdinal, input.readSFixed64())
         case SINT32 =>
           writer.write(mapping.rowOrdinal, input.readSInt32())
         case SINT64 =>
