@@ -516,7 +516,7 @@ object WireFormatToRowGenerator {
    */
   private def generateParseAndWriteFieldsMethod(code: StringBuilder, descriptor: Descriptor, schema: StructType): Unit = {
     code ++= "  @Override\n"
-    code ++= "  protected void parseAndWriteFields(CodedInputStream input, UnsafeRowWriter writer) throws IOException {\n\n"
+    code ++= "  protected void parseAndWriteFields(CodedInputStream input, UnsafeRowWriter writer) {\n\n"
 
     // Reset repeated field counters
     val repeatedFields = descriptor.getFields.asScala.filter(field =>

@@ -26,23 +26,19 @@ public abstract class CodedInputStreamConverter extends BufferSharingRowConverte
      */
     @Override
     public final void parseAndWriteFields(byte[] binary, UnsafeRowWriter writer) {
-        try {
-            CodedInputStream input = CodedInputStream.newInstance(binary);
-            parseAndWriteFields(input, writer);
-        } catch (IOException e) {
-            throw new RuntimeException("Failed to parse protobuf binary data", e);
-        }
+        CodedInputStream input = CodedInputStream.newInstance(binary);
+
+        parseAndWriteFields(input, writer);
     }
 
     /**
      * Abstract method for subclasses to implement CodedInputStream-based parsing logic.
      * Parses protobuf fields from the CodedInputStream and writes them to the UnsafeRowWriter.
      *
-     * @param input the CodedInputStream to read protobuf data from
+     * @param input  the CodedInputStream to read protobuf data from
      * @param writer the UnsafeRowWriter to populate with parsed field data
-     * @throws IOException if protobuf parsing fails
      */
-    public abstract void parseAndWriteFields(CodedInputStream input, UnsafeRowWriter writer) throws IOException;
+    public abstract void parseAndWriteFields(CodedInputStream input, UnsafeRowWriter writer);
 
     // ========== Array Resizing Utilities ==========
 
