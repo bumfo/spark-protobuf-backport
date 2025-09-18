@@ -625,8 +625,7 @@ object WireFormatToRowGenerator {
       case FieldDescriptor.Type.BYTES =>
         code ++= s"            writer.write($ordinal, input.readByteArray());\n"
       case FieldDescriptor.Type.ENUM =>
-        code ++= s"            int enumValue = input.readEnum();\n"
-        code ++= s"            writer.write($ordinal, UTF8String.fromString(getEnumName${fieldNum}(enumValue)));\n"
+        code ++= s"            writer.write($ordinal, UTF8String.fromString(getEnumName${fieldNum}(input.readEnum())));\n"
       case FieldDescriptor.Type.MESSAGE =>
         code ++= s"            byte[] messageBytes = input.readByteArray();\n"
         code ++= s"            writeMessage(messageBytes, $ordinal, nestedConv${fieldNum}, writer);\n"
