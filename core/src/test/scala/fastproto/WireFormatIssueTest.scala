@@ -52,7 +52,7 @@ class WireFormatIssueTest extends AnyFlatSpec with Matchers {
     baos.toByteArray
   }
 
-  "WireFormatConverter" should "handle wire type mismatches in protobuf data without crashing" in {
+  "WireFormatParser" should "handle wire type mismatches in protobuf data without crashing" in {
     // Create a synthetic binary that has wire type mismatches
     val binary = createWireTypeMismatchBinary()
 
@@ -65,12 +65,12 @@ class WireFormatIssueTest extends AnyFlatSpec with Matchers {
       StructField("name", StringType, nullable = true)
     ))
 
-    val converter = new WireFormatConverter(descriptor, sparkSchema)
+    val converter = new WireFormatParser(descriptor, sparkSchema)
 
     // Before the fix, this would throw an exception due to wire type mismatches
     // After the fix, it should complete successfully
     noException should be thrownBy {
-      val row = converter.convert(binary)
+      val row = converter.parse(binary)
       row.numFields should equal(1)
     }
   }
@@ -90,8 +90,8 @@ class WireFormatIssueTest extends AnyFlatSpec with Matchers {
       ))), nullable = true)
     ))
 
-    val converter = new WireFormatConverter(descriptor, sparkSchema)
-    val row = converter.convert(binary)
+    val converter = new WireFormatParser(descriptor, sparkSchema)
+    val row = converter.parse(binary)
 
     // Should complete successfully
     row.numFields should equal(2)
@@ -120,12 +120,12 @@ class WireFormatIssueTest extends AnyFlatSpec with Matchers {
       StructField("syntax", StringType, nullable = true) // Field 5 in Type proto is syntax (enum -> string)
     ))
 
-    val converter = new WireFormatConverter(descriptor, sparkSchema)
+    val converter = new WireFormatParser(descriptor, sparkSchema)
 
     // Before fix: this would crash trying to read VARINT as LENGTH_DELIMITED
     // After fix: wire type mismatch is detected and field is skipped
     noException should be thrownBy {
-      val row = converter.convert(binaryWithMismatch)
+      val row = converter.parse(binaryWithMismatch)
       row.numFields should equal(1)
       // Field should be null due to wire type mismatch (acceptable)
     }

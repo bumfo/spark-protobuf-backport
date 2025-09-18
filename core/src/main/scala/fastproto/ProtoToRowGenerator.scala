@@ -11,11 +11,11 @@ import java.util.concurrent.ConcurrentHashMap
 import scala.collection.JavaConverters._
 
 /**
- * Factory object for generating [[RowConverter]] instances on the fly.  Given a
+ * Factory object for generating [[Parser]] instances on the fly.  Given a
  * Protobuf [[Descriptor]] and the corresponding compiled message class, this
  * object synthesises a small Java class that extracts each field from the
  * message and writes it into a new array.  The generated class implements
- * [[RowConverter]] for the provided message type.  Janino is used to
+ * [[Parser]] for the provided message type.  Janino is used to
  * compile the generated Java code at runtime.  Only a subset of types is
  * currently supported: primitive numeric types, booleans, strings, byte
  * strings and enums.  Nested messages and repeated fields are emitted as
@@ -24,12 +24,12 @@ import scala.collection.JavaConverters._
 object ProtoToRowGenerator {
 
   // Global cache for compiled classes (classes are immutable and thread-safe)
-  private val classCache: ConcurrentHashMap[String, Class[_ <: RowConverter]] =
+  private val classCache: ConcurrentHashMap[String, Class[_ <: Parser]] =
     new ConcurrentHashMap()
 
-  // Thread-local cache for converter instances (instances have mutable state)
-  private val instanceCache: ThreadLocal[scala.collection.mutable.Map[String, RowConverter]] =
-    ThreadLocal.withInitial(() => scala.collection.mutable.Map.empty[String, RowConverter])
+  // Thread-local cache for parser instances (instances have mutable state)
+  private val instanceCache: ThreadLocal[scala.collection.mutable.Map[String, Parser]] =
+    ThreadLocal.withInitial(() => scala.collection.mutable.Map.empty[String, Parser])
 
   // Thread-safe cache for computed schemas to avoid redundant schema generation
   // Schemas are immutable, so global caching is safe
@@ -41,7 +41,7 @@ object ProtoToRowGenerator {
    * converts snake_case names into CamelCase, capitalising each segment.
    * For example, a field named "source_context" yields "SourceContext".
    * This helper is defined at the object level so it is visible to both
-   * schema generation and nested converter resolution.
+   * schema generation and nested parser resolution.
    */
   private def accessorName(fd: FieldDescriptor): String = {
     val name = fd.getName
@@ -134,67 +134,67 @@ object ProtoToRowGenerator {
   }
 
   /**
-   * Generate a concrete [[MessageBasedConverter]] for the given Protobuf message type.
+   * Generate a concrete [[AbstractMessageParser]] for the given Protobuf message type.
    * Uses internal caching to avoid redundant Janino compilation for the same 
    * descriptor and message class combinations. Handles recursive types by
-   * creating converter graphs locally before updating the global cache.
+   * creating parser graphs locally before updating the global cache.
    *
    * @param descriptor   the Protobuf descriptor describing the message schema
    * @param messageClass the compiled Protobuf Java class
    * @tparam T the concrete type of the message
-   * @return a [[MessageBasedConverter]] capable of converting the message into an
+   * @return a [[AbstractMessageParser]] capable of converting the message into an
    *         [[org.apache.spark.sql.catalyst.InternalRow]]
    */
-  def generateConverter[T <: Message](
+  def generateParser[T <: Message](
       descriptor: Descriptor,
-      messageClass: Class[T]): MessageBasedConverter[T] = {
+      messageClass: Class[T]): AbstractMessageParser[T] = {
     val key = s"${messageClass.getName}_${descriptor.getFullName}"
     val threadInstances = instanceCache.get()
 
     // Check thread-local instance cache first
     threadInstances.get(key) match {
-      case Some(converter) => return converter.asInstanceOf[MessageBasedConverter[T]]
+      case Some(parser) => return parser.asInstanceOf[AbstractMessageParser[T]]
       case None => // Continue with generation
     }
 
-    // Local map to track converters being built (excludes already cached ones)
-    // Map key -> (converter, neededTypeKeys)
-    val localConverters = scala.collection.mutable.Map[String, (RowConverter, Set[String])]()
+    // Local map to track parsers being built (excludes already cached ones)
+    // Map key -> (parser, neededTypeKeys)
+    val localParsers = scala.collection.mutable.Map[String, (Parser, Set[String])]()
 
-    // Phase 1: Create converter graph with null dependencies
-    val rootConverter = createConverterGraph(descriptor, messageClass, localConverters)
+    // Phase 1: Create parser graph with null dependencies
+    val rootParser = createParserGraph(descriptor, messageClass, localParsers)
 
     // Phase 2: Wire up dependencies
-    wireDependencies(localConverters)
+    wireDependencies(localParsers)
 
     // Phase 3: Update thread-local cache
-    localConverters.foreach { case (k, (conv, _)) =>
+    localParsers.foreach { case (k, (conv, _)) =>
       threadInstances(k) = conv
     }
 
-    rootConverter.asInstanceOf[MessageBasedConverter[T]]
+    rootParser.asInstanceOf[AbstractMessageParser[T]]
   }
 
   /**
-   * Create a converter graph for the given descriptor and class, recursively
-   * building converters for nested types. Returns existing converters from
+   * Create a parser graph for the given descriptor and class, recursively
+   * building parsers for nested types. Returns existing parsers from
    * global cache when available to avoid duplication.
    */
-  private def createConverterGraph(
+  private def createParserGraph(
       descriptor: Descriptor,
       messageClass: Class[_ <: Message],
-      localConverters: scala.collection.mutable.Map[String, (RowConverter, Set[String])]): RowConverter = {
+      localParsers: scala.collection.mutable.Map[String, (Parser, Set[String])]): Parser = {
     val key = s"${messageClass.getName}_${descriptor.getFullName}"
 
     // Check thread-local cache FIRST (important optimization!)
     val threadInstances = instanceCache.get()
     threadInstances.get(key) match {
-      case Some(converter) => return converter
+      case Some(parser) => return parser
       case None => // Not cached in this thread
     }
 
     // Check local map
-    if (localConverters.contains(key)) return localConverters(key)._1
+    if (localParsers.contains(key)) return localParsers(key)._1
 
     // Collect all nested message fields (per-field approach for now)
     val nestedFields = descriptor.getFields.asScala.filter(_.getJavaType == FieldDescriptor.JavaType.MESSAGE).toList
@@ -204,35 +204,35 @@ object ProtoToRowGenerator {
       typeKey -> (fd.getMessageType, nestedClass)
     }.toMap
 
-    // Create converter with null dependencies initially
-    val converter = generateConverterWithNullDeps(descriptor, messageClass, nestedTypes.size)
+    // Create parser with null dependencies initially
+    val parser = generateParserWithNullDeps(descriptor, messageClass, nestedTypes.size)
     val neededTypeKeys = nestedTypes.map { case (typeKey, (desc, clazz)) =>
       s"${clazz.getName}_${desc.getFullName}"
     }.toSet
-    localConverters(key) = (converter, neededTypeKeys)
+    localParsers(key) = (parser, neededTypeKeys)
 
-    // Recursively create converters for unique nested types
+    // Recursively create parsers for unique nested types
     nestedTypes.values.foreach { case (desc, clazz) =>
-      createConverterGraph(desc, clazz, localConverters)
+      createParserGraph(desc, clazz, localParsers)
     }
 
-    converter
+    parser
   }
 
   /**
-   * Wire dependencies between converters after all have been created.
+   * Wire dependencies between parsers after all have been created.
    */
-  private def wireDependencies(localConverters: scala.collection.mutable.Map[String, (RowConverter, Set[String])]): Unit = {
+  private def wireDependencies(localParsers: scala.collection.mutable.Map[String, (Parser, Set[String])]): Unit = {
     val threadInstances = instanceCache.get()
-    localConverters.foreach { case (converterKey, (converter, neededTypes)) =>
-      // Set dependencies on this converter
+    localParsers.foreach { case (parserKey, (parser, neededTypes)) =>
+      // Set dependencies on this parser
       val dependencies = neededTypes.toSeq.map { typeKey =>
-        localConverters.get(typeKey) match {
-          case Some((nestedConverter, _)) => nestedConverter
+        localParsers.get(typeKey) match {
+          case Some((nestedParser, _)) => nestedParser
           case None => threadInstances.getOrElse(typeKey, null)
         }
       }
-      setConverterDependencies(converter, dependencies)
+      setParserDependencies(parser, dependencies)
     }
   }
 
@@ -251,48 +251,48 @@ object ProtoToRowGenerator {
   }
 
   /**
-   * Set dependencies on a converter using reflection (temporary - will be replaced
+   * Set dependencies on a parser using reflection (temporary - will be replaced
    * by proper generated setter methods).
    */
-  private def setConverterDependencies(converter: RowConverter, dependencies: Seq[RowConverter]): Unit = {
+  private def setParserDependencies(parser: Parser, dependencies: Seq[Parser]): Unit = {
     // For now, use reflection to set dependencies
     // This will be replaced by proper generated setter methods
-    val converterClass = converter.getClass
+    val parserClass = parser.getClass
     dependencies.zipWithIndex.foreach { case (dep, idx) =>
       try {
-        val setterMethod = converterClass.getMethod(s"setNestedConverter${idx}", classOf[MessageBasedConverter[_]])
-        setterMethod.invoke(converter, dep)
+        val setterMethod = parserClass.getMethod(s"setNestedParser${idx}", classOf[AbstractMessageParser[_]])
+        setterMethod.invoke(parser, dep)
       } catch {
-        case _: NoSuchMethodException => // Converter has no dependencies, ignore
+        case _: NoSuchMethodException => // Parser has no dependencies, ignore
       }
     }
   }
 
 
   /**
-   * Internal method that performs the actual converter generation and compilation
+   * Internal method that performs the actual parser generation and compilation
    * with null dependencies initially. This allows recursive types to be handled
-   * by deferring dependency injection until after all converters are created.
+   * by deferring dependency injection until after all parsers are created.
    *
    * @param descriptor     the Protobuf descriptor describing the message schema
    * @param messageClass   the compiled Protobuf Java class
    * @param numNestedTypes the number of unique nested message types
-   * @return a [[RowConverter]] capable of converting the message into an
+   * @return a [[Parser]] capable of converting the message into an
    *         [[org.apache.spark.sql.catalyst.InternalRow]]
    */
-  private def generateConverterWithNullDeps(
+  private def generateParserWithNullDeps(
       descriptor: Descriptor,
       messageClass: Class[_ <: Message],
-      numNestedTypes: Int): RowConverter = {
-    // Create a unique class name to avoid collisions when multiple converters are generated
-    val className = s"GeneratedConverter_${descriptor.getName}_${System.nanoTime()}"
+      numNestedTypes: Int): Parser = {
+    // Create a unique class name to avoid collisions when multiple parsers are generated
+    val className = s"GeneratedParser_${descriptor.getName}_${System.nanoTime()}"
 
-    val sourceCode = generateConverterSourceCode(className, descriptor, messageClass, numNestedTypes)
+    val sourceCode = generateParserSourceCode(className, descriptor, messageClass, numNestedTypes)
     compileAndInstantiate(sourceCode, className, descriptor)
   }
 
   /**
-   * Generate Java source code for a MessageBasedConverter implementation.
+   * Generate Java source code for a AbstractMessageParser implementation.
    * This method creates the complete Java class source code including imports,
    * class declaration, fields, constructor, and conversion methods.
    *
@@ -302,20 +302,20 @@ object ProtoToRowGenerator {
    * @param numNestedTypes the number of nested message types
    * @return StringBuilder containing the complete Java source code
    */
-  def generateConverterSourceCode(
+  def generateParserSourceCode(
       className: String,
       descriptor: Descriptor,
       messageClass: Class[_ <: Message],
       numNestedTypes: Int): StringBuilder = {
-    // Create per-field converter indices for message fields
+    // Create per-field parser indices for message fields
     val messageFields = descriptor.getFields.asScala.filter(_.getJavaType == FieldDescriptor.JavaType.MESSAGE).toList
 
     // Verify we have the expected number of nested types
     assert(messageFields.size == numNestedTypes,
       s"Expected $numNestedTypes nested types but found ${messageFields.size}")
 
-    // Create field-to-converter-index mapping for code generation
-    val fieldToConverterIndex: Map[FieldDescriptor, Int] = messageFields.zipWithIndex.toMap
+    // Create field-to-parser-index mapping for code generation
+    val fieldToParserIndex: Map[FieldDescriptor, Int] = messageFields.zipWithIndex.toMap
 
     val code = new StringBuilder
     // Imports required by the generated Java source
@@ -326,17 +326,17 @@ object ProtoToRowGenerator {
     code ++= "import org.apache.spark.sql.catalyst.InternalRow;\n"
     code ++= "import org.apache.spark.sql.types.StructType;\n"
     code ++= "import org.apache.spark.unsafe.types.UTF8String;\n"
-    code ++= "import fastproto.AbstractMessageBasedConverter;\n"
+    code ++= "import fastproto.AbstractMessageParser;\n"
 
     // Begin class declaration
-    code ++= s"public final class ${className} extends fastproto.AbstractMessageBasedConverter<${messageClass.getName}> {\n"
+    code ++= s"public final class ${className} extends fastproto.AbstractMessageParser<${messageClass.getName}> {\n"
 
-    // Declare fields: nested converters (non-final for setter injection)
+    // Declare fields: nested parsers (non-final for setter injection)
     (0 until numNestedTypes).foreach { idx =>
-      code ++= s"  private fastproto.MessageBasedConverter nestedConv${idx}; // Non-final for dependency injection\n"
+      code ++= s"  private fastproto.AbstractMessageParser nestedConv${idx}; // Non-final for dependency injection\n"
     }
 
-    // Constructor with null nested converters initially
+    // Constructor with null nested parsers initially
     code ++= s"  public ${className}(StructType schema) {\n"
     code ++= "    super(schema);\n"
     (0 until numNestedTypes).foreach { idx =>
@@ -346,8 +346,8 @@ object ProtoToRowGenerator {
 
     // Generate setter methods for dependency injection
     (0 until numNestedTypes).foreach { idx =>
-      code ++= s"  public void setNestedConverter${idx}(fastproto.MessageBasedConverter conv) {\n"
-      code ++= "    if (this.nestedConv" + idx + " != null) throw new IllegalStateException(\"Converter " + idx + " already set\");\n"
+      code ++= s"  public void setNestedParser${idx}(fastproto.AbstractMessageParser conv) {\n"
+      code ++= "    if (this.nestedConv" + idx + " != null) throw new IllegalStateException(\"Parser " + idx + " already set\");\n"
       code ++= s"    this.nestedConv${idx} = conv;\n"
       code ++= s"  }\n"
     }
@@ -472,8 +472,8 @@ object ProtoToRowGenerator {
 
         case FieldDescriptor.JavaType.MESSAGE if fd.isRepeated =>
           // Generate method for repeated message field
-          val converterIndex = fieldToConverterIndex(fd)
-          val nestedConverterName = s"nestedConv${converterIndex}"
+          val parserIndex = fieldToParserIndex(fd)
+          val nestedParserName = s"nestedConv${parserIndex}"
           code ++= s"  private void write${accessor}Field(UnsafeRowWriter writer, ${messageClass.getName} msg) {\n"
           code ++= s"    int count = msg.${countMethodName}();\n"
           code ++= s"    int offset = writer.cursor();\n"
@@ -481,11 +481,11 @@ object ProtoToRowGenerator {
           code ++= s"    arrayWriter.initialize(count);\n"
           code ++= s"    for (int i = 0; i < count; i++) {\n"
           code ++= s"      " + classOf[Message].getName + s" element = (" + classOf[Message].getName + s") msg.${indexGetterName}(i);\n"
-          code ++= s"      if (element == null || ${nestedConverterName} == null) {\n"
+          code ++= s"      if (element == null || ${nestedParserName} == null) {\n"
           code ++= s"        arrayWriter.setNull(i);\n"
           code ++= s"      } else {\n"
           code ++= s"        int elemOffset = arrayWriter.cursor();\n"
-          code ++= s"        ${nestedConverterName}.convertWithSharedBuffer(element, writer);\n"
+          code ++= s"        ${nestedParserName}.parseWithSharedBuffer(element, writer);\n"
           code ++= s"        arrayWriter.setOffsetAndSizeFromPreviousCursor(i, elemOffset);\n"
           code ++= s"      }\n"
           code ++= s"    }\n"
@@ -494,8 +494,8 @@ object ProtoToRowGenerator {
 
         case FieldDescriptor.JavaType.MESSAGE if !fd.isRepeated =>
           // Generate method for singular message field
-          val converterIndex = fieldToConverterIndex(fd)
-          val nestedConverterName = s"nestedConv${converterIndex}"
+          val parserIndex = fieldToParserIndex(fd)
+          val nestedParserName = s"nestedConv${parserIndex}"
           val getterName = indexGetterName
           val hasMethodName = if (!(fd.getType == FieldDescriptor.Type.MESSAGE && fd.getMessageType.getOptions.hasMapEntry)) {
             Some(s"has${accessor}")
@@ -509,21 +509,21 @@ object ProtoToRowGenerator {
               code ++= s"      writer.setNullAt($idx);\n"
               code ++= s"    } else {\n"
               code ++= s"      " + classOf[Message].getName + s" v = (" + classOf[Message].getName + s") msg.${getterName}();\n"
-              code ++= s"      if (${nestedConverterName} == null) {\n"
+              code ++= s"      if (${nestedParserName} == null) {\n"
               code ++= s"        writer.setNullAt($idx);\n"
               code ++= s"      } else {\n"
               code ++= s"        int offset = writer.cursor();\n"
-              code ++= s"        ${nestedConverterName}.convertWithSharedBuffer(v, writer);\n"
+              code ++= s"        ${nestedParserName}.parseWithSharedBuffer(v, writer);\n"
               code ++= s"        writer.setOffsetAndSizeFromPreviousCursor($idx, offset);\n"
               code ++= s"      }\n"
               code ++= s"    }\n"
             case None =>
               code ++= s"    " + classOf[Message].getName + s" v = (" + classOf[Message].getName + s") msg.${getterName}();\n"
-              code ++= s"    if (v == null || ${nestedConverterName} == null) {\n"
+              code ++= s"    if (v == null || ${nestedParserName} == null) {\n"
               code ++= s"      writer.setNullAt($idx);\n"
               code ++= s"    } else {\n"
               code ++= s"      int offset = writer.cursor();\n"
-              code ++= s"      ${nestedConverterName}.convertWithSharedBuffer(v, writer);\n"
+              code ++= s"      ${nestedParserName}.parseWithSharedBuffer(v, writer);\n"
               code ++= s"      writer.setOffsetAndSizeFromPreviousCursor($idx, offset);\n"
               code ++= s"    }\n"
           }
@@ -533,21 +533,21 @@ object ProtoToRowGenerator {
       }
     }
 
-    // Override parseAndWriteFields to implement binary conversion with inlined parseFrom
+    // Override parseInto to implement binary conversion with inlined parseFrom
     code ++= "  @Override\n"
-    code ++= "  protected void parseAndWriteFields(byte[] binary, UnsafeRowWriter writer) {\n"
+    code ++= "  protected void parseInto(byte[] binary, UnsafeRowWriter writer) {\n"
     code ++= "    try {\n"
     code ++= "      // Direct parseFrom call - no reflection needed\n"
     code ++= s"      ${messageClass.getName} message = ${messageClass.getName}.parseFrom(binary);\n"
-    code ++= "      writeMessage(message, writer);\n"
+    code ++= "      parseInto(message, writer);\n"
     code ++= "    } catch (Exception e) {\n"
     code ++= "      throw new RuntimeException(\"Failed to parse protobuf binary\", e);\n"
     code ++= "    }\n"
     code ++= "  }\n"
     code ++= "\n"
 
-    // Typed writeMessage implementation (called by bridge method)
-    code ++= "  private void writeMessage(" + messageClass.getName + " msg, UnsafeRowWriter writer) {\n"
+    // Typed parseInto implementation (called by bridge method)
+    code ++= "  private void parseInto(" + messageClass.getName + " msg, UnsafeRowWriter writer) {\n"
 
     // Generate per‑field extraction and writing logic using writer
     descriptor.getFields.asScala.zipWithIndex.foreach { case (fd, idx) =>
@@ -618,11 +618,11 @@ object ProtoToRowGenerator {
       }
     }
 
-    code ++= "  }\n" // End of writeMessage method
+    code ++= "  }\n" // End of parseInto method
 
     // Bridge method for type erasure compatibility (implements abstract method)
-    code ++= "  public void writeMessage(Object msg, UnsafeRowWriter writer) {\n"
-    code ++= s"    writeMessage((${messageClass.getName}) msg, writer);\n"
+    code ++= "  public void parseInto(Object msg, UnsafeRowWriter writer) {\n"
+    code ++= s"    parseInto((${messageClass.getName}) msg, writer);\n"
     code ++= "  }\n"
 
     code ++= "}\n" // End of class
@@ -631,9 +631,9 @@ object ProtoToRowGenerator {
   }
 
   /**
-   * Get or compile converter class using global class cache.
+   * Get or compile parser class using global class cache.
    */
-  private def getOrCompileClass(sourceCode: StringBuilder, className: String, key: String): Class[_ <: RowConverter] = {
+  private def getOrCompileClass(sourceCode: StringBuilder, className: String, key: String): Class[_ <: Parser] = {
     // Check global class cache first
     Option(classCache.get(key)) match {
       case Some(clazz) => clazz
@@ -642,7 +642,7 @@ object ProtoToRowGenerator {
         val compiler = new SimpleCompiler()
         compiler.setParentClassLoader(this.getClass.getClassLoader)
         compiler.cook(sourceCode.toString)
-        val generatedClass = compiler.getClassLoader.loadClass(className).asInstanceOf[Class[_ <: RowConverter]]
+        val generatedClass = compiler.getClassLoader.loadClass(className).asInstanceOf[Class[_ <: Parser]]
 
         // Cache the compiled class globally and return
         Option(classCache.putIfAbsent(key, generatedClass)).getOrElse(generatedClass)
@@ -650,23 +650,23 @@ object ProtoToRowGenerator {
   }
 
   /**
-   * Compile the generated Java source code using Janino and instantiate the converter.
+   * Compile the generated Java source code using Janino and instantiate the parser.
    *
    * @param sourceCode the complete Java source code
    * @param className the name of the generated class
    * @param descriptor the Protobuf descriptor (used for schema generation)
-   * @return a compiled and instantiated RowConverter
+   * @return a compiled and instantiated Parser
    */
-  private def compileAndInstantiate(sourceCode: StringBuilder, className: String, descriptor: Descriptor): RowConverter = {
+  private def compileAndInstantiate(sourceCode: StringBuilder, className: String, descriptor: Descriptor): Parser = {
     // Build the Spark SQL schema corresponding to this descriptor
     val schema: StructType = getCachedSchema(descriptor)
 
     // Get or compile the class globally
     val key = s"${className}_${descriptor.getFullName}"
-    val converterClass = getOrCompileClass(sourceCode, className, key)
+    val parserClass = getOrCompileClass(sourceCode, className, key)
 
-    // Create converter with just schema - dependencies will be set via setters
-    val constructor = converterClass.getConstructor(classOf[StructType])
-    constructor.newInstance(schema).asInstanceOf[RowConverter]
+    // Create parser with just schema - dependencies will be set via setters
+    val constructor = parserClass.getConstructor(classOf[StructType])
+    constructor.newInstance(schema).asInstanceOf[Parser]
   }
 }

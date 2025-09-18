@@ -20,7 +20,7 @@ class SimpleMessageTest extends AnyFunSuite with Matchers {
   private val descriptor = testMessage.getDescriptorForType
   private val sparkSchema = SchemaConverters.toSqlType(descriptor).dataType.asInstanceOf[StructType]
 
-  private val generatedWireFormatConverter = WireFormatToRowGenerator.generateConverter(descriptor, sparkSchema)
+  private val generatedWireFormatParser = WireFormatToRowGenerator.generateParser(descriptor, sparkSchema)
 
   test("SimpleMessage should have 120 fields") {
     sparkSchema.fields.length shouldBe 120
@@ -33,16 +33,16 @@ class SimpleMessageTest extends AnyFunSuite with Matchers {
     b.addRepeatedInt32086(300)
     val msg = b.build().toByteArray
 
-    val converter = generatedWireFormatConverter
-    val row = converter.convert(msg)
+    val converter = generatedWireFormatParser
+    val row = converter.parse(msg)
 
     row should not be null
     row.numFields shouldBe 120
   }
 
   test("Generated WireFormat converter should handle SimpleMessage") {
-    val converter = generatedWireFormatConverter
-    val row = converter.convert(binaryData)
+    val converter = generatedWireFormatParser
+    val row = converter.parse(binaryData)
 
     row should not be null
     row.numFields shouldBe 120
@@ -78,8 +78,8 @@ class SimpleMessageTest extends AnyFunSuite with Matchers {
   }
 
   test("Generated WireFormat converter should handle repeated fields correctly") {
-    val converter = WireFormatToRowGenerator.generateConverter(descriptor, sparkSchema)
-    val row = converter.convert(binaryData)
+    val converter = WireFormatToRowGenerator.generateParser(descriptor, sparkSchema)
+    val row = converter.parse(binaryData)
 
     // Verify repeated int32 field
     val repeatedInt32Array = row.getArray(85) // repeated_int32_086
@@ -97,11 +97,11 @@ class SimpleMessageTest extends AnyFunSuite with Matchers {
   }
 
   test("Compiled message converter should produce same results as WireFormat") {
-    val wireFormatConverter = WireFormatToRowGenerator.generateConverter(descriptor, sparkSchema)
-    val compiledConverter = ProtoToRowGenerator.generateConverter(descriptor, classOf[SimpleBenchmarkProtos.SimpleMessage])
+    val WireFormatParser = WireFormatToRowGenerator.generateParser(descriptor, sparkSchema)
+    val compiledParser = ProtoToRowGenerator.generateParser(descriptor, classOf[SimpleBenchmarkProtos.SimpleMessage])
 
-    val wireFormatRow = wireFormatConverter.convert(binaryData)
-    val compiledRow = compiledConverter.convert(binaryData)
+    val wireFormatRow = WireFormatParser.parse(binaryData)
+    val compiledRow = compiledParser.parse(binaryData)
 
     // Both should produce identical results
     wireFormatRow.numFields shouldBe compiledRow.numFields
@@ -121,12 +121,12 @@ class SimpleMessageTest extends AnyFunSuite with Matchers {
   }
 
   test("WireFormat converter should be reusable") {
-    val converter = WireFormatToRowGenerator.generateConverter(descriptor, sparkSchema)
+    val converter = WireFormatToRowGenerator.generateParser(descriptor, sparkSchema)
 
     // Convert the same data multiple times
-    val row1 = converter.convert(binaryData)
-    val row2 = converter.convert(binaryData)
-    val row3 = converter.convert(binaryData)
+    val row1 = converter.parse(binaryData)
+    val row2 = converter.parse(binaryData)
+    val row3 = converter.parse(binaryData)
 
     // All results should be identical
     row1.numFields shouldBe row2.numFields
@@ -148,9 +148,9 @@ class SimpleMessageTest extends AnyFunSuite with Matchers {
     // Binary data should be identical
     message1.toByteArray shouldBe message2.toByteArray
 
-    val converter = WireFormatToRowGenerator.generateConverter(descriptor, sparkSchema)
-    val row1 = converter.convert(message1.toByteArray)
-    val row2 = converter.convert(message2.toByteArray)
+    val converter = WireFormatToRowGenerator.generateParser(descriptor, sparkSchema)
+    val row1 = converter.parse(message1.toByteArray)
+    val row2 = converter.parse(message2.toByteArray)
 
     // Results should be identical
     row1.getInt(0) shouldBe row2.getInt(0)

@@ -9,9 +9,9 @@ import org.apache.spark.unsafe.types.UTF8String
 import org.scalatest.funspec.AnyFunSpec
 import org.scalatest.matchers.should.Matchers
 
-class DynamicMessageConverterSpec extends AnyFunSpec with Matchers {
+class DynamicMessageParserSpec extends AnyFunSpec with Matchers {
 
-  describe("DynamicMessageConverter") {
+  describe("DynamicMessageParser") {
 
     it("should convert protobuf binary data to InternalRow") {
       // Create a Type message directly
@@ -27,12 +27,12 @@ class DynamicMessageConverterSpec extends AnyFunSpec with Matchers {
       val descriptor = typeMsg.getDescriptorForType
       val dataType = SchemaConverters.toSqlType(descriptor).dataType
 
-      val converter = new DynamicMessageConverter(descriptor, dataType)
+      val converter = new DynamicMessageParser(descriptor, dataType)
 
       val binary = typeMsg.toByteArray
 
       // Convert binary to InternalRow
-      val result = converter.convert(binary)
+      val result = converter.parse(binary)
 
       result should not be null
       result.isInstanceOf[InternalRow] shouldBe true
@@ -50,13 +50,13 @@ class DynamicMessageConverterSpec extends AnyFunSpec with Matchers {
       val descriptor = typeMsg.getDescriptorForType
       val dataType = SchemaConverters.toSqlType(descriptor).dataType
 
-      val converter = new DynamicMessageConverter(descriptor, dataType)
+      val converter = new DynamicMessageParser(descriptor, dataType)
 
       // Invalid protobuf binary
       val invalidBinary = Array[Byte](0xFF.toByte, 0xFF.toByte, 0xFF.toByte)
 
       intercept[Exception] {
-        converter.convert(invalidBinary)
+        converter.parse(invalidBinary)
       }
     }
 
@@ -65,7 +65,7 @@ class DynamicMessageConverterSpec extends AnyFunSpec with Matchers {
       val descriptor = typeMsg.getDescriptorForType
       val dataType = SchemaConverters.toSqlType(descriptor).dataType
 
-      val converter = new DynamicMessageConverter(descriptor, dataType)
+      val converter = new DynamicMessageParser(descriptor, dataType)
 
       converter.schema shouldBe dataType
       converter.schema.isInstanceOf[StructType] shouldBe true
@@ -85,11 +85,11 @@ class DynamicMessageConverterSpec extends AnyFunSpec with Matchers {
       val descriptor = typeMsg.getDescriptorForType
       val dataType = SchemaConverters.toSqlType(descriptor).dataType
 
-      val converter = new DynamicMessageConverter(descriptor, dataType)
+      val converter = new DynamicMessageParser(descriptor, dataType)
 
       val binary = typeMsg.toByteArray
 
-      val result = converter.convert(binary)
+      val result = converter.parse(binary)
       result should not be null
 
       // Verify the structure was converted correctly

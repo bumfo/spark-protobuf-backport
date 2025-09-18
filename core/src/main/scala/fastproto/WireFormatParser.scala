@@ -2,7 +2,7 @@ package fastproto
 
 import com.google.protobuf.Descriptors.{Descriptor, FieldDescriptor}
 import com.google.protobuf.{CodedInputStream, WireFormat}
-import fastproto.StreamWireConverter._
+import StreamWireParser._
 import org.apache.spark.sql.catalyst.expressions.codegen.UnsafeRowWriter
 import org.apache.spark.sql.types.{ArrayType, StructType}
 import org.apache.spark.unsafe.types.UTF8String
@@ -14,29 +14,29 @@ import scala.collection.JavaConverters._
  * using CodedInputStream, bypassing the need to materialize intermediate Message objects.
  *
  * This optimized converter provides significant performance improvements by:
- * - Extending StreamWireConverter for optimized helper methods
+ * - Extending StreamWireParser for optimized helper methods
  * - Using type-specific primitive accumulators (no boxing)
- * - Leveraging packed field parsing methods from StreamWireConverter
+ * - Leveraging packed field parsing methods from StreamWireParser
  * - Direct byte copying for strings/bytes/messages
  * - Single-pass streaming parse to UnsafeRow
  *
  * @param descriptor the protobuf message descriptor
  * @param schema     the corresponding Spark SQL schema
  */
-class WireFormatConverter(
+class WireFormatParser(
     descriptor: Descriptor,
     override val schema: StructType)
-  extends StreamWireConverter(schema) {
+  extends StreamWireParser(schema) {
 
-  import WireFormatConverter._
+  import WireFormatParser._
 
   // Build field number → row ordinal mapping during construction - use arrays for better performance
   private val (fieldMappingArray, maxFieldNumber) = buildFieldMappingArray()
 
-  // Cache nested converters for message fields - use array for O(1) lookup
-  private val nestedConvertersArray: Array[WireFormatConverter] = buildNestedConvertersArray()
+  // Cache nested parsers for message fields - use array for O(1) lookup
+  private val nestedParsersArray: Array[WireFormatParser] = buildNestedParsersArray()
 
-  override protected def parseAndWriteFields(input: CodedInputStream, writer: UnsafeRowWriter): Unit = {
+  override protected def parseInto(input: CodedInputStream, writer: UnsafeRowWriter): Unit = {
 
     // Reset all field accumulators for this conversion
     resetAccumulators()
@@ -129,8 +129,8 @@ class WireFormatConverter(
     }
   }
 
-  private def buildNestedConvertersArray(): Array[WireFormatConverter] = {
-    val convertersArray = new Array[WireFormatConverter](maxFieldNumber + 1)
+  private def buildNestedParsersArray(): Array[WireFormatParser] = {
+    val parsersArray = new Array[WireFormatParser](maxFieldNumber + 1)
 
     var i = 0
     while (i < fieldMappingArray.length) {
@@ -143,12 +143,12 @@ class WireFormatConverter(
             arrayType.elementType.asInstanceOf[StructType]
           case _ => throw new IllegalArgumentException(s"Expected StructType or ArrayType[StructType] for message field ${mapping.fieldDescriptor.getName}")
         }
-        convertersArray(i) = new WireFormatConverter(nestedDescriptor, nestedSchema)
+        parsersArray(i) = new WireFormatParser(nestedDescriptor, nestedSchema)
       }
       i += 1
     }
 
-    convertersArray
+    parsersArray
   }
 
   private def resetAccumulators(): Unit = {
@@ -338,9 +338,9 @@ class WireFormatConverter(
       mapping: FieldMapping,
       writer: UnsafeRowWriter): Unit = {
     val messageBytes = input.readByteArray()
-    val converter = nestedConvertersArray(mapping.fieldDescriptor.getNumber)
+    val converter = nestedParsersArray(mapping.fieldDescriptor.getNumber)
     if (converter != null) {
-      // Use helper method from StreamWireConverter
+      // Use helper method from StreamWireParser
       writeMessage(messageBytes, mapping.rowOrdinal, converter, writer)
     } else {
       throw new IllegalStateException(s"No nested converter found for field ${mapping.fieldDescriptor.getName}")
@@ -376,7 +376,7 @@ class WireFormatConverter(
           case list: ByteArrayList if list.count > 0 =>
             mapping.fieldDescriptor.getType match {
               case FieldDescriptor.Type.MESSAGE =>
-                val converter = nestedConvertersArray(fieldNumber).asInstanceOf[StreamWireConverter]
+                val converter = nestedParsersArray(fieldNumber).asInstanceOf[StreamWireParser]
                 writeMessageArray(list.array, list.count, mapping.rowOrdinal, converter, writer)
               case FieldDescriptor.Type.STRING =>
                 writeStringArray(list.array, list.count, mapping.rowOrdinal, writer)
@@ -464,7 +464,7 @@ class WireFormatConverter(
   }
 }
 
-object WireFormatConverter {
+object WireFormatParser {
   /**
    * Mapping information for a protobuf field to its corresponding Spark row position.
    */

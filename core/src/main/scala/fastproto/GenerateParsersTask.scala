@@ -16,9 +16,9 @@ import java.nio.file.StandardCopyOption
  *   cd core/src/test/resources && protoc --descriptor_set_out=nested.desc --include_imports nested.proto
  *
  * Command-line Mode (2 args):
- *   GenerateConvertersTask <descriptor-file> <output-directory>
+ *   generateParsersTask <descriptor-file> <output-directory>
  */
-object GenerateConvertersTask {
+object GenerateParsersTask {
   
   def main(args: Array[String]): Unit = {
     args.length match {
@@ -27,7 +27,7 @@ object GenerateConvertersTask {
       case _ => 
         println("Usage:")
         println("  No args: SBT task mode for nested.proto")
-        println("  GenerateConvertersTask <descriptor-file> <output-directory>")
+        println("  generateParsersTask <descriptor-file> <output-directory>")
         sys.exit(1)
     }
   }
@@ -97,7 +97,7 @@ object GenerateConvertersTask {
       // Generate code for each message type
       fileDescriptors.foreach { fileDescriptor =>
         fileDescriptor.getMessageTypes.forEach { messageDescriptor =>
-          generateConverterForMessage(messageDescriptor, outputDir)
+          generateParserForMessage(messageDescriptor, outputDir)
         }
       }
     } finally {
@@ -105,14 +105,14 @@ object GenerateConvertersTask {
     }
   }
 
-  private def generateConverterForMessage(descriptor: Descriptor, outputDir: File): Unit = {
+  private def generateParserForMessage(descriptor: Descriptor, outputDir: File): Unit = {
     val messageName = descriptor.getName
     val packageName = descriptor.getFile.getOptions.getJavaPackage
     val fullClassName = if (packageName.nonEmpty) s"${packageName}.${messageName}" else messageName
     
     println(s"Generating converter for message: ${fullClassName}")
 
-    // Count distinct nested message types (same logic as createConverterGraph)
+    // Count distinct nested message types (same logic as createParserGraph)
     import scala.collection.JavaConverters._
     val nestedMessageFields = descriptor.getFields.asScala.filter(
       _.getJavaType == com.google.protobuf.Descriptors.FieldDescriptor.JavaType.MESSAGE
@@ -121,8 +121,8 @@ object GenerateConvertersTask {
     val nestedMessageCount = distinctNestedTypes.size
     
     // Generate the converter code using ProtoToRowGenerator's source code generation method
-    val className = s"${messageName}Converter"
-    val code = ProtoToRowGenerator.generateConverterSourceCode(
+    val className = s"${messageName}Parser"
+    val code = ProtoToRowGenerator.generateParserSourceCode(
       className, 
       descriptor, 
       classOf[com.google.protobuf.Message], // Placeholder class since we're only generating code

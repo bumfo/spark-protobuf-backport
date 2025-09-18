@@ -12,8 +12,8 @@ lazy val sparkVersion = "3.2.1"
 lazy val protobufVersion = "3.21.7"
 
 // Task keys
-lazy val generateConverters = taskKey[Unit]("Generate converter code from protobuf files")
-lazy val generateWireFormat = taskKey[Unit]("Generate WireFormat converter code from protobuf schemas")
+lazy val generateParsers = taskKey[Unit]("Generate parser code from protobuf files")
+lazy val generateWireFormat = taskKey[Unit]("Generate WireFormat parser code from protobuf schemas")
 
 // Common dependencies for both projects
 lazy val commonDependencies = Seq(
@@ -49,14 +49,14 @@ lazy val core = project
   .settings(
     name := "spark-protobuf-backport",
     publishArtifact := true,
-    // Simple task to run the converter code generator
-    generateConverters := {
-      println("Running converter code generation...")
-      (Test / runMain).toTask(" fastproto.GenerateConvertersTask").value
+    // Simple task to run the parser code generator
+    generateParsers := {
+      println("Running parser code generation...")
+      (Test / runMain).toTask(" fastproto.GenerateParsersTask").value
     },
     // Task to run the WireFormat code generator
     generateWireFormat := {
-      println("Running WireFormat converter code generation...")
+      println("Running WireFormat parser code generation...")
       (Test / runMain).toTask(" fastproto.GenerateWireFormatTask").value
     },
     libraryDependencies ++= commonDependencies ++ Seq(

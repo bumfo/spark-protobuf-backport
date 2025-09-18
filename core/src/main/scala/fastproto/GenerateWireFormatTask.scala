@@ -83,7 +83,7 @@ object GenerateWireFormatTask {
 
     // Generate converter code
     println("Generating WireFormat converter code using WireFormatToRowGenerator")
-    generateConverterForMessage(descriptor, sparkSchema, targetDir)
+    generateParserForMessage(descriptor, sparkSchema, targetDir)
 
     // Also generate a simplified version for comparison
     val simpleSchema = StructType(Seq(
@@ -92,7 +92,7 @@ object GenerateWireFormatTask {
     ))
 
     println("Generating simplified WireFormat converter for comparison")
-    generateConverterForMessage(descriptor, simpleSchema, targetDir, "Simple")
+    generateParserForMessage(descriptor, simpleSchema, targetDir, "Simple")
 
     println(s"WireFormat code generation completed. Output directory: ${targetDir}")
   }
@@ -136,7 +136,7 @@ object GenerateWireFormatTask {
         fileDescriptor.getMessageTypes.forEach { messageDescriptor =>
           // Create a basic schema for all fields
           val basicSchema = createBasicSchemaForDescriptor(messageDescriptor)
-          generateConverterForMessage(messageDescriptor, basicSchema, outputDir)
+          generateParserForMessage(messageDescriptor, basicSchema, outputDir)
         }
       }
     } finally {
@@ -144,7 +144,7 @@ object GenerateWireFormatTask {
     }
   }
 
-  private def generateConverterForMessage(
+  private def generateParserForMessage(
       descriptor: Descriptor,
       schema: StructType,
       outputDir: File,
@@ -154,11 +154,11 @@ object GenerateWireFormatTask {
     val packageName = descriptor.getFile.getOptions.getJavaPackage
     val fullClassName = if (packageName.nonEmpty) s"${packageName}.${messageName}" else messageName
 
-    val className = s"${messageName}${suffix}WireFormatConverter"
+    val className = s"${messageName}${suffix}WireFormatParser"
     println(s"Generating WireFormat converter for message: ${fullClassName} -> ${className}")
 
     // Generate the converter code using WireFormatToRowGenerator's source code generation method
-    val code = generateWireFormatConverterSource(className, descriptor, schema)
+    val code = generateWireFormatParserSource(className, descriptor, schema)
 
     // Write the generated code to a file
     val outputFile = new File(outputDir, s"${className}.java")
@@ -174,7 +174,7 @@ object GenerateWireFormatTask {
     writeWireFormatInfo(descriptor, schema, outputDir, s"${messageName}${suffix}")
   }
 
-  private def generateWireFormatConverterSource(
+  private def generateWireFormatParserSource(
       className: String,
       descriptor: Descriptor,
       schema: StructType): StringBuilder = {

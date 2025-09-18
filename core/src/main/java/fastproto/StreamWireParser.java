@@ -8,27 +8,28 @@ import org.apache.spark.sql.types.StructType;
 import java.io.IOException;
 
 /**
- * Base class for stream-based wire format converters that use CodedInputStream to parse protobuf wire format
+ * Base class for stream-based wire format parsers that use CodedInputStream to parse protobuf wire format
  * directly into Spark SQL UnsafeRow structures.
  * <p>
  * Provides optimized array writing methods with size parameters to eliminate
  * array slicing and reduce memory allocations, plus CodedInputStream-specific parsing utilities.
  */
-public abstract class StreamWireConverter extends BufferSharingRowConverter {
+@SuppressWarnings("unused")
+public abstract class StreamWireParser extends BufferSharingParser {
 
-    public StreamWireConverter(StructType schema) {
+    public StreamWireParser(StructType schema) {
         super(schema);
     }
 
     /**
      * Convenience method that creates a CodedInputStream from binary data and delegates
-     * to the abstract parseAndWriteFields(CodedInputStream, UnsafeRowWriter) method.
+     * to the abstract parseInto(CodedInputStream, UnsafeRowWriter) method.
      */
     @Override
-    public final void parseAndWriteFields(byte[] binary, UnsafeRowWriter writer) {
+    public final void parseInto(byte[] binary, UnsafeRowWriter writer) {
         CodedInputStream input = CodedInputStream.newInstance(binary);
 
-        parseAndWriteFields(input, writer);
+        parseInto(input, writer);
     }
 
     /**
@@ -38,7 +39,7 @@ public abstract class StreamWireConverter extends BufferSharingRowConverter {
      * @param input  the CodedInputStream to read protobuf data from
      * @param writer the UnsafeRowWriter to populate with parsed field data
      */
-    public abstract void parseAndWriteFields(CodedInputStream input, UnsafeRowWriter writer);
+    public abstract void parseInto(CodedInputStream input, UnsafeRowWriter writer);
 
     // ========== Array Resizing Utilities ==========
 
@@ -292,7 +293,7 @@ public abstract class StreamWireConverter extends BufferSharingRowConverter {
      * Write a repeated message field as an array to the UnsafeRow.
      * Uses nested converter with writer sharing for optimal performance.
      */
-    protected void writeMessageArray(byte[][] messageBytes, int ordinal, StreamWireConverter converter, UnsafeRowWriter writer) {
+    protected void writeMessageArray(byte[][] messageBytes, int ordinal, StreamWireParser converter, UnsafeRowWriter writer) {
         writeMessageArray(messageBytes, messageBytes.length, ordinal, converter, writer);
     }
 
@@ -300,7 +301,7 @@ public abstract class StreamWireConverter extends BufferSharingRowConverter {
      * Write a repeated message field as an array to the UnsafeRow with size parameter.
      * Eliminates array slicing by using size parameter instead of messageBytes.length.
      */
-    protected void writeMessageArray(byte[][] messageBytes, int size, int ordinal, StreamWireConverter converter, UnsafeRowWriter writer) {
+    protected void writeMessageArray(byte[][] messageBytes, int size, int ordinal, StreamWireParser converter, UnsafeRowWriter writer) {
         assert size <= messageBytes.length;
 
         int offset = writer.cursor();
@@ -309,7 +310,7 @@ public abstract class StreamWireConverter extends BufferSharingRowConverter {
 
         for (int i = 0; i < size; i++) {
             int elemOffset = arrayWriter.cursor();
-            converter.convertWithSharedBuffer(messageBytes[i], writer);
+            converter.parseWithSharedBuffer(messageBytes[i], writer);
             arrayWriter.setOffsetAndSizeFromPreviousCursor(i, elemOffset);
         }
 
@@ -322,9 +323,9 @@ public abstract class StreamWireConverter extends BufferSharingRowConverter {
      * Write a single nested message field to the UnsafeRow.
      * Uses nested converter with writer sharing.
      */
-    protected void writeMessage(byte[] messageBytes, int ordinal, StreamWireConverter converter, UnsafeRowWriter writer) {
+    protected void writeMessage(byte[] messageBytes, int ordinal, StreamWireParser converter, UnsafeRowWriter writer) {
         int offset = writer.cursor();
-        converter.convertWithSharedBuffer(messageBytes, writer);
+        converter.parseWithSharedBuffer(messageBytes, writer);
         writer.setOffsetAndSizeFromPreviousCursor(ordinal, offset);
     }
 

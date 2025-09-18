@@ -1,9 +1,8 @@
 package org.apache.spark.sql.protobuf.backport
 
 import com.google.protobuf.{Descriptors, DynamicMessage}
-import fastproto.RowConverter
+import fastproto.Parser
 import org.apache.spark.sql.catalyst.InternalRow
-import org.apache.spark.sql.catalyst.expressions.codegen.UnsafeWriter
 import org.apache.spark.sql.protobuf.backport.shims.QueryCompilationErrors
 import org.apache.spark.sql.types.{DataType, StructType}
 import org.apache.spark.unsafe.types.UTF8String
@@ -11,28 +10,28 @@ import org.apache.spark.unsafe.types.UTF8String
 import scala.collection.JavaConverters._
 
 /**
- * A RowConverter implementation that uses the original DynamicMessage deserialization path.
- * This converter wraps the existing ProtobufDeserializer logic to provide a consistent
- * interface with other converter implementations while maintaining compatibility with
+ * A Parser implementation that uses the original DynamicMessage deserialization path.
+ * This parser wraps the existing ProtobufDeserializer logic to provide a consistent
+ * interface with other parser implementations while maintaining compatibility with
  * the traditional Spark deserialization approach.
  *
- * This converter uses SpecificInternalRow internally and does not support the nested
- * buffer sharing pattern used by wire format converters. When nested buffer sharing
+ * This parser uses SpecificInternalRow internally and does not support the nested
+ * buffer sharing pattern used by wire format parsers. When nested buffer sharing
  * is required, it throws UnsupportedOperationException.
  *
  * @param messageDescriptor The protobuf message descriptor for parsing
  * @param schema            The Catalyst data type that matches the expected schema
  */
-class DynamicMessageConverter(
+class DynamicMessageParser(
     messageDescriptor: Descriptors.Descriptor,
-    val schema: StructType) extends RowConverter {
+    val schema: StructType) extends Parser {
 
   @transient private lazy val fieldsNumbers0 =
     messageDescriptor.getFields.asScala.map(f => f.getNumber).toSet
 
   private val deserializer = new ProtobufDeserializer(messageDescriptor, schema)
 
-  override def convert(binary: Array[Byte]): InternalRow = {
+  override def parse(binary: Array[Byte]): InternalRow = {
     // Parse using DynamicMessage
     val message = DynamicMessage.parseFrom(messageDescriptor, binary)
 
