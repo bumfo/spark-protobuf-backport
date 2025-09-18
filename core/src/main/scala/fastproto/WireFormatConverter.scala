@@ -2,7 +2,8 @@ package fastproto
 
 import com.google.protobuf.Descriptors.{Descriptor, FieldDescriptor}
 import com.google.protobuf.{CodedInputStream, WireFormat}
-import fastproto.AbstractWireFormatConverter._
+import fastproto.CodedInputStreamConverter._
+import java.io.IOException
 import org.apache.spark.sql.catalyst.expressions.codegen.UnsafeRowWriter
 import org.apache.spark.sql.types.{ArrayType, StructType}
 import org.apache.spark.unsafe.types.UTF8String
@@ -14,9 +15,9 @@ import scala.collection.JavaConverters._
  * using CodedInputStream, bypassing the need to materialize intermediate Message objects.
  *
  * This optimized converter provides significant performance improvements by:
- * - Extending AbstractWireFormatConverter for optimized helper methods
+ * - Extending CodedInputStreamConverter for optimized helper methods
  * - Using type-specific primitive accumulators (no boxing)
- * - Leveraging packed field parsing methods from AbstractWireFormatConverter
+ * - Leveraging packed field parsing methods from CodedInputStreamConverter
  * - Direct byte copying for strings/bytes/messages
  * - Single-pass streaming parse to UnsafeRow
  *
@@ -26,7 +27,7 @@ import scala.collection.JavaConverters._
 class WireFormatConverter(
     descriptor: Descriptor,
     override val schema: StructType)
-  extends AbstractWireFormatConverter(schema) {
+  extends CodedInputStreamConverter(schema) {
 
   import WireFormatConverter._
 
@@ -36,8 +37,7 @@ class WireFormatConverter(
   // Cache nested converters for message fields - use array for O(1) lookup
   private val nestedConvertersArray: Array[WireFormatConverter] = buildNestedConvertersArray()
 
-  override protected def parseAndWriteFields(binary: Array[Byte], writer: UnsafeRowWriter): Unit = {
-    val input = CodedInputStream.newInstance(binary)
+  override protected def parseAndWriteFields(input: CodedInputStream, writer: UnsafeRowWriter): Unit = {
 
     // Reset all field accumulators for this conversion
     resetAccumulators()
@@ -341,7 +341,7 @@ class WireFormatConverter(
     val messageBytes = input.readByteArray()
     val converter = nestedConvertersArray(mapping.fieldDescriptor.getNumber)
     if (converter != null) {
-      // Use helper method from AbstractWireFormatConverter
+      // Use helper method from CodedInputStreamConverter
       writeMessage(messageBytes, mapping.rowOrdinal, converter, writer)
     } else {
       throw new IllegalStateException(s"No nested converter found for field ${mapping.fieldDescriptor.getName}")
@@ -377,7 +377,7 @@ class WireFormatConverter(
           case list: ByteArrayList if list.count > 0 =>
             mapping.fieldDescriptor.getType match {
               case FieldDescriptor.Type.MESSAGE =>
-                val converter = nestedConvertersArray(fieldNumber).asInstanceOf[AbstractWireFormatConverter]
+                val converter = nestedConvertersArray(fieldNumber).asInstanceOf[CodedInputStreamConverter]
                 writeMessageArray(list.array, list.count, mapping.rowOrdinal, converter, writer)
               case FieldDescriptor.Type.STRING =>
                 writeStringArray(list.array, list.count, mapping.rowOrdinal, writer)
