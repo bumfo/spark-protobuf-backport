@@ -11,7 +11,7 @@ import org.apache.spark.sql.types.StructType
  * its sub-interfaces.
  *
  * Implementations are usually generated at runtime by the 
- * [[fastproto.ProtoToRowGenerator]] using Janino compilation.
+ * [[fastproto.WireFormatToRowGenerator]] using Janino compilation.
  */
 trait Parser extends Serializable {
   /**
