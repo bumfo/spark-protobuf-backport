@@ -105,21 +105,18 @@ private[backport] case class ProtobufDataToCatalyst(
   }
 
   /**
-   * Lazily create a [[fastproto.Parser]] for the compiled message class.
+   * Lazily create a [[fastproto.MessageParser]] for the compiled message class.
    * The parser uses the descriptor corresponding to this expression (from
    * either the provided binary descriptor set or `ProtobufUtils.buildDescriptor`)
    * so that the schema matches the Catalyst data type.  If the message class
    * cannot be loaded this will be [[None]].
    */
-  @transient private lazy val ParserOpt: Option[Parser] =
-  messageClassOpt.map { cls =>
+  @transient private lazy val messageParserOpt: Option[Parser] = messageClassOpt.map { cls =>
     // Use the descriptor used to compute the Catalyst schema so that
     // the row parser's schema matches the Catalyst data type.  Cast
     // the generated parser to Parser[PbMessage] since PbMessage
     // is a supertype of all generated protobuf classes.
-    val desc: com.google.protobuf.Descriptors.Descriptor = messageDescriptor
-    ProtoToRowGenerator
-      .generateParser(desc, cls)
+    ProtoToRowGenerator.generateParser(messageDescriptor, cls)
   }
 
   /**
@@ -129,19 +126,13 @@ private[backport] case class ProtobufDataToCatalyst(
    * optimized parsers with inlined field parsing and JIT-friendly branch prediction.
    * Falls back to DynamicMessage if code generation fails.
    */
-  @transient private lazy val WireFormatParserOpt: Option[StreamWireParser] =
-    binaryDescriptorSet match {
-      case Some(_) =>
-        try {
-          // Convert DataType to StructType for WireFormatParser
-          val structType = dataType
-          // Generate optimized parser using code generation
-          Some(WireFormatToRowGenerator.generateParser(messageDescriptor, structType))
-        } catch {
-          case _: Throwable => None // Fall back to DynamicMessage for unsupported cases
-        }
-      case None => None
-    }
+  @transient private lazy val wireFormatParserOpt: Option[StreamWireParser] = binaryDescriptorSet match {
+    // todo always prefer wireFormatParser
+    case Some(_) =>
+      // Generate optimized parser using code generation
+      Some(WireFormatToRowGenerator.generateParser(messageDescriptor, dataType))
+    case None => None
+  }
 
   /**
    * Lazily create a [[DynamicMessageParser]] for the fallback DynamicMessage path.
@@ -151,7 +142,7 @@ private[backport] case class ProtobufDataToCatalyst(
    */
   @transient private lazy val dynamicMessageParserOpt: Option[Parser] = {
     // Create when no other fast paths are available
-    if (ParserOpt.isEmpty && WireFormatParserOpt.isEmpty) {
+    if (messageParserOpt.isEmpty && wireFormatParserOpt.isEmpty) {
       Some(new DynamicMessageParser(messageDescriptor, dataType))
     } else {
       None
@@ -180,11 +171,11 @@ private[backport] case class ProtobufDataToCatalyst(
     val binary = input.asInstanceOf[Array[Byte]]
     try {
       // Try parsers in priority order:
-      // 1. Compiled class parser (ParserOpt)
-      // 2. Wire format parser (WireFormatParserOpt)
+      // 1. Compiled class parser (messageParserOpt)
+      // 2. Wire format parser (wireFormatParserOpt)
       // 3. DynamicMessage parser (dynamicMessageParserOpt)
-      val parser = ParserOpt
-        .orElse(WireFormatParserOpt)
+      val parser = messageParserOpt
+        .orElse(wireFormatParserOpt)
         .orElse(dynamicMessageParserOpt)
         .getOrElse(throw new IllegalStateException("No parser available"))
 
@@ -198,11 +189,11 @@ private[backport] case class ProtobufDataToCatalyst(
 
   override protected def doGenCode(ctx: CodegenContext, ev: ExprCode): ExprCode = {
     // Check if we can generate optimized code using any available parser
-    val converterOpt = ParserOpt
-      .orElse(WireFormatParserOpt)
+    val parserOpt = messageParserOpt
+      .orElse(wireFormatParserOpt)
       .orElse(dynamicMessageParserOpt)
 
-    converterOpt match {
+    parserOpt match {
       case Some(parser) =>
         // Generate optimized code path using the parser directly
         val expr = ctx.addReferenceObj("this", this)

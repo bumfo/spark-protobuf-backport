@@ -49,7 +49,7 @@ abstract class BufferSharingParser(val schema: StructType) extends Parser {
    * across the entire row tree, reducing memory allocations. Moved from Parser trait
    * to this class since only buffer-sharing parsers support this functionality.
    */
-  def parseWithSharedBuffer(binary: Array[Byte], parentWriter: UnsafeWriter): InternalRow = {
+  protected def parseWithSharedBuffer(binary: Array[Byte], parentWriter: UnsafeWriter): InternalRow = {
     val writer = acquireWriter(parentWriter)
     parseInto(binary, writer)
     if (parentWriter == null) writer.getRow else null

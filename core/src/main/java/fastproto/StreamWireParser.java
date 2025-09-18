@@ -291,17 +291,17 @@ public abstract class StreamWireParser extends BufferSharingParser {
 
     /**
      * Write a repeated message field as an array to the UnsafeRow.
-     * Uses nested converter with writer sharing for optimal performance.
+     * Uses nested parser with writer sharing for optimal performance.
      */
-    protected void writeMessageArray(byte[][] messageBytes, int ordinal, StreamWireParser converter, UnsafeRowWriter writer) {
-        writeMessageArray(messageBytes, messageBytes.length, ordinal, converter, writer);
+    protected void writeMessageArray(byte[][] messageBytes, int ordinal, StreamWireParser parser, UnsafeRowWriter writer) {
+        writeMessageArray(messageBytes, messageBytes.length, ordinal, parser, writer);
     }
 
     /**
      * Write a repeated message field as an array to the UnsafeRow with size parameter.
      * Eliminates array slicing by using size parameter instead of messageBytes.length.
      */
-    protected void writeMessageArray(byte[][] messageBytes, int size, int ordinal, StreamWireParser converter, UnsafeRowWriter writer) {
+    protected void writeMessageArray(byte[][] messageBytes, int size, int ordinal, StreamWireParser parser, UnsafeRowWriter writer) {
         assert size <= messageBytes.length;
 
         int offset = writer.cursor();
@@ -310,7 +310,7 @@ public abstract class StreamWireParser extends BufferSharingParser {
 
         for (int i = 0; i < size; i++) {
             int elemOffset = arrayWriter.cursor();
-            converter.parseWithSharedBuffer(messageBytes[i], writer);
+            parser.parseWithSharedBuffer(messageBytes[i], writer);
             arrayWriter.setOffsetAndSizeFromPreviousCursor(i, elemOffset);
         }
 
@@ -321,11 +321,11 @@ public abstract class StreamWireParser extends BufferSharingParser {
 
     /**
      * Write a single nested message field to the UnsafeRow.
-     * Uses nested converter with writer sharing.
+     * Uses nested parser with writer sharing.
      */
-    protected void writeMessage(byte[] messageBytes, int ordinal, StreamWireParser converter, UnsafeRowWriter writer) {
+    protected void writeMessage(byte[] messageBytes, int ordinal, StreamWireParser parser, UnsafeRowWriter writer) {
         int offset = writer.cursor();
-        converter.parseWithSharedBuffer(messageBytes, writer);
+        parser.parseWithSharedBuffer(messageBytes, writer);
         writer.setOffsetAndSizeFromPreviousCursor(ordinal, offset);
     }
 

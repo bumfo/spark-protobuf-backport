@@ -138,6 +138,7 @@ object ProtoToRowGenerator {
    * Uses internal caching to avoid redundant Janino compilation for the same 
    * descriptor and message class combinations. Handles recursive types by
    * creating parser graphs locally before updating the global cache.
+   * TODO: reuse SchemaConverters for schema generation, and add an optional schema parameter to be used first
    *
    * @param descriptor   the Protobuf descriptor describing the message schema
    * @param messageClass the compiled Protobuf Java class
@@ -296,9 +297,9 @@ object ProtoToRowGenerator {
    * This method creates the complete Java class source code including imports,
    * class declaration, fields, constructor, and conversion methods.
    *
-   * @param className the name of the generated Java class
-   * @param descriptor the Protobuf descriptor for the message
-   * @param messageClass the compiled Java class for the message
+   * @param className      the name of the generated Java class
+   * @param descriptor     the Protobuf descriptor for the message
+   * @param messageClass   the compiled Java class for the message
    * @param numNestedTypes the number of nested message types
    * @return StringBuilder containing the complete Java source code
    */
@@ -653,7 +654,7 @@ object ProtoToRowGenerator {
    * Compile the generated Java source code using Janino and instantiate the parser.
    *
    * @param sourceCode the complete Java source code
-   * @param className the name of the generated class
+   * @param className  the name of the generated class
    * @param descriptor the Protobuf descriptor (used for schema generation)
    * @return a compiled and instantiated Parser
    */

@@ -10,10 +10,10 @@ import org.apache.spark.unsafe.types.UTF8String
 import scala.collection.JavaConverters._
 
 /**
- * A high-performance converter that reads protobuf binary data directly from wire format
+ * A high-performance parser that reads protobuf binary data directly from wire format
  * using CodedInputStream, bypassing the need to materialize intermediate Message objects.
  *
- * This optimized converter provides significant performance improvements by:
+ * This optimized parser provides significant performance improvements by:
  * - Extending StreamWireParser for optimized helper methods
  * - Using type-specific primitive accumulators (no boxing)
  * - Leveraging packed field parsing methods from StreamWireParser
@@ -338,12 +338,12 @@ class WireFormatParser(
       mapping: FieldMapping,
       writer: UnsafeRowWriter): Unit = {
     val messageBytes = input.readByteArray()
-    val converter = nestedParsersArray(mapping.fieldDescriptor.getNumber)
-    if (converter != null) {
+    val parser = nestedParsersArray(mapping.fieldDescriptor.getNumber)
+    if (parser != null) {
       // Use helper method from StreamWireParser
-      writeMessage(messageBytes, mapping.rowOrdinal, converter, writer)
+      writeMessage(messageBytes, mapping.rowOrdinal, parser, writer)
     } else {
-      throw new IllegalStateException(s"No nested converter found for field ${mapping.fieldDescriptor.getName}")
+      throw new IllegalStateException(s"No nested parser found for field ${mapping.fieldDescriptor.getName}")
     }
   }
 
@@ -376,8 +376,8 @@ class WireFormatParser(
           case list: ByteArrayList if list.count > 0 =>
             mapping.fieldDescriptor.getType match {
               case FieldDescriptor.Type.MESSAGE =>
-                val converter = nestedParsersArray(fieldNumber).asInstanceOf[StreamWireParser]
-                writeMessageArray(list.array, list.count, mapping.rowOrdinal, converter, writer)
+                val parser = nestedParsersArray(fieldNumber).asInstanceOf[StreamWireParser]
+                writeMessageArray(list.array, list.count, mapping.rowOrdinal, parser, writer)
               case FieldDescriptor.Type.STRING =>
                 writeStringArray(list.array, list.count, mapping.rowOrdinal, writer)
               case FieldDescriptor.Type.BYTES =>
