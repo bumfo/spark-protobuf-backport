@@ -39,7 +39,7 @@ public abstract class StreamWireParser extends BufferSharingParser {
      * @param input  the CodedInputStream to read protobuf data from
      * @param writer the UnsafeRowWriter to populate with parsed field data
      */
-    public abstract void parseInto(CodedInputStream input, UnsafeRowWriter writer);
+    protected abstract void parseInto(CodedInputStream input, UnsafeRowWriter writer);
 
     // ========== Array Resizing Utilities ==========
 
