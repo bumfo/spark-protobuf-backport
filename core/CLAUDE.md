@@ -76,7 +76,9 @@ Parser (trait) - Base interface for protobuf → InternalRow
 - `parseWithSharedBuffer()` - Enables buffer sharing for nested structures
 
 **`StreamWireParser`** - Abstract base for CodedInputStream-based parsing (extends BufferSharingParser)
+
 **`WireFormatParser`** - Direct wire format parsing for binary descriptor sets
+
 **`AbstractMessageParser[T]`** - Abstract base for generated message parsers with buffer sharing support:
 - `parseWithSharedBuffer(message, parentWriter)` - Message conversion with buffer sharing
 
