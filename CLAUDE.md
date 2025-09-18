@@ -7,8 +7,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 This is a Scala/Spark project that backports Spark 3.4's protobuf connector to Spark 3.2.1. It provides `from_protobuf` and `to_protobuf` functions to convert between binary Protobuf data and Spark SQL DataFrames without requiring users to upgrade Spark or patch the runtime.
 
 The project includes three key optimizations:
-1. **Compiled message support**: When `messageName` refers to a compiled Java class, uses generated `RowConverter` via Janino for direct conversion to `UnsafeRow`, avoiding `DynamicMessage` overhead
-2. **Wire format converter**: Direct binary parsing for binary descriptor sets using `WireFormatConverter`
+1. **Compiled message support**: When `messageName` refers to a compiled Java class, uses generated `Parser` via Janino for direct conversion to `UnsafeRow`, avoiding `DynamicMessage` overhead
+2. **Wire format parser**: Direct binary parsing for binary descriptor sets using `WireFormatParser`
 3. **Binary descriptor sets**: Allows passing descriptor bytes directly to avoid file distribution issues on executors
 
 ## Project Structure
@@ -18,18 +18,18 @@ The project includes three key optimizations:
 - **`shaded/`** - Shaded protobuf dependencies for conflict avoidance
 - **`uber/`** - Assembled JAR with all dependencies
 
-## Converter Architecture
+## Parser Architecture
 
-The project features a three-tier converter interface hierarchy optimized for different use cases:
+The project features a three-tier parser interface hierarchy optimized for different use cases:
 
-1. **`RowConverter`** - Base interface for simple protobuf binary → InternalRow conversion
-2. **`BufferSharingRowConverter`** - Base implementation with buffer sharing for efficient nested conversions
-3. **`MessageBasedConverter[T]`** - Interface for compiled protobuf message → InternalRow conversion
+1. **`Parser`** - Base interface for simple protobuf binary → InternalRow conversion
+2. **`BufferSharingParser`** - Base implementation with buffer sharing for efficient nested conversions
+3. **`MessageParser[T]`** - Interface for compiled protobuf message → InternalRow conversion
 
 ### Performance Characteristics
-- **Generated converters (compiled class)**: ~1,844 ns/op (fastest)
-- **Wire format converters**: ~4,399 ns/op (2.4x slower)
-- **DynamicMessage converters**: ~24,992 ns/op (13.6x slower)
+- **Generated parsers (compiled class)**: ~1,844 ns/op (fastest)
+- **Wire format parsers**: ~4,399 ns/op (2.4x slower)
+- **DynamicMessage parsers**: ~24,992 ns/op (13.6x slower)
 
 See `core/CLAUDE.md` for detailed interface documentation and usage examples.
 
