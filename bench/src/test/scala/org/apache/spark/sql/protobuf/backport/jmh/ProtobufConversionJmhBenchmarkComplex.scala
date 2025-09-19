@@ -45,11 +45,6 @@ class ProtobufConversionJmhBenchmarkComplex {
   var complexDirectParser: WireFormatParser = _
   var complexGeneratedParser: StreamWireParser = _
   var complexDynamicParser: DynamicMessageParser = _
-  var complexCompiledParser: Option[Any] = _
-
-  // Expressions for integration testing
-  var complexBinaryDescExpression: ProtobufDataToCatalyst = _
-  var complexDescriptorFileExpression: ProtobufDataToCatalyst = _
 
   @Setup
   def setup(): Unit = {
@@ -75,33 +70,6 @@ class ProtobufConversionJmhBenchmarkComplex {
     complexDirectParser = new WireFormatParser(complexDescriptor, complexSparkSchema)
     complexGeneratedParser = WireFormatToRowGenerator.generateParser(complexDescriptor, complexSparkSchema)
     complexDynamicParser = new DynamicMessageParser(complexDescriptor, complexSparkSchema)
-
-    // Try to create compiled parser
-    try {
-      complexCompiledParser = Some(ProtoToRowGenerator.generateParser(
-        complexDescriptor,
-        classOf[ComplexBenchmarkProtos.ComplexMessageA]
-      ))
-    } catch {
-      case _: Exception => complexCompiledParser = None
-    }
-
-    // === Initialize Catalyst Expressions ===
-    complexBinaryDescExpression = ProtobufDataToCatalyst(
-      child = Literal.create(complexBinary, BinaryType),
-      messageName = complexDescriptor.getFullName,
-      descFilePath = None,
-      options = Map.empty,
-      binaryDescriptorSet = Some(complexDescSet)
-    )
-
-    complexDescriptorFileExpression = ProtobufDataToCatalyst(
-      child = Literal.create(complexBinary, BinaryType),
-      messageName = complexDescriptor.getFullName,
-      descFilePath = Some(complexTempDescFile.getAbsolutePath),
-      options = Map.empty,
-      binaryDescriptorSet = None
-    )
   }
 
   @TearDown

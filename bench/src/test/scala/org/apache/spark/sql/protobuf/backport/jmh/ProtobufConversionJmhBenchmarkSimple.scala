@@ -47,11 +47,6 @@ class ProtobufConversionJmhBenchmarkSimple {
   var simpleDirectParser: WireFormatParser = _
   var simpleGeneratedParser: StreamWireParser = _
   var simpleDynamicParser: DynamicMessageParser = _
-  var simpleCompiledParser: Option[Any] = _
-
-  // Expressions for integration testing
-  var simpleBinaryDescExpression: ProtobufDataToCatalyst = _
-  var simpleDescriptorFileExpression: ProtobufDataToCatalyst = _
 
   @Setup
   def setup(): Unit = {
@@ -77,33 +72,6 @@ class ProtobufConversionJmhBenchmarkSimple {
     simpleDirectParser = new WireFormatParser(simpleDescriptor, simpleSparkSchema)
     simpleGeneratedParser = WireFormatToRowGenerator.generateParser(simpleDescriptor, simpleSparkSchema)
     simpleDynamicParser = new DynamicMessageParser(simpleDescriptor, simpleSparkSchema)
-
-    // Try to create compiled parser
-    try {
-      simpleCompiledParser = Some(ProtoToRowGenerator.generateParser(
-        simpleDescriptor,
-        classOf[SimpleBenchmarkProtos.SimpleMessage]
-      ))
-    } catch {
-      case _: Exception => simpleCompiledParser = None
-    }
-
-    // === Initialize Catalyst Expressions ===
-    simpleBinaryDescExpression = ProtobufDataToCatalyst(
-      child = Literal.create(simpleBinary, BinaryType),
-      messageName = simpleDescriptor.getFullName,
-      descFilePath = None,
-      options = Map.empty,
-      binaryDescriptorSet = Some(simpleDescSet)
-    )
-
-    simpleDescriptorFileExpression = ProtobufDataToCatalyst(
-      child = Literal.create(simpleBinary, BinaryType),
-      messageName = simpleDescriptor.getFullName,
-      descFilePath = Some(simpleTempDescFile.getAbsolutePath),
-      options = Map.empty,
-      binaryDescriptorSet = None
-    )
   }
 
   @TearDown
