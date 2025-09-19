@@ -19,6 +19,7 @@ import scala.collection.JavaConverters._
  * - Leveraging packed field parsing methods from StreamWireParser
  * - Direct byte copying for strings/bytes/messages
  * - Single-pass streaming parse to UnsafeRow
+ * TODO support skipping GROUP wire type by default
  *
  * @param descriptor the protobuf message descriptor
  * @param schema     the corresponding Spark SQL schema
