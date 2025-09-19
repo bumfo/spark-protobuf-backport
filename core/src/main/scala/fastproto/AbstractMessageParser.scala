@@ -7,7 +7,7 @@ import org.apache.spark.sql.types.StructType
 abstract class AbstractMessageParser[T](schema: StructType)
   extends BufferSharingParser(schema) with MessageParser[T] {
 
-  protected def parseInto(message: T, writer: UnsafeRowWriter): Unit
+  def parseInto(message: T, writer: UnsafeRowWriter): Unit
 
   /**
    * Default implementation for partial byte array parsing.
@@ -15,7 +15,7 @@ abstract class AbstractMessageParser[T](schema: StructType)
    * this method creates a slice of the byte array and delegates to
    * the existing parseInto(Array[Byte], UnsafeRowWriter) method.
    */
-  override protected def parseInto(binary: Array[Byte], offset: Int, length: Int, writer: UnsafeRowWriter): Unit = {
+  override def parseInto(binary: Array[Byte], offset: Int, length: Int, writer: UnsafeRowWriter): Unit = {
     // Create a slice of the array for this implementation
     // Note: This involves array copying, but AbstractMessageParser subclasses
     // typically work with pre-parsed messages rather than raw bytes
