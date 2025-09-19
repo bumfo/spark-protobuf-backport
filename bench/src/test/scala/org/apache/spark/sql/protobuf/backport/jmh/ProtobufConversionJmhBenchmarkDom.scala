@@ -75,13 +75,13 @@ class ProtobufConversionJmhBenchmarkDom {
     // Use standard complexity for setup
     domDescriptor = standardDom.getDescriptorForType
 
-    // === Create Spark schema with recursion mocking ===
-    // This is the key innovation: use custom schema converter that mocks recursive fields
-    domSparkSchema = RecursiveSchemaConverters.toSqlTypeWithRecursionMocking(domDescriptor)
-      .asInstanceOf[StructType]
+    // === Create Spark schema with TRUE recursion ===
+    // This creates actual recursive schemas where DomNode.children refers back to DomNode
+    // WARNING: Invalid for Spark SQL but works for benchmarking/parser generation
+    domSparkSchema = RecursiveSchemaConverters.toSqlTypeWithTrueRecursion(domDescriptor)
 
     println(s"DOM Schema created with ${domSparkSchema.fields.length} fields")
-    println(s"Mocked recursive fields: ${RecursiveSchemaConverters.getMockedFields(domDescriptor).mkString(", ")}")
+    RecursiveSchemaConverters.printTrueRecursiveSchemaInfo(domDescriptor)
 
     // === Create FileDescriptorSet ===
     domDescSet = DescriptorProtos.FileDescriptorSet.newBuilder()
