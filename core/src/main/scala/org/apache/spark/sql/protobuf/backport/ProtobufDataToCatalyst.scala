@@ -129,7 +129,7 @@ private[backport] case class ProtobufDataToCatalyst(
    * Falls back to DynamicMessage if code generation fails.
    */
   @transient private lazy val wireFormatParserOpt: Option[StreamWireParser] = binaryDescriptorSet match {
-    // todo always prefer wireFormatParser
+    // TODO always prefer wireFormatParser
     case Some(_) =>
       try {
         // Generate optimized parser using code generation
