@@ -37,6 +37,7 @@ abstract class BufferSharingParser(val schema: StructType) extends Parser {
    * This method is called by [[parseWithSharedBuffer(Array[Byte], UnsafeWriter)]] after writer acquisition.
    * The convert method handles buffer sharing and writer lifecycle, while parseInto focuses
    * on parsing and field extraction logic.
+   * TODO: support passing partial byte array, e.g. array, offset, length
    *
    * @param binary the protobuf binary data to parse
    * @param writer the UnsafeRowWriter to populate with parsed field data
@@ -48,6 +49,7 @@ abstract class BufferSharingParser(val schema: StructType) extends Parser {
    * This method enables efficient nested conversions by sharing the underlying buffer
    * across the entire row tree, reducing memory allocations. Moved from Parser trait
    * to this class since only buffer-sharing parsers support this functionality.
+   * TODO: manually inline this method in suitable places to reuse acquired writer (e.g. in loop)
    */
   def parseWithSharedBuffer(binary: Array[Byte], parentWriter: UnsafeWriter): InternalRow = {
     val writer = acquireWriter(parentWriter)
