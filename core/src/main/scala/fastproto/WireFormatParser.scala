@@ -185,152 +185,170 @@ class WireFormatParser(
       return
     }
 
-    // TODO JIT friendly: split repeated and single into separate method to reduce bytecode size
+    // JIT friendly: split repeated and single field parsing into separate methods to reduce bytecode size
     if (mapping.isRepeated) {
-      // For repeated fields, accumulate values using type-specific accumulators
-      mapping.fieldDescriptor.getType match {
-        // Variable-length int32 types
-        case INT32 | UINT32 =>
-          val list = mapping.accumulator.asInstanceOf[IntList]
-          if (wireType == WireFormat.WIRETYPE_LENGTH_DELIMITED) {
-            parsePackedVarint32s(input, list)
-          } else {
-            list.add(input.readRawVarint32())
-          }
-
-        case ENUM =>
-          val list = mapping.accumulator.asInstanceOf[IntList]
-          if (wireType == WireFormat.WIRETYPE_LENGTH_DELIMITED) {
-            parsePackedVarint32s(input, list)
-          } else {
-            list.add(input.readEnum())
-          }
-
-        case SINT32 =>
-          val list = mapping.accumulator.asInstanceOf[IntList]
-          if (wireType == WireFormat.WIRETYPE_LENGTH_DELIMITED) {
-            parsePackedSInt32s(input, list)
-          } else {
-            list.add(input.readSInt32())
-          }
-
-        // Variable-length int64 types
-        case INT64 | UINT64 =>
-          val list = mapping.accumulator.asInstanceOf[LongList]
-          if (wireType == WireFormat.WIRETYPE_LENGTH_DELIMITED) {
-            parsePackedVarint64s(input, list)
-          } else {
-            list.add(input.readRawVarint64())
-          }
-
-        case SINT64 =>
-          val list = mapping.accumulator.asInstanceOf[LongList]
-          if (wireType == WireFormat.WIRETYPE_LENGTH_DELIMITED) {
-            parsePackedSInt64s(input, list)
-          } else {
-            list.add(input.readSInt64())
-          }
-
-        // Fixed-size int32 types
-        case FIXED32 | SFIXED32 =>
-          val list = mapping.accumulator.asInstanceOf[IntList]
-          if (wireType == WireFormat.WIRETYPE_LENGTH_DELIMITED) {
-            val packedLength = input.readRawVarint32()
-            list.array = parsePackedFixed32s(input, list.array, list.count, packedLength)
-            list.count += packedLength / 4
-          } else {
-            list.add(input.readRawLittleEndian32())
-          }
-
-        // Fixed-size int64 types
-        case FIXED64 | SFIXED64 =>
-          val list = mapping.accumulator.asInstanceOf[LongList]
-          if (wireType == WireFormat.WIRETYPE_LENGTH_DELIMITED) {
-            val packedLength = input.readRawVarint32()
-            list.array = parsePackedFixed64s(input, list.array, list.count, packedLength)
-            list.count += packedLength / 8
-          } else {
-            list.add(input.readRawLittleEndian64())
-          }
-
-        // Float type
-        case FLOAT =>
-          val list = mapping.accumulator.asInstanceOf[FloatList]
-          if (wireType == WireFormat.WIRETYPE_LENGTH_DELIMITED) {
-            val packedLength = input.readRawVarint32()
-            list.array = parsePackedFloats(input, list.array, list.count, packedLength)
-            list.count += packedLength / 4
-          } else {
-            list.add(input.readFloat())
-          }
-
-        // Double type
-        case DOUBLE =>
-          val list = mapping.accumulator.asInstanceOf[DoubleList]
-          if (wireType == WireFormat.WIRETYPE_LENGTH_DELIMITED) {
-            val packedLength = input.readRawVarint32()
-            list.array = parsePackedDoubles(input, list.array, list.count, packedLength)
-            list.count += packedLength / 8
-          } else {
-            list.add(input.readDouble())
-          }
-
-        // Boolean type
-        case BOOL =>
-          val list = mapping.accumulator.asInstanceOf[BooleanList]
-          if (wireType == WireFormat.WIRETYPE_LENGTH_DELIMITED) {
-            val packedLength = input.readRawVarint32()
-            list.array = parsePackedBooleans(input, list.array, list.count, packedLength)
-            list.count += packedLength
-          } else {
-            list.add(input.readBool())
-          }
-
-        // String/Bytes/Message types
-        case STRING | BYTES | MESSAGE =>
-          val list = mapping.accumulator.asInstanceOf[ByteArrayList]
-          list.add(input.readByteArray())
-
-        case GROUP =>
-          throw new UnsupportedOperationException("GROUP type is deprecated and not supported")
-      }
+      parseRepeatedField(input, wireType, mapping)
     } else {
-      // Single field - write directly using existing logic
-      mapping.fieldDescriptor.getType match {
-        case DOUBLE =>
-          writer.write(mapping.rowOrdinal, input.readDouble())
-        case FLOAT =>
-          writer.write(mapping.rowOrdinal, input.readFloat())
-        case INT64 | UINT64 =>
-          writer.write(mapping.rowOrdinal, input.readRawVarint64())
-        case INT32 | UINT32 =>
-          writer.write(mapping.rowOrdinal, input.readRawVarint32())
-        case FIXED64 | SFIXED64 =>
-          writer.write(mapping.rowOrdinal, input.readRawLittleEndian64())
-        case FIXED32 | SFIXED32 =>
-          writer.write(mapping.rowOrdinal, input.readRawLittleEndian32())
-        case BOOL =>
-          writer.write(mapping.rowOrdinal, input.readBool())
-        case STRING =>
-          val bytes = input.readByteArray()
-          writer.write(mapping.rowOrdinal, UTF8String.fromBytes(bytes))
-        case BYTES =>
-          writer.write(mapping.rowOrdinal, input.readByteArray())
-        case ENUM =>
-          val enumValue = input.readEnum()
-          val enumDescriptor = mapping.fieldDescriptor.getEnumType
-          val enumValueDescriptor = enumDescriptor.findValueByNumber(enumValue)
-          val enumName = if (enumValueDescriptor != null) enumValueDescriptor.getName else enumValue.toString
-          writer.write(mapping.rowOrdinal, UTF8String.fromString(enumName))
-        case SINT32 =>
-          writer.write(mapping.rowOrdinal, input.readSInt32())
-        case SINT64 =>
-          writer.write(mapping.rowOrdinal, input.readSInt64())
-        case MESSAGE =>
-          parseNestedMessage(input, mapping, writer)
-        case GROUP =>
-          throw new UnsupportedOperationException("GROUP type is deprecated and not supported")
-      }
+      parseSingleField(input, mapping, writer)
+    }
+  }
+
+  private def parseRepeatedField(
+      input: CodedInputStream,
+      wireType: Int,
+      mapping: FieldMapping): Unit = {
+    import FieldDescriptor.Type._
+
+    // For repeated fields, accumulate values using type-specific accumulators
+    mapping.fieldDescriptor.getType match {
+      // Variable-length int32 types
+      case INT32 | UINT32 =>
+        val list = mapping.accumulator.asInstanceOf[IntList]
+        if (wireType == WireFormat.WIRETYPE_LENGTH_DELIMITED) {
+          parsePackedVarint32s(input, list)
+        } else {
+          list.add(input.readRawVarint32())
+        }
+
+      case ENUM =>
+        val list = mapping.accumulator.asInstanceOf[IntList]
+        if (wireType == WireFormat.WIRETYPE_LENGTH_DELIMITED) {
+          parsePackedVarint32s(input, list)
+        } else {
+          list.add(input.readEnum())
+        }
+
+      case SINT32 =>
+        val list = mapping.accumulator.asInstanceOf[IntList]
+        if (wireType == WireFormat.WIRETYPE_LENGTH_DELIMITED) {
+          parsePackedSInt32s(input, list)
+        } else {
+          list.add(input.readSInt32())
+        }
+
+      // Variable-length int64 types
+      case INT64 | UINT64 =>
+        val list = mapping.accumulator.asInstanceOf[LongList]
+        if (wireType == WireFormat.WIRETYPE_LENGTH_DELIMITED) {
+          parsePackedVarint64s(input, list)
+        } else {
+          list.add(input.readRawVarint64())
+        }
+
+      case SINT64 =>
+        val list = mapping.accumulator.asInstanceOf[LongList]
+        if (wireType == WireFormat.WIRETYPE_LENGTH_DELIMITED) {
+          parsePackedSInt64s(input, list)
+        } else {
+          list.add(input.readSInt64())
+        }
+
+      // Fixed-size int32 types
+      case FIXED32 | SFIXED32 =>
+        val list = mapping.accumulator.asInstanceOf[IntList]
+        if (wireType == WireFormat.WIRETYPE_LENGTH_DELIMITED) {
+          val packedLength = input.readRawVarint32()
+          list.array = parsePackedFixed32s(input, list.array, list.count, packedLength)
+          list.count += packedLength / 4
+        } else {
+          list.add(input.readRawLittleEndian32())
+        }
+
+      // Fixed-size int64 types
+      case FIXED64 | SFIXED64 =>
+        val list = mapping.accumulator.asInstanceOf[LongList]
+        if (wireType == WireFormat.WIRETYPE_LENGTH_DELIMITED) {
+          val packedLength = input.readRawVarint32()
+          list.array = parsePackedFixed64s(input, list.array, list.count, packedLength)
+          list.count += packedLength / 8
+        } else {
+          list.add(input.readRawLittleEndian64())
+        }
+
+      // Float type
+      case FLOAT =>
+        val list = mapping.accumulator.asInstanceOf[FloatList]
+        if (wireType == WireFormat.WIRETYPE_LENGTH_DELIMITED) {
+          val packedLength = input.readRawVarint32()
+          list.array = parsePackedFloats(input, list.array, list.count, packedLength)
+          list.count += packedLength / 4
+        } else {
+          list.add(input.readFloat())
+        }
+
+      // Double type
+      case DOUBLE =>
+        val list = mapping.accumulator.asInstanceOf[DoubleList]
+        if (wireType == WireFormat.WIRETYPE_LENGTH_DELIMITED) {
+          val packedLength = input.readRawVarint32()
+          list.array = parsePackedDoubles(input, list.array, list.count, packedLength)
+          list.count += packedLength / 8
+        } else {
+          list.add(input.readDouble())
+        }
+
+      // Boolean type
+      case BOOL =>
+        val list = mapping.accumulator.asInstanceOf[BooleanList]
+        if (wireType == WireFormat.WIRETYPE_LENGTH_DELIMITED) {
+          val packedLength = input.readRawVarint32()
+          list.array = parsePackedBooleans(input, list.array, list.count, packedLength)
+          list.count += packedLength
+        } else {
+          list.add(input.readBool())
+        }
+
+      // String/Bytes/Message types
+      case STRING | BYTES | MESSAGE =>
+        val list = mapping.accumulator.asInstanceOf[ByteArrayList]
+        list.add(input.readByteArray())
+
+      case GROUP =>
+        throw new UnsupportedOperationException("GROUP type is deprecated and not supported")
+    }
+  }
+
+  private def parseSingleField(
+      input: CodedInputStream,
+      mapping: FieldMapping,
+      writer: UnsafeRowWriter): Unit = {
+    import FieldDescriptor.Type._
+
+    // Single field - write directly to the row
+    mapping.fieldDescriptor.getType match {
+      case DOUBLE =>
+        writer.write(mapping.rowOrdinal, input.readDouble())
+      case FLOAT =>
+        writer.write(mapping.rowOrdinal, input.readFloat())
+      case INT64 | UINT64 =>
+        writer.write(mapping.rowOrdinal, input.readRawVarint64())
+      case INT32 | UINT32 =>
+        writer.write(mapping.rowOrdinal, input.readRawVarint32())
+      case FIXED64 | SFIXED64 =>
+        writer.write(mapping.rowOrdinal, input.readRawLittleEndian64())
+      case FIXED32 | SFIXED32 =>
+        writer.write(mapping.rowOrdinal, input.readRawLittleEndian32())
+      case BOOL =>
+        writer.write(mapping.rowOrdinal, input.readBool())
+      case STRING =>
+        val bytes = input.readByteArray()
+        writer.write(mapping.rowOrdinal, UTF8String.fromBytes(bytes))
+      case BYTES =>
+        writer.write(mapping.rowOrdinal, input.readByteArray())
+      case ENUM =>
+        val enumValue = input.readEnum()
+        val enumDescriptor = mapping.fieldDescriptor.getEnumType
+        val enumValueDescriptor = enumDescriptor.findValueByNumber(enumValue)
+        val enumName = if (enumValueDescriptor != null) enumValueDescriptor.getName else enumValue.toString
+        writer.write(mapping.rowOrdinal, UTF8String.fromString(enumName))
+      case SINT32 =>
+        writer.write(mapping.rowOrdinal, input.readSInt32())
+      case SINT64 =>
+        writer.write(mapping.rowOrdinal, input.readSInt64())
+      case MESSAGE =>
+        parseNestedMessage(input, mapping, writer)
+      case GROUP =>
+        throw new UnsupportedOperationException("GROUP type is deprecated and not supported")
     }
   }
 
