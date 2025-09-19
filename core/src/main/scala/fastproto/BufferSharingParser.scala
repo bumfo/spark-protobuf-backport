@@ -13,12 +13,13 @@ abstract class BufferSharingParser(val schema: StructType) extends Parser {
       instanceWriter.zeroOutNullBytes()
       instanceWriter
     } else {
-      val writer = new UnsafeRowWriter(parentWriter, schema.length)
+      val writer = acquireNestedWriter(parentWriter)
       writer.resetRowWriter()
-      writer.zeroOutNullBytes()
       writer
     }
   }
+
+  def acquireNestedWriter(parentWriter: UnsafeWriter): UnsafeRowWriter = new UnsafeRowWriter(parentWriter, schema.length)
 
   /**
    * Core parsing method that implementations must override to write protobuf data to UnsafeRowWriter.
