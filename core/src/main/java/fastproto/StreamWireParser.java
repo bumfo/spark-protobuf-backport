@@ -321,10 +321,11 @@ public abstract class StreamWireParser extends BufferSharingParser {
         UnsafeArrayWriter arrayWriter = new UnsafeArrayWriter(writer, 8);
         arrayWriter.initialize(size);
 
+        // Lift writer acquisition outside loop for O(1) allocations instead of O(n)
+        UnsafeRowWriter nestedWriter = parser.acquireNestedWriter(writer);
         for (int i = 0; i < size; i++) {
             int elemOffset = arrayWriter.cursor();
-            // Inline parseWithSharedBuffer to enable loop-invariant code motion for writer reuse
-            UnsafeRowWriter nestedWriter = parser.acquireWriter(writer);
+            nestedWriter.resetRowWriter();
             parser.parseInto(messageBytes[i], nestedWriter);
             arrayWriter.setOffsetAndSizeFromPreviousCursor(i, elemOffset);
         }
