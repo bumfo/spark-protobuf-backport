@@ -322,7 +322,9 @@ public abstract class StreamWireParser extends BufferSharingParser {
 
         for (int i = 0; i < size; i++) {
             int elemOffset = arrayWriter.cursor();
-            parser.parseWithSharedBuffer(messageBytes[i], writer);
+            // Inline parseWithSharedBuffer to enable loop-invariant code motion for writer reuse
+            UnsafeRowWriter nestedWriter = parser.acquireWriter(writer);
+            parser.parseInto(messageBytes[i], nestedWriter);
             arrayWriter.setOffsetAndSizeFromPreviousCursor(i, elemOffset);
         }
 
@@ -337,7 +339,9 @@ public abstract class StreamWireParser extends BufferSharingParser {
      */
     protected void writeMessage(byte[] messageBytes, int ordinal, StreamWireParser parser, UnsafeRowWriter writer) {
         int offset = writer.cursor();
-        parser.parseWithSharedBuffer(messageBytes, writer);
+        // Inline parseWithSharedBuffer for potential optimizations
+        UnsafeRowWriter nestedWriter = parser.acquireWriter(writer);
+        parser.parseInto(messageBytes, nestedWriter);
         writer.setOffsetAndSizeFromPreviousCursor(ordinal, offset);
     }
 
