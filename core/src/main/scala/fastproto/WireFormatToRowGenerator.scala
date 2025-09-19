@@ -531,19 +531,15 @@ object WireFormatToRowGenerator {
       }
     }
 
-    // Initialize and reset nested writers for singular message fields
+    // Declare nested writers for singular message fields (lazy creation)
     val singularMessageFields = descriptor.getFields.asScala.filter(field =>
       !field.isRepeated && field.getType == FieldDescriptor.Type.MESSAGE && schema.fieldNames.contains(field.getName)
     )
     if (singularMessageFields.nonEmpty) {
-      code ++= "\n    // Initialize nested writers for singular message fields\n"
+      code ++= "\n    // Declare nested writers for singular message fields (lazy creation)\n"
       singularMessageFields.foreach { field =>
         val fieldNum = field.getNumber
         code ++= s"    UnsafeRowWriter nestedWriter${fieldNum} = null;\n"
-        code ++= s"    if (nestedConv${fieldNum} != null) {\n"
-        code ++= s"      nestedWriter${fieldNum} = nestedConv${fieldNum}.acquireNestedWriter(writer);\n"
-        code ++= s"      nestedWriter${fieldNum}.resetRowWriter();\n"
-        code ++= s"    }\n"
       }
     }
 
@@ -659,6 +655,10 @@ object WireFormatToRowGenerator {
         code ++= s"            writer.write($ordinal, UTF8String.fromString(getEnumName${fieldNum}(input.readEnum())));\n"
       case FieldDescriptor.Type.MESSAGE =>
         code ++= s"            byte[] messageBytes = input.readByteArray();\n"
+        code ++= s"            if (nestedWriter${fieldNum} == null && nestedConv${fieldNum} != null) {\n"
+        code ++= s"              nestedWriter${fieldNum} = nestedConv${fieldNum}.acquireNestedWriter(writer);\n"
+        code ++= s"              nestedWriter${fieldNum}.resetRowWriter();\n"
+        code ++= s"            }\n"
         code ++= s"            if (nestedWriter${fieldNum} != null) {\n"
         code ++= s"              nestedConv${fieldNum}.parseInto(messageBytes, nestedWriter${fieldNum});\n"
         code ++= s"            }\n"
