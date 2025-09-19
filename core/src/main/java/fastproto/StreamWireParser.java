@@ -33,6 +33,18 @@ public abstract class StreamWireParser extends BufferSharingParser {
     }
 
     /**
+     * Convenience method that creates a CodedInputStream from a partial byte array and delegates
+     * to the abstract parseInto(CodedInputStream, UnsafeRowWriter) method.
+     * This avoids array copying when parsing embedded or streamed protobuf data.
+     */
+    @Override
+    public final void parseInto(byte[] binary, int offset, int length, UnsafeRowWriter writer) {
+        CodedInputStream input = CodedInputStream.newInstance(binary, offset, length);
+
+        parseInto(input, writer);
+    }
+
+    /**
      * Abstract method for subclasses to implement CodedInputStream-based parsing logic.
      * Parses protobuf fields from the CodedInputStream and writes them to the UnsafeRowWriter.
      *

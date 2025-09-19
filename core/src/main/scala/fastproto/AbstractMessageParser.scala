@@ -10,6 +10,20 @@ abstract class AbstractMessageParser[T](schema: StructType)
   protected def parseInto(message: T, writer: UnsafeRowWriter): Unit
 
   /**
+   * Default implementation for partial byte array parsing.
+   * Since AbstractMessageParser works with compiled message objects,
+   * this method creates a slice of the byte array and delegates to
+   * the existing parseInto(Array[Byte], UnsafeRowWriter) method.
+   */
+  override protected def parseInto(binary: Array[Byte], offset: Int, length: Int, writer: UnsafeRowWriter): Unit = {
+    // Create a slice of the array for this implementation
+    // Note: This involves array copying, but AbstractMessageParser subclasses
+    // typically work with pre-parsed messages rather than raw bytes
+    val slice = java.util.Arrays.copyOfRange(binary, offset, offset + length)
+    parseInto(slice, writer)
+  }
+
+  /**
    * Parse a message using a shared UnsafeWriter for BufferHolder sharing.
    * This method enables efficient nested conversions by sharing the underlying
    * buffer across the entire row tree, reducing memory allocations.
