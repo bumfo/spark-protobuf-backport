@@ -1,18 +1,16 @@
 package org.apache.spark.sql.protobuf.backport.jmh
 
-import java.util.concurrent.TimeUnit
 import benchmark.{ComplexBenchmarkProtos, TestDataGenerator}
 import com.google.protobuf.{DescriptorProtos, Descriptors}
 import fastproto.{ProtoToRowGenerator, StreamWireParser, WireFormatParser, WireFormatToRowGenerator}
-import org.apache.spark.sql.protobuf.backport.DynamicMessageParser
 import org.apache.spark.sql.catalyst.expressions.Literal
-import org.apache.spark.sql.protobuf.backport.ProtobufDataToCatalyst
 import org.apache.spark.sql.protobuf.backport.utils.SchemaConverters
+import org.apache.spark.sql.protobuf.backport.{DynamicMessageParser, ProtobufDataToCatalyst}
 import org.apache.spark.sql.types._
 import org.openjdk.jmh.annotations._
 import org.openjdk.jmh.infra.Blackhole
 
-import scala.collection.JavaConverters._
+import java.util.concurrent.TimeUnit
 
 
 /**
@@ -123,31 +121,8 @@ class ProtobufConversionJmhBenchmarkComplex {
     bh.consume(complexDirectParser.parse(complexBinary))
   }
 
-  @Benchmark
+  // @Benchmark
   def complexDynamicMessageParser(bh: Blackhole): Unit = {
     bh.consume(complexDynamicParser.parse(complexBinary))
-  }
-
-  @Benchmark
-  def complexCompiledMessageParser(bh: Blackhole): Unit = {
-    complexCompiledParser match {
-      case Some(parser) =>
-        // Use reflection to call parse method since we don't know exact type
-        val parseMethod = parser.getClass.getMethod("parse", classOf[Array[Byte]])
-        bh.consume(parseMethod.invoke(parser, complexBinary))
-      case None =>
-        // Fallback to dynamic parser if compiled parser not available
-        bh.consume(complexDynamicParser.parse(complexBinary))
-    }
-  }
-
-  @Benchmark
-  def complexDynamicMessageDescriptorFile(bh: Blackhole): Unit = {
-    bh.consume(complexDescriptorFileExpression.nullSafeEval(complexBinary))
-  }
-
-  @Benchmark
-  def complexDynamicMessageBinaryDescriptor(bh: Blackhole): Unit = {
-    bh.consume(complexBinaryDescExpression.nullSafeEval(complexBinary))
   }
 }

@@ -123,31 +123,8 @@ class ProtobufConversionJmhBenchmarkSimple {
     bh.consume(simpleDirectParser.parse(simpleBinary))
   }
 
-  @Benchmark
+  // @Benchmark
   def simpleDynamicMessageParser(bh: Blackhole): Unit = {
     bh.consume(simpleDynamicParser.parse(simpleBinary))
-  }
-
-  @Benchmark
-  def simpleCompiledMessageParser(bh: Blackhole): Unit = {
-    simpleCompiledParser match {
-      case Some(parser) =>
-        // Use reflection to call parse method since we don't know exact type
-        val parseMethod = parser.getClass.getMethod("parse", classOf[Array[Byte]])
-        bh.consume(parseMethod.invoke(parser, simpleBinary))
-      case None =>
-        // Fallback to dynamic parser if compiled parser not available
-        bh.consume(simpleDynamicParser.parse(simpleBinary))
-    }
-  }
-
-  @Benchmark
-  def simpleDynamicMessageDescriptorFile(bh: Blackhole): Unit = {
-    bh.consume(simpleDescriptorFileExpression.nullSafeEval(simpleBinary))
-  }
-
-  @Benchmark
-  def simpleDynamicMessageBinaryDescriptor(bh: Blackhole): Unit = {
-    bh.consume(simpleBinaryDescExpression.nullSafeEval(simpleBinary))
   }
 }
