@@ -1,0 +1,96 @@
+syntax = "proto3";
+
+package benchmark;
+
+option java_package = "benchmark";
+option java_outer_classname = "DomBenchmarkProtos";
+
+// DOM Node representing HTML elements, text nodes, comments, etc.
+message DomNode {
+  // Node type following W3C DOM specification
+  enum NodeType {
+    ELEMENT_NODE = 0;
+    TEXT_NODE = 1;
+    COMMENT_NODE = 2;
+    DOCUMENT_NODE = 3;
+    DOCUMENT_TYPE_NODE = 4;
+    CDATA_SECTION_NODE = 5;
+  }
+
+  // Core node properties
+  NodeType node_type = 1;
+
+  // For element nodes
+  string tag_name = 2;                    // e.g., "div", "span", "p", "article"
+  map<string, string> attributes = 3;     // e.g., {"id": "header", "class": "nav-bar"}
+
+  // For text/comment nodes
+  string text_content = 4;               // actual text content or comment text
+
+  // Recursive children structure - this will be mocked in Spark schema
+  repeated DomNode children = 5;
+
+  // Common metadata and properties
+  string node_id = 6;                    // unique identifier (corresponds to id attribute)
+  repeated string class_list = 7;        // parsed class names for easy access
+
+  // Additional realistic DOM properties
+  map<string, string> styles = 8;        // inline styles (style attribute parsed)
+  map<string, string> data_attributes = 9; // data-* attributes
+  bool is_void_element = 10;             // self-closing tags like <br>, <img>
+  string namespace_uri = 11;             // for SVG, MathML elements
+
+  // DOM tree navigation helpers (optional for benchmarking)
+  string parent_id = 12;                 // reference to parent node id
+  int32 sibling_index = 13;              // position among siblings
+  int32 depth = 14;                      // depth from document root
+}
+
+// Complete DOM Document structure
+message DomDocument {
+  // Root HTML element
+  DomNode root = 1;
+
+  // Document metadata
+  string doctype = 2;                    // e.g., "<!DOCTYPE html>"
+  string charset = 3;                    // e.g., "UTF-8"
+  string language = 4;                   // e.g., "en"
+  string title = 5;                      // document title
+
+  // Performance metrics
+  int64 parse_time_ms = 6;               // time to parse document
+  int32 total_nodes = 7;                 // total number of nodes
+  int32 max_depth = 8;                   // maximum nesting depth
+
+  // Document-level metadata
+  map<string, string> meta_tags = 9;     // <meta> tag content
+  repeated string stylesheets = 10;      // linked CSS files
+  repeated string scripts = 11;          // linked JavaScript files
+
+  // SEO and accessibility
+  string description = 12;               // meta description
+  repeated string keywords = 13;         // meta keywords
+  string canonical_url = 14;             // canonical URL
+}
+
+// Page statistics for performance analysis
+message DomStatistics {
+  // Element type counts
+  map<string, int32> tag_counts = 1;     // count of each tag type
+  map<string, int32> class_counts = 2;   // count of each class usage
+
+  // Structure metrics
+  int32 total_elements = 3;
+  int32 total_text_nodes = 4;
+  int32 total_attributes = 5;
+  int32 max_nesting_depth = 6;
+  int32 max_children_count = 7;          // largest number of children for any node
+
+  // Content metrics
+  int64 total_text_length = 8;          // sum of all text content lengths
+  int64 total_attribute_length = 9;     // sum of all attribute value lengths
+
+  // Performance characteristics
+  repeated int32 depth_distribution = 10; // number of nodes at each depth level
+  repeated int32 children_distribution = 11; // distribution of children counts
+}
