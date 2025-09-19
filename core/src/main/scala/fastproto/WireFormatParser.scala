@@ -363,12 +363,13 @@ class WireFormatParser(
     val parser = nestedParsersArray(fieldNumber)
 
     if (parser != null) {
+      val offset = writer.cursor()
+
       // Write directly to parent writer like repeated messages - unified approach
       val nestedWriter = parser.acquireNestedWriter(writer)
       nestedWriter.resetRowWriter()
       parser.parseInto(messageBytes, nestedWriter)
 
-      val offset = writer.cursor()
       writer.setOffsetAndSizeFromPreviousCursor(mapping.rowOrdinal, offset)
     } else {
       throw new IllegalStateException(s"No nested parser found for field ${mapping.fieldDescriptor.getName}")
