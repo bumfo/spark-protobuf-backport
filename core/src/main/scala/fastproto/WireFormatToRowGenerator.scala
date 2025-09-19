@@ -531,17 +531,6 @@ object WireFormatToRowGenerator {
       }
     }
 
-    // Declare nested writers for singular message fields (lazy creation)
-    val singularMessageFields = descriptor.getFields.asScala.filter(field =>
-      !field.isRepeated && field.getType == FieldDescriptor.Type.MESSAGE && schema.fieldNames.contains(field.getName)
-    )
-    if (singularMessageFields.nonEmpty) {
-      code ++= "\n    // Declare nested writers for singular message fields (lazy creation)\n"
-      singularMessageFields.foreach { field =>
-        val fieldNum = field.getNumber
-        code ++= s"    UnsafeRowWriter nestedWriter${fieldNum} = null;\n"
-      }
-    }
 
     code ++= "\n    try {\n"
     code ++= "      while (!input.isAtEnd()) {\n"
@@ -582,18 +571,6 @@ object WireFormatToRowGenerator {
       }
     }
 
-    // Write accumulated singular message fields
-    if (singularMessageFields.nonEmpty) {
-      code ++= "    // Write accumulated singular message fields\n"
-      singularMessageFields.foreach { field =>
-        val fieldNum = field.getNumber
-        val ordinal = schema.fieldIndex(field.getName)
-        code ++= s"    if (nestedWriter${fieldNum} != null) {\n"
-        code ++= s"      int offset${fieldNum} = writer.cursor();\n"
-        code ++= s"      writer.setOffsetAndSizeFromPreviousCursor($ordinal, offset${fieldNum});\n"
-        code ++= s"    }\n"
-      }
-    }
 
     code ++= "  }\n\n"
   }
@@ -655,12 +632,12 @@ object WireFormatToRowGenerator {
         code ++= s"            writer.write($ordinal, UTF8String.fromString(getEnumName${fieldNum}(input.readEnum())));\n"
       case FieldDescriptor.Type.MESSAGE =>
         code ++= s"            byte[] messageBytes = input.readByteArray();\n"
-        code ++= s"            if (nestedWriter${fieldNum} == null && nestedConv${fieldNum} != null) {\n"
-        code ++= s"              nestedWriter${fieldNum} = nestedConv${fieldNum}.acquireNestedWriter(writer);\n"
-        code ++= s"              nestedWriter${fieldNum}.resetRowWriter();\n"
-        code ++= s"            }\n"
-        code ++= s"            if (nestedWriter${fieldNum} != null) {\n"
-        code ++= s"              nestedConv${fieldNum}.parseInto(messageBytes, nestedWriter${fieldNum});\n"
+        code ++= s"            if (nestedConv${fieldNum} != null) {\n"
+        code ++= s"              UnsafeRowWriter nestedWriter = nestedConv${fieldNum}.acquireNestedWriter(writer);\n"
+        code ++= s"              nestedWriter.resetRowWriter();\n"
+        code ++= s"              nestedConv${fieldNum}.parseInto(messageBytes, nestedWriter);\n"
+        code ++= s"              int offset = writer.cursor();\n"
+        code ++= s"              writer.setOffsetAndSizeFromPreviousCursor($ordinal, offset);\n"
         code ++= s"            }\n"
       case _ =>
         code ++= s"            input.skipField(tag); // Unsupported type\n"
