@@ -37,16 +37,11 @@ class WireFormatParser(
   // Cache nested parsers for message fields - use array for O(1) lookup
   private val nestedParsersArray: Array[WireFormatParser] = buildNestedParsersArray()
 
-  // Lazily created nested writers for singular message fields - enables writer reuse optimization
-  private var singularMessageWriters: Array[UnsafeRowWriter] = _
 
   override protected def parseInto(input: CodedInputStream, writer: UnsafeRowWriter): Unit = {
 
     // Reset all field accumulators for this conversion
     resetAccumulators()
-
-    // Initialize array but don't pre-create writers (lazy creation)
-    initializeSingularMessageWritersArray()
 
     // Parse the wire format
     while (!input.isAtEnd) {
@@ -64,9 +59,6 @@ class WireFormatParser(
 
     // Write accumulated repeated fields
     writeAccumulatedRepeatedFields(writer)
-
-    // Write accumulated singular message fields
-    writeAccumulatedSingularMessageFields(writer)
   }
 
   private def buildFieldMappingArray(): (Array[FieldMapping], Int) = {
@@ -369,14 +361,17 @@ class WireFormatParser(
     val messageBytes = input.readByteArray()
     val fieldNumber = mapping.fieldDescriptor.getNumber
     val parser = nestedParsersArray(fieldNumber)
-    if (parser != null && singularMessageWriters != null && fieldNumber < singularMessageWriters.length) {
-      // Lazily create writer for accumulation across multiple occurrences
-      val nestedWriter = getOrCreateSingularMessageWriter(fieldNumber, writer)
-      if (nestedWriter != null) {
-        parser.parseInto(messageBytes, nestedWriter)
-      }
+
+    if (parser != null) {
+      // Write directly to parent writer like repeated messages - unified approach
+      val nestedWriter = parser.acquireNestedWriter(writer)
+      nestedWriter.resetRowWriter()
+      parser.parseInto(messageBytes, nestedWriter)
+
+      val offset = writer.cursor()
+      writer.setOffsetAndSizeFromPreviousCursor(mapping.rowOrdinal, offset)
     } else {
-      throw new IllegalStateException(s"No nested parser or writer found for field ${mapping.fieldDescriptor.getName}")
+      throw new IllegalStateException(s"No nested parser found for field ${mapping.fieldDescriptor.getName}")
     }
   }
 
@@ -495,46 +490,7 @@ class WireFormatParser(
       case _ => true
     }
   }
-  private def initializeSingularMessageWritersArray(): Unit = {
-    // Initialize array if needed, but don't create writers (lazy creation)
-    if (singularMessageWriters == null) {
-      singularMessageWriters = new Array[UnsafeRowWriter](maxFieldNumber + 1)
-    } else {
-      // Clear existing writers for reuse
-      java.util.Arrays.fill(singularMessageWriters.asInstanceOf[Array[Object]], null)
-    }
-  }
 
-  private def getOrCreateSingularMessageWriter(fieldNumber: Int, writer: UnsafeRowWriter): UnsafeRowWriter = {
-    if (singularMessageWriters(fieldNumber) == null) {
-      val parser = nestedParsersArray(fieldNumber)
-      if (parser != null) {
-        singularMessageWriters(fieldNumber) = parser.acquireNestedWriter(writer)
-        singularMessageWriters(fieldNumber).resetRowWriter()
-      }
-    }
-    singularMessageWriters(fieldNumber)
-  }
-
-  private def writeAccumulatedSingularMessageFields(writer: UnsafeRowWriter): Unit = {
-    if (singularMessageWriters != null) {
-      var fieldNumber = 0
-      while (fieldNumber < fieldMappingArray.length) {
-        val mapping = fieldMappingArray(fieldNumber)
-        if (mapping != null &&
-            mapping.fieldDescriptor.getType == FieldDescriptor.Type.MESSAGE &&
-            !mapping.isRepeated &&
-            fieldNumber < singularMessageWriters.length) {
-          val nestedWriter = singularMessageWriters(fieldNumber)
-          if (nestedWriter != null) {
-            val offset = writer.cursor()
-            writer.setOffsetAndSizeFromPreviousCursor(mapping.rowOrdinal, offset)
-          }
-        }
-        fieldNumber += 1
-      }
-    }
-  }
 }
 
 object WireFormatParser {
