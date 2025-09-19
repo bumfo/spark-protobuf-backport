@@ -625,7 +625,7 @@ object WireFormatToRowGenerator {
       case FieldDescriptor.Type.BYTES =>
         code ++= s"            writer.write($ordinal, input.readByteArray());\n"
       case FieldDescriptor.Type.ENUM =>
-        // fixme unify enum representation in single/repeated, and update schema generation accordingly
+        // FIXME unify enum representation in single/repeated, and update schema generation accordingly
         // see https://github.com/bumfo/spark-protobuf-backport/pull/10/files/a9ff39ca02f0b7ce811158ded8281940e40aeb3f#r2354592327
         code ++= s"            writer.write($ordinal, UTF8String.fromString(getEnumName${fieldNum}(input.readEnum())));\n"
       case FieldDescriptor.Type.MESSAGE =>
