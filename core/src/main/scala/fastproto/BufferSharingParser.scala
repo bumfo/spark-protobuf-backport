@@ -7,7 +7,7 @@ import org.apache.spark.sql.types.StructType
 abstract class BufferSharingParser(val schema: StructType) extends Parser {
   protected val instanceWriter = new UnsafeRowWriter(schema.length)
 
-  protected def acquireWriter(parentWriter: UnsafeWriter): UnsafeRowWriter = {
+  def acquireWriter(parentWriter: UnsafeWriter): UnsafeRowWriter = {
     if (parentWriter == null) {
       instanceWriter.reset()
       instanceWriter.zeroOutNullBytes()
@@ -41,7 +41,7 @@ abstract class BufferSharingParser(val schema: StructType) extends Parser {
    * @param binary the protobuf binary data to parse
    * @param writer the UnsafeRowWriter to populate with parsed field data
    */
-  protected def parseInto(binary: Array[Byte], writer: UnsafeRowWriter): Unit
+  def parseInto(binary: Array[Byte], writer: UnsafeRowWriter): Unit
 
   /**
    * Core parsing method with partial byte array support that implementations must override.
@@ -61,7 +61,7 @@ abstract class BufferSharingParser(val schema: StructType) extends Parser {
    * @param length the number of bytes to read from the array
    * @param writer the UnsafeRowWriter to populate with parsed field data
    */
-  protected def parseInto(binary: Array[Byte], offset: Int, length: Int, writer: UnsafeRowWriter): Unit
+  def parseInto(binary: Array[Byte], offset: Int, length: Int, writer: UnsafeRowWriter): Unit
 
   /**
    * Convert protobuf binary data using a shared UnsafeWriter for BufferHolder sharing.
