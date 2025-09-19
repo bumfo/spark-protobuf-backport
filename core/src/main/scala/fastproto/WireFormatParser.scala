@@ -185,6 +185,7 @@ class WireFormatParser(
       return
     }
 
+    // todo JIT friendly: split repeated and single into separate method to reduce bytecode size
     if (mapping.isRepeated) {
       // For repeated fields, accumulate values using type-specific accumulators
       mapping.fieldDescriptor.getType match {
