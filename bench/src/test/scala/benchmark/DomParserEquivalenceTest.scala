@@ -108,12 +108,17 @@ class DomParserEquivalenceTest extends AnyFunSuite with Matchers {
 
     val wireFormatRootSchema = wireFormatSchema.fields(wireFormatRootFieldIndex).dataType.asInstanceOf[StructType]
     val protoToRowRootSchema = protoToRowSchema.fields(protoToRowRootFieldIndex).dataType.asInstanceOf[StructType]
+
+    // Get the nested DomNode descriptor for the root field
+    val rootFieldDescriptor = descriptor.findFieldByName("root")
+    val domNodeDescriptor = rootFieldDescriptor.getMessageType
+
     RowEquivalenceChecker.assertRowsEquivalent(
       wireFormatRoot,
       wireFormatRootSchema,
       protoToRowRoot,
       protoToRowRootSchema,
-      Some(descriptor),
+      Some(domNodeDescriptor),
       EquivalenceOptions.default,
       "root"
     )

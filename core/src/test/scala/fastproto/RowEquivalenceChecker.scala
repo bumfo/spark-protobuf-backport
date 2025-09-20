@@ -137,8 +137,8 @@ object RowEquivalenceChecker {
 
     if (isEnum && options.allowEnumStringIntEquivalence) {
       // For enum fields, read each row according to its schema and normalize to enum name
-      val enumStr1 = getEnumAsString(row1, fieldIndex, dataType1, fieldDescriptor)
-      val enumStr2 = getEnumAsString(row2, fieldIndex, dataType2, fieldDescriptor)
+      val enumStr1 = getEnumAsString(row1, fieldIndex, dataType1, fieldDescriptor, fieldPath)
+      val enumStr2 = getEnumAsString(row2, fieldIndex, dataType2, fieldDescriptor, fieldPath)
 
       if (enumStr1 != enumStr2) {
         fail(s"Enum mismatch at $fieldPath: '$enumStr1' != '$enumStr2'")
@@ -408,8 +408,8 @@ object RowEquivalenceChecker {
 
     if (isEnum && options.allowEnumStringIntEquivalence) {
       // For enum elements, read each according to its schema and normalize to enum name
-      val enumStr1 = getEnumAsString(array1, index, elementType1, fieldDescriptor)
-      val enumStr2 = getEnumAsString(array2, index, elementType2, fieldDescriptor)
+      val enumStr1 = getEnumAsString(array1, index, elementType1, fieldDescriptor, s"$path[$index]")
+      val enumStr2 = getEnumAsString(array2, index, elementType2, fieldDescriptor, s"$path[$index]")
 
       if (enumStr1 != enumStr2) {
         fail(s"Array enum mismatch at $path: '$enumStr1' != '$enumStr2'")
@@ -474,7 +474,8 @@ object RowEquivalenceChecker {
       row: InternalRow,
       fieldIndex: Int,
       dataType: DataType,
-      fieldDescriptor: Option[FieldDescriptor]
+      fieldDescriptor: Option[FieldDescriptor],
+      fieldPath: String
   ): String = {
     if (row.isNullAt(fieldIndex)) return ""
 
@@ -501,13 +502,14 @@ object RowEquivalenceChecker {
         fieldDescriptor match {
           case Some(fd) if fd.getType == FieldDescriptor.Type.ENUM =>
             val enumValue = fd.getEnumType.findValueByNumber(intVal)
-            if (enumValue eq null) fail(s"Unexpected enum int $intVal for enum field: $dataType")
+            if (enumValue eq null) fail(s"Unexpected enum value $intVal at $fieldPath (row with IntegerType) for enum ${fd.getEnumType.getName}")
             enumValue.getName
-          // case _ => intVal.toString
+          case _ =>
+            fail(s"IntegerType field at $fieldPath is not an enum but fieldDescriptor says it should be")
         }
 
       case _ =>
-        fail(s"Unexpected data type for enum field: $dataType")
+        fail(s"Unexpected data type $dataType for enum field at $fieldPath")
     }
   }
 
@@ -519,7 +521,8 @@ object RowEquivalenceChecker {
       array: ArrayData,
       index: Int,
       dataType: DataType,
-      fieldDescriptor: Option[FieldDescriptor]
+      fieldDescriptor: Option[FieldDescriptor],
+      path: String
   ): String = {
     if (array.isNullAt(index)) return ""
 
@@ -550,7 +553,7 @@ object RowEquivalenceChecker {
         }
 
       case _ =>
-        fail(s"Unexpected data type for enum array element: $dataType")
+        fail(s"Unexpected data type $dataType for enum array element at $path[$index]")
     }
   }
 
