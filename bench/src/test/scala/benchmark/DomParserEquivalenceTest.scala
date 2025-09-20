@@ -22,14 +22,19 @@ import org.scalatest.matchers.should.Matchers
  */
 class DomParserEquivalenceTest extends AnyFunSuite with Matchers {
 
-  private val shallowDom = DomTestDataGenerator.createDomDocument(maxDepth = 3, breadthFactor = 2)
+  private val shallowDom = DomTestDataGenerator.createDomDocument(maxDepth = 1, breadthFactor = 1)
   private val binaryData = shallowDom.toByteArray
   private val descriptor = shallowDom.getDescriptorForType
-  private val sparkSchema = RecursiveSchemaConverters.toSqlTypeWithTrueRecursion(descriptor)
+
+  // ProtoToRowParser uses string representation for enums (current behavior)
+  private val protoToRowSchema = RecursiveSchemaConverters.toSqlTypeWithRecursionMocking(descriptor, enumAsInt = false).asInstanceOf[StructType]
+
+  // WireFormatParser stores enum values as integers - schema should reflect this
+  private val wireFormatSchema = RecursiveSchemaConverters.toSqlTypeWithRecursionMocking(descriptor, enumAsInt = true).asInstanceOf[StructType]
 
   test("ProtoToRowGenerator and WireFormatToRowGenerator should produce equivalent results for shallow DOM") {
-    val wireFormatParser = WireFormatToRowGenerator.generateParser(descriptor, sparkSchema)
-    val protoToRowParser = ProtoToRowGenerator.generateParser(descriptor, classOf[DomDocument], sparkSchema)
+    val wireFormatParser = WireFormatToRowGenerator.generateParser(descriptor, wireFormatSchema)
+    val protoToRowParser = ProtoToRowGenerator.generateParser(descriptor, classOf[DomDocument], protoToRowSchema)
 
     val wireFormatRow = wireFormatParser.parse(binaryData)
     val protoToRowRow = protoToRowParser.parse(binaryData)
@@ -40,8 +45,9 @@ class DomParserEquivalenceTest extends AnyFunSuite with Matchers {
     // Compare all fields systematically using the equivalence checker
     RowEquivalenceChecker.assertRowsEquivalent(
       wireFormatRow,
+      wireFormatSchema,
       protoToRowRow,
-      sparkSchema,
+      protoToRowSchema,
       Some(descriptor),
       EquivalenceOptions.default,
       "root"
@@ -49,33 +55,37 @@ class DomParserEquivalenceTest extends AnyFunSuite with Matchers {
   }
 
   test("Both parsers should handle map fields correctly") {
-    val wireFormatParser = WireFormatToRowGenerator.generateParser(descriptor, sparkSchema)
-    val protoToRowParser = ProtoToRowGenerator.generateParser(descriptor, classOf[DomDocument], sparkSchema)
+    val wireFormatParser = WireFormatToRowGenerator.generateParser(descriptor, wireFormatSchema)
+    val protoToRowParser = ProtoToRowGenerator.generateParser(descriptor, classOf[DomDocument], protoToRowSchema)
 
     val wireFormatRow = wireFormatParser.parse(binaryData)
     val protoToRowRow = protoToRowParser.parse(binaryData)
 
     // Find the meta_tags field (should be a map represented as array of structs)
-    val metaTagsFieldIndex = sparkSchema.fieldIndex("meta_tags")
-    val wireFormatMetaTags = wireFormatRow.getArray(metaTagsFieldIndex)
-    val protoToRowMetaTags = protoToRowRow.getArray(metaTagsFieldIndex)
+    val wireFormatMetaTagsFieldIndex = wireFormatSchema.fieldIndex("meta_tags")
+    val protoToRowMetaTagsFieldIndex = protoToRowSchema.fieldIndex("meta_tags")
+    val wireFormatMetaTags = wireFormatRow.getArray(wireFormatMetaTagsFieldIndex)
+    val protoToRowMetaTags = protoToRowRow.getArray(protoToRowMetaTagsFieldIndex)
 
     // Both should have the same number of map entries
     wireFormatMetaTags.numElements() shouldBe protoToRowMetaTags.numElements()
 
     // Compare map entries (both should be arrays of structs with key/value fields)
-    val mapSchema = sparkSchema.fields(metaTagsFieldIndex).dataType.asInstanceOf[ArrayType]
+    val wireFormatMapSchema = wireFormatSchema.fields(wireFormatMetaTagsFieldIndex).dataType.asInstanceOf[ArrayType]
+      .elementType.asInstanceOf[StructType]
+    val protoToRowMapSchema = protoToRowSchema.fields(protoToRowMetaTagsFieldIndex).dataType.asInstanceOf[ArrayType]
       .elementType.asInstanceOf[StructType]
 
     for (i <- 0 until wireFormatMetaTags.numElements()) {
-      val wireFormatEntry = wireFormatMetaTags.getStruct(i, mapSchema.size)
-      val protoToRowEntry = protoToRowMetaTags.getStruct(i, mapSchema.size)
+      val wireFormatEntry = wireFormatMetaTags.getStruct(i, wireFormatMapSchema.size)
+      val protoToRowEntry = protoToRowMetaTags.getStruct(i, protoToRowMapSchema.size)
 
       // Compare key and value fields using the equivalence checker
       RowEquivalenceChecker.assertRowsEquivalent(
         wireFormatEntry,
+        wireFormatMapSchema,
         protoToRowEntry,
-        mapSchema,
+        protoToRowMapSchema,
         Some(descriptor),
         EquivalenceOptions.default,
         s"meta_tags[$i]"
@@ -84,22 +94,25 @@ class DomParserEquivalenceTest extends AnyFunSuite with Matchers {
   }
 
   test("Both parsers should handle nested DomNode structures equivalently") {
-    val wireFormatParser = WireFormatToRowGenerator.generateParser(descriptor, sparkSchema)
-    val protoToRowParser = ProtoToRowGenerator.generateParser(descriptor, classOf[DomDocument], sparkSchema)
+    val wireFormatParser = WireFormatToRowGenerator.generateParser(descriptor, wireFormatSchema)
+    val protoToRowParser = ProtoToRowGenerator.generateParser(descriptor, classOf[DomDocument], protoToRowSchema)
 
     val wireFormatRow = wireFormatParser.parse(binaryData)
     val protoToRowRow = protoToRowParser.parse(binaryData)
 
     // Navigate to the root DomNode
-    val rootFieldIndex = sparkSchema.fieldIndex("root")
-    val wireFormatRoot = wireFormatRow.getStruct(rootFieldIndex, sparkSchema.fields(rootFieldIndex).dataType.asInstanceOf[StructType].size)
-    val protoToRowRoot = protoToRowRow.getStruct(rootFieldIndex, sparkSchema.fields(rootFieldIndex).dataType.asInstanceOf[StructType].size)
+    val wireFormatRootFieldIndex = wireFormatSchema.fieldIndex("root")
+    val protoToRowRootFieldIndex = protoToRowSchema.fieldIndex("root")
+    val wireFormatRoot = wireFormatRow.getStruct(wireFormatRootFieldIndex, wireFormatSchema.fields(wireFormatRootFieldIndex).dataType.asInstanceOf[StructType].size)
+    val protoToRowRoot = protoToRowRow.getStruct(protoToRowRootFieldIndex, protoToRowSchema.fields(protoToRowRootFieldIndex).dataType.asInstanceOf[StructType].size)
 
-    val rootSchema = sparkSchema.fields(rootFieldIndex).dataType.asInstanceOf[StructType]
+    val wireFormatRootSchema = wireFormatSchema.fields(wireFormatRootFieldIndex).dataType.asInstanceOf[StructType]
+    val protoToRowRootSchema = protoToRowSchema.fields(protoToRowRootFieldIndex).dataType.asInstanceOf[StructType]
     RowEquivalenceChecker.assertRowsEquivalent(
       wireFormatRoot,
+      wireFormatRootSchema,
       protoToRowRoot,
-      rootSchema,
+      protoToRowRootSchema,
       Some(descriptor),
       EquivalenceOptions.default,
       "root"

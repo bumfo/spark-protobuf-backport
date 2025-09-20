@@ -25,11 +25,12 @@ object RecursiveSchemaConverters {
    * This allows the schema to be finite while still testing recursive parsing performance.
    *
    * @param descriptor the protobuf message descriptor
+   * @param enumAsInt if true, represent enum fields as IntegerType instead of StringType
    * @return Spark SQL StructType with recursive fields mocked
    */
-  def toSqlTypeWithRecursionMocking(descriptor: Descriptor): DataType = {
+  def toSqlTypeWithRecursionMocking(descriptor: Descriptor, enumAsInt: Boolean = false): DataType = {
     val visitedTypes = mutable.Set[String]()
-    convertMessageType(descriptor, visitedTypes)
+    convertMessageType(descriptor, visitedTypes, enumAsInt)
   }
 
   /**
@@ -39,13 +40,14 @@ object RecursiveSchemaConverters {
    * Uses RecursiveStructType which can handle circular references in hashCode and string methods.
    *
    * @param descriptor the protobuf message descriptor
+   * @param enumAsInt if true, represent enum fields as IntegerType instead of StringType
    * @return RecursiveStructType with true recursive references
    */
-  def toSqlTypeWithTrueRecursion(descriptor: Descriptor): RecursiveStructType = {
+  def toSqlTypeWithTrueRecursion(descriptor: Descriptor, enumAsInt: Boolean = false): RecursiveStructType = {
     val schemaMap = mutable.Map[String, RecursiveStructType]()
 
     // Pass 1: Create all StructTypes with placeholder fields for recursion
-    val rootSchema = createSchemaWithPlaceholders(descriptor, schemaMap)
+    val rootSchema = createSchemaWithPlaceholders(descriptor, schemaMap, enumAsInt)
 
     // Pass 2: Patch recursive fields to create true recursion
     patchRecursiveReferences(descriptor, rootSchema, schemaMap)
@@ -58,7 +60,8 @@ object RecursiveSchemaConverters {
    */
   private def convertMessageType(
       descriptor: Descriptor,
-      visitedTypes: mutable.Set[String]): StructType = {
+      visitedTypes: mutable.Set[String],
+      enumAsInt: Boolean = false): StructType = {
 
     // Mark this type as being visited to detect cycles
     val typeName = descriptor.getFullName
@@ -66,7 +69,7 @@ object RecursiveSchemaConverters {
     visitedTypes += typeName
 
     val fields = descriptor.getFields.asScala.map { field =>
-      val sparkType = convertFieldType(field, visitedTypes, wasAlreadyVisited)
+      val sparkType = convertFieldType(field, visitedTypes, wasAlreadyVisited, enumAsInt)
       StructField(field.getName, sparkType, nullable = true)
     }.toSeq
 
@@ -84,7 +87,8 @@ object RecursiveSchemaConverters {
   private def convertFieldType(
       field: FieldDescriptor,
       visitedTypes: mutable.Set[String],
-      parentWasVisited: Boolean): DataType = {
+      parentWasVisited: Boolean,
+      enumAsInt: Boolean = false): DataType = {
 
     val baseType = field.getJavaType match {
       case FieldDescriptor.JavaType.MESSAGE =>
@@ -97,7 +101,7 @@ object RecursiveSchemaConverters {
           BinaryType
         } else {
           // Not recursive yet, continue normal conversion
-          convertMessageType(messageDescriptor, visitedTypes.clone())
+          convertMessageType(messageDescriptor, visitedTypes.clone(), enumAsInt)
         }
 
       case FieldDescriptor.JavaType.INT =>
@@ -115,7 +119,7 @@ object RecursiveSchemaConverters {
       case FieldDescriptor.JavaType.BYTE_STRING =>
         BinaryType
       case FieldDescriptor.JavaType.ENUM =>
-        StringType // Represent enums as strings
+        if (enumAsInt) IntegerType else StringType
     }
 
     // Handle repeated fields
@@ -127,8 +131,8 @@ object RecursiveSchemaConverters {
         val keyField = mapEntryDescriptor.findFieldByName("key")
         val valueField = mapEntryDescriptor.findFieldByName("value")
 
-        val keyType = convertFieldType(keyField, visitedTypes, parentWasVisited)
-        val valueType = convertFieldType(valueField, visitedTypes, parentWasVisited)
+        val keyType = convertFieldType(keyField, visitedTypes, parentWasVisited, enumAsInt)
+        val valueType = convertFieldType(valueField, visitedTypes, parentWasVisited, enumAsInt)
 
         // Create a synthetic struct type for map entries to be compatible with parsers
         val mapEntryStruct = StructType(Seq(
@@ -202,7 +206,8 @@ object RecursiveSchemaConverters {
    */
   private def createSchemaWithPlaceholders(
       descriptor: Descriptor,
-      schemaMap: mutable.Map[String, RecursiveStructType]): RecursiveStructType = {
+      schemaMap: mutable.Map[String, RecursiveStructType],
+      enumAsInt: Boolean = false): RecursiveStructType = {
 
     val typeName = descriptor.getFullName
 
@@ -220,7 +225,7 @@ object RecursiveSchemaConverters {
 
         // Now populate the fields properly
         descriptor.getFields.asScala.zipWithIndex.foreach { case (field, index) =>
-          val fieldType = convertFieldTypeForTrueRecursion(field, schemaMap)
+          val fieldType = convertFieldTypeForTrueRecursion(field, schemaMap, enumAsInt)
           placeholderFields(index) = StructField(field.getName, fieldType, nullable = true)
         }
 
@@ -234,13 +239,14 @@ object RecursiveSchemaConverters {
    */
   private def convertFieldTypeForTrueRecursion(
       field: FieldDescriptor,
-      schemaMap: mutable.Map[String, RecursiveStructType]): DataType = {
+      schemaMap: mutable.Map[String, RecursiveStructType],
+      enumAsInt: Boolean = false): DataType = {
 
     val baseType = field.getJavaType match {
       case FieldDescriptor.JavaType.MESSAGE =>
         val messageDescriptor = field.getMessageType
         // Recursively create schema (will use existing one if already created)
-        createSchemaWithPlaceholders(messageDescriptor, schemaMap)
+        createSchemaWithPlaceholders(messageDescriptor, schemaMap, enumAsInt)
 
       case FieldDescriptor.JavaType.INT =>
         IntegerType
@@ -257,7 +263,7 @@ object RecursiveSchemaConverters {
       case FieldDescriptor.JavaType.BYTE_STRING =>
         BinaryType
       case FieldDescriptor.JavaType.ENUM =>
-        StringType // Represent enums as strings
+        if (enumAsInt) IntegerType else StringType
     }
 
     // Handle repeated fields and maps
@@ -267,8 +273,8 @@ object RecursiveSchemaConverters {
         val keyField = mapEntryDescriptor.findFieldByName("key")
         val valueField = mapEntryDescriptor.findFieldByName("value")
 
-        val keyType = convertFieldTypeForTrueRecursion(keyField, schemaMap)
-        val valueType = convertFieldTypeForTrueRecursion(valueField, schemaMap)
+        val keyType = convertFieldTypeForTrueRecursion(keyField, schemaMap, enumAsInt)
+        val valueType = convertFieldTypeForTrueRecursion(valueField, schemaMap, enumAsInt)
 
         // Create map entry struct for compatibility with parsers
         val mapEntryStruct = StructType(Seq(
