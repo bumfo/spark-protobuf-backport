@@ -174,7 +174,9 @@ SPARK_JAR=$COURSIER_CACHE/org/apache/spark/spark-sql_2.12/3.2.1/spark-sql_2.12-3
 jar tf $PROTOBUF_JAR | rg CodedInputStream
 jar tf $SPARK_JAR | rg FileScan.scala
 
-# Read source file (first 200 lines)
+# Read source file (first 200 lines) - inline jar path for bash commands
 unzip -p $PROTOBUF_JAR com/google/protobuf/CodedInputStream.java | sed -n '1,200p'
 unzip -p $SPARK_JAR org/apache/spark/sql/execution/datasources/v2/FileScan.scala | sed -n '1,200p'
 ```
+
+**Note**: When using bash commands, inline the jar path variables for direct execution.
