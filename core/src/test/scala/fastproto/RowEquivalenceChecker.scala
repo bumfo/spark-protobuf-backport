@@ -134,6 +134,7 @@ object RowEquivalenceChecker {
     // Check if this is an enum field - enums can be stored as either string or int by different parsers
     val isEnum = fieldDescriptor.exists(_.getType == FieldDescriptor.Type.ENUM)
 
+
     if (isEnum && options.allowEnumStringIntEquivalence) {
       // For enum fields, read each row according to its schema and normalize to enum name
       val enumStr1 = getEnumAsString(row1, fieldIndex, dataType1, fieldDescriptor)
@@ -143,9 +144,23 @@ object RowEquivalenceChecker {
         fail(s"Enum mismatch at $fieldPath: '$enumStr1' != '$enumStr2'")
       }
     } else {
-      // For non-enum fields, data types should match
-      if (dataType1 != dataType2) {
-        fail(s"Data type mismatch at $fieldPath: $dataType1 != $dataType2")
+      // For non-enum fields, handle type-specific comparison
+      (dataType1, dataType2) match {
+        case (structType1: StructType, structType2: StructType) =>
+          // StructTypes might differ only in enum field representations - let compareStructField handle it
+          compareStructField(row1, row2, fieldIndex, structType1, structType2, fieldDescriptor, options, fieldPath)
+          return  // Early return to avoid the dataType1 match below
+
+        case (arrayType1: ArrayType, arrayType2: ArrayType) =>
+          // ArrayTypes might differ only in enum field representations in their element types
+          compareArrayField(row1, row2, fieldIndex, arrayType1, arrayType2, fieldDescriptor, options, fieldPath)
+          return  // Early return to avoid the dataType1 match below
+
+        case _ =>
+          // For other types, data types should match exactly
+          if (dataType1 != dataType2) {
+            fail(s"Data type mismatch at $fieldPath: $dataType1 != $dataType2")
+          }
       }
 
       dataType1 match {
@@ -195,13 +210,9 @@ object RowEquivalenceChecker {
             }
           }
 
-        case arrayType: ArrayType =>
-          val arrayType2 = dataType2.asInstanceOf[ArrayType]
-          compareArrayField(row1, row2, fieldIndex, arrayType, arrayType2, fieldDescriptor, options, fieldPath)
+        // ArrayType case is handled above to allow for enum type differences
 
-        case structType: StructType =>
-          val structType2 = dataType2.asInstanceOf[StructType]
-          compareStructField(row1, row2, fieldIndex, structType, structType2, fieldDescriptor, options, fieldPath)
+        // StructType case is handled above to allow for enum type differences
 
         case mapType: MapType =>
           val mapType2 = dataType2.asInstanceOf[MapType]
@@ -314,6 +325,7 @@ object RowEquivalenceChecker {
       if (fd.getType == FieldDescriptor.Type.MESSAGE) Some(fd.getMessageType) else None
     )
 
+
     compareRows(struct1, struct2, structType1, structType2, nestedDescriptor, options, fieldPath)
   }
 
@@ -403,9 +415,23 @@ object RowEquivalenceChecker {
         fail(s"Array enum mismatch at $path: '$enumStr1' != '$enumStr2'")
       }
     } else {
-      // For non-enum elements, types should match
-      if (elementType1 != elementType2) {
-        fail(s"Array element type mismatch at $path: $elementType1 != $elementType2")
+      // For non-enum elements, handle type-specific comparison
+      (elementType1, elementType2) match {
+        case (structType1: StructType, structType2: StructType) =>
+          // StructTypes might differ only in enum field representations
+          val struct1 = array1.getStruct(index, structType1.size)
+          val struct2 = array2.getStruct(index, structType2.size)
+          val nestedDescriptor = fieldDescriptor.flatMap(fd =>
+            if (fd.getType == FieldDescriptor.Type.MESSAGE) Some(fd.getMessageType) else None
+          )
+          compareRows(struct1, struct2, structType1, structType2, nestedDescriptor, options, path)
+          return  // Early return to avoid the elementType1 match below
+
+        case _ =>
+          // For other element types, types should match exactly
+          if (elementType1 != elementType2) {
+            fail(s"Array element type mismatch at $path: $elementType1 != $elementType2")
+          }
       }
 
       elementType1 match {
@@ -432,16 +458,7 @@ object RowEquivalenceChecker {
             fail(s"Array int mismatch at $path: $int1 != $int2")
           }
 
-        case structType1: StructType =>
-          val structType2 = elementType2.asInstanceOf[StructType]
-          val struct1 = array1.getStruct(index, structType1.size)
-          val struct2 = array2.getStruct(index, structType2.size)
-
-          val nestedDescriptor = fieldDescriptor.flatMap(fd =>
-            if (fd.getType == FieldDescriptor.Type.MESSAGE) Some(fd.getMessageType) else None
-          )
-
-          compareRows(struct1, struct2, structType1, structType2, nestedDescriptor, options, path)
+        // StructType case is handled above to allow for enum type differences
 
         case other =>
           fail(s"Unsupported array element type $other at $path")
