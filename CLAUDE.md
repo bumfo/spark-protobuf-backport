@@ -84,6 +84,15 @@ Before creating a PR, ensure you are on a feature branch:
 - `perf/description` - for performance improvements
 - `test/description` - for test-only changes
 
+### Commit Guidelines
+**Always check what will be committed before running `git commit`**:
+```bash
+git -c color.status=never status -sb    # Check staged and unstaged files
+git diff --cached    # Review staged changes
+```
+
+**Stage files in a single command with all changed files from current session** - avoid repeated `git add <file>`, `git add -A`, or `git add .`
+
 ## Module Documentation
 
 For detailed implementation and development information:
