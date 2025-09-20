@@ -4,19 +4,18 @@ import com.google.protobuf.Descriptors.{Descriptor, FieldDescriptor}
 import org.apache.spark.sql.catalyst.InternalRow
 import org.apache.spark.sql.catalyst.util.ArrayData
 import org.apache.spark.sql.types.{ArrayType, DataType, MapType, StructType}
-import org.apache.spark.unsafe.types.UTF8String
 import org.scalatest.matchers.should.Matchers._
 
-import scala.collection.JavaConverters._
+import scala.util.control.NonFatal
 
 /**
  * Configuration options for row equivalence checking.
  */
 case class EquivalenceOptions(
-  treatEmptyStringAsNull: Boolean = true,
-  allowEnumStringIntEquivalence: Boolean = true,
-  ignoreMapOrder: Boolean = true,
-  strictMode: Boolean = false
+    treatEmptyStringAsNull: Boolean = true,
+    allowEnumStringIntEquivalence: Boolean = true,
+    ignoreMapOrder: Boolean = true,
+    strictMode: Boolean = false
 )
 
 object EquivalenceOptions {
@@ -43,54 +42,31 @@ object RowEquivalenceChecker {
   /**
    * Assert that two InternalRows are equivalent according to protobuf semantics.
    *
-   * @param row1 First row to compare
-   * @param row2 Second row to compare
-   * @param schema Spark schema for the rows
+   * @param row1       First row to compare
+   * @param row2       Second row to compare
+   * @param schema     Spark schema for the rows
    * @param descriptor Optional protobuf descriptor for enum field identification
-   * @param options Comparison options
-   * @param path Field path for error reporting
+   * @param options    Comparison options
+   * @param path       Field path for error reporting
    */
   def assertRowsEquivalent(
-    row1: InternalRow,
-    row2: InternalRow,
-    schema: StructType,
-    descriptor: Option[Descriptor] = None,
-    options: EquivalenceOptions = EquivalenceOptions.default,
-    path: String = "root"
+      row1: InternalRow,
+      row2: InternalRow,
+      schema: StructType,
+      descriptor: Option[Descriptor] = None,
+      options: EquivalenceOptions = EquivalenceOptions.default,
+      path: String = "root"
   ): Unit = {
-    if (!areRowsEquivalent(row1, row2, schema, descriptor, options, path)) {
-      fail(s"Rows are not equivalent at $path")
-    }
-  }
-
-  /**
-   * Check if two InternalRows are equivalent without throwing.
-   *
-   * @return true if rows are equivalent, false otherwise
-   */
-  def areRowsEquivalent(
-    row1: InternalRow,
-    row2: InternalRow,
-    schema: StructType,
-    descriptor: Option[Descriptor] = None,
-    options: EquivalenceOptions = EquivalenceOptions.default,
-    path: String = "root"
-  ): Boolean = {
-    try {
-      compareRows(row1, row2, schema, descriptor, options, path)
-      true
-    } catch {
-      case _: Exception => false
-    }
+    compareRows(row1, row2, schema, descriptor, options, path)
   }
 
   private def compareRows(
-    row1: InternalRow,
-    row2: InternalRow,
-    schema: StructType,
-    descriptor: Option[Descriptor],
-    options: EquivalenceOptions,
-    path: String
+      row1: InternalRow,
+      row2: InternalRow,
+      schema: StructType,
+      descriptor: Option[Descriptor],
+      options: EquivalenceOptions,
+      path: String
   ): Unit = {
     row1.numFields shouldBe row2.numFields
 
@@ -106,13 +82,13 @@ object RowEquivalenceChecker {
   }
 
   private def compareField(
-    row1: InternalRow,
-    row2: InternalRow,
-    fieldIndex: Int,
-    dataType: DataType,
-    fieldDescriptor: Option[FieldDescriptor],
-    options: EquivalenceOptions,
-    fieldPath: String
+      row1: InternalRow,
+      row2: InternalRow,
+      fieldIndex: Int,
+      dataType: DataType,
+      fieldDescriptor: Option[FieldDescriptor],
+      options: EquivalenceOptions,
+      fieldPath: String
   ): Unit = {
     val isNull1 = row1.isNullAt(fieldIndex)
     val isNull2 = row2.isNullAt(fieldIndex)
@@ -183,12 +159,12 @@ object RowEquivalenceChecker {
   }
 
   private def compareStringField(
-    row1: InternalRow,
-    row2: InternalRow,
-    fieldIndex: Int,
-    fieldDescriptor: Option[FieldDescriptor],
-    options: EquivalenceOptions,
-    fieldPath: String
+      row1: InternalRow,
+      row2: InternalRow,
+      fieldIndex: Int,
+      fieldDescriptor: Option[FieldDescriptor],
+      options: EquivalenceOptions,
+      fieldPath: String
   ): Unit = {
     val isNull1 = row1.isNullAt(fieldIndex)
     val isNull2 = row2.isNullAt(fieldIndex)
@@ -216,12 +192,12 @@ object RowEquivalenceChecker {
   }
 
   private def compareIntField(
-    row1: InternalRow,
-    row2: InternalRow,
-    fieldIndex: Int,
-    fieldDescriptor: Option[FieldDescriptor],
-    options: EquivalenceOptions,
-    fieldPath: String
+      row1: InternalRow,
+      row2: InternalRow,
+      fieldIndex: Int,
+      fieldDescriptor: Option[FieldDescriptor],
+      options: EquivalenceOptions,
+      fieldPath: String
   ): Unit = {
     val isNull1 = row1.isNullAt(fieldIndex)
     val isNull2 = row2.isNullAt(fieldIndex)
@@ -235,13 +211,13 @@ object RowEquivalenceChecker {
   }
 
   private def compareArrayField(
-    row1: InternalRow,
-    row2: InternalRow,
-    fieldIndex: Int,
-    arrayType: ArrayType,
-    fieldDescriptor: Option[FieldDescriptor],
-    options: EquivalenceOptions,
-    fieldPath: String
+      row1: InternalRow,
+      row2: InternalRow,
+      fieldIndex: Int,
+      arrayType: ArrayType,
+      fieldDescriptor: Option[FieldDescriptor],
+      options: EquivalenceOptions,
+      fieldPath: String
   ): Unit = {
     val isNull1 = row1.isNullAt(fieldIndex)
     val isNull2 = row2.isNullAt(fieldIndex)
@@ -258,13 +234,13 @@ object RowEquivalenceChecker {
   }
 
   private def compareStructField(
-    row1: InternalRow,
-    row2: InternalRow,
-    fieldIndex: Int,
-    structType: StructType,
-    fieldDescriptor: Option[FieldDescriptor],
-    options: EquivalenceOptions,
-    fieldPath: String
+      row1: InternalRow,
+      row2: InternalRow,
+      fieldIndex: Int,
+      structType: StructType,
+      fieldDescriptor: Option[FieldDescriptor],
+      options: EquivalenceOptions,
+      fieldPath: String
   ): Unit = {
     val isNull1 = row1.isNullAt(fieldIndex)
     val isNull2 = row2.isNullAt(fieldIndex)
@@ -285,12 +261,12 @@ object RowEquivalenceChecker {
   }
 
   private def compareMapField(
-    row1: InternalRow,
-    row2: InternalRow,
-    fieldIndex: Int,
-    mapType: MapType,
-    options: EquivalenceOptions,
-    fieldPath: String
+      row1: InternalRow,
+      row2: InternalRow,
+      fieldIndex: Int,
+      mapType: MapType,
+      options: EquivalenceOptions,
+      fieldPath: String
   ): Unit = {
     val isNull1 = row1.isNullAt(fieldIndex)
     val isNull2 = row2.isNullAt(fieldIndex)
@@ -316,12 +292,12 @@ object RowEquivalenceChecker {
   }
 
   private def compareArrays(
-    array1: ArrayData,
-    array2: ArrayData,
-    arrayType: ArrayType,
-    fieldDescriptor: Option[FieldDescriptor],
-    options: EquivalenceOptions,
-    path: String
+      array1: ArrayData,
+      array2: ArrayData,
+      arrayType: ArrayType,
+      fieldDescriptor: Option[FieldDescriptor],
+      options: EquivalenceOptions,
+      path: String
   ): Unit = {
     if (array1.numElements() != array2.numElements()) {
       fail(s"Array size mismatch at $path: ${array1.numElements()} != ${array2.numElements()}")
@@ -334,13 +310,13 @@ object RowEquivalenceChecker {
   }
 
   private def compareArrayElement(
-    array1: ArrayData,
-    array2: ArrayData,
-    index: Int,
-    elementType: DataType,
-    fieldDescriptor: Option[FieldDescriptor],
-    options: EquivalenceOptions,
-    path: String
+      array1: ArrayData,
+      array2: ArrayData,
+      index: Int,
+      elementType: DataType,
+      fieldDescriptor: Option[FieldDescriptor],
+      options: EquivalenceOptions,
+      path: String
   ): Unit = {
     val isNull1 = array1.isNullAt(index)
     val isNull2 = array2.isNullAt(index)
@@ -398,9 +374,9 @@ object RowEquivalenceChecker {
    * Check if two enum values are equivalent considering different representations.
    */
   private def areEnumsEquivalent(
-    value1: String,
-    value2: String,
-    fieldDescriptor: Option[FieldDescriptor]
+      value1: String,
+      value2: String,
+      fieldDescriptor: Option[FieldDescriptor]
   ): Boolean = {
     if (value1 == value2) return true
 
@@ -430,8 +406,8 @@ object RowEquivalenceChecker {
       case _ =>
         // If we don't have enum metadata, accept common patterns
         (value1.isEmpty && value2 == "0") ||
-        (value2.isEmpty && value1 == "0") ||
-        value1 == value2
+          (value2.isEmpty && value1 == "0") ||
+          value1 == value2
     }
   }
 }
