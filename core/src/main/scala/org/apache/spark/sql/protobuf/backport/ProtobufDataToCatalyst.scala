@@ -118,7 +118,7 @@ private[backport] case class ProtobufDataToCatalyst(
     // the row parser's schema matches the Catalyst data type.  Cast
     // the generated parser to Parser[PbMessage] since PbMessage
     // is a supertype of all generated protobuf classes.
-    ProtoToRowGenerator.generateParser(messageDescriptor, cls)
+    ProtoToRowGenerator.generateParser(messageDescriptor, cls, dataType)
   }
 
   /**

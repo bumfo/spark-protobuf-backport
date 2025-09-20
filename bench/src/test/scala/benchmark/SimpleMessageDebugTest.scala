@@ -33,7 +33,7 @@ class SimpleMessageDebugTest extends AnyFunSuite with Matchers {
     val descriptor = message.getDescriptorForType
     val sparkSchema = SchemaConverters.toSqlType(descriptor).dataType.asInstanceOf[StructType]
 
-    val parser = ProtoToRowGenerator.generateParser(descriptor, classOf[SimpleBenchmarkProtos.SimpleMessage])
+    val parser = ProtoToRowGenerator.generateParser(descriptor, classOf[SimpleBenchmarkProtos.SimpleMessage], sparkSchema)
     val row = parser.parse(binary)
 
     row should not be null

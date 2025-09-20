@@ -113,7 +113,7 @@ class ComplexMessageTest extends AnyFunSuite with Matchers {
 
   ignore("Compiled message parser should produce same results as WireFormat") {
     val WireFormatParser = WireFormatToRowGenerator.generateParser(descriptor, sparkSchema)
-    val compiledParser = ProtoToRowGenerator.generateParser(descriptor, classOf[ComplexBenchmarkProtos.ComplexMessageA])
+    val compiledParser = ProtoToRowGenerator.generateParser(descriptor, classOf[ComplexBenchmarkProtos.ComplexMessageA], sparkSchema)
 
     val wireFormatRow = WireFormatParser.parse(binaryData)
     val compiledRow = compiledParser.parse(binaryData)
