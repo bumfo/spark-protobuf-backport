@@ -111,7 +111,11 @@ object ProtoToRowGenerator {
     if (localParsers.contains(key)) return localParsers(key)._1
 
     // Collect all nested message fields (per-field approach for now)
-    val nestedFields = descriptor.getFields.asScala.filter(_.getJavaType == FieldDescriptor.JavaType.MESSAGE).toList
+    // Exclude map fields since they don't need nested parsers - they're handled as Maps
+    val nestedFields = descriptor.getFields.asScala.filter { fd =>
+      fd.getJavaType == FieldDescriptor.JavaType.MESSAGE &&
+      !(fd.isRepeated && fd.getMessageType.getOptions.hasMapEntry)
+    }.toList
     val nestedTypes: Map[String, (Descriptor, Class[_ <: Message])] = nestedFields.map { fd =>
       val nestedClass = getNestedMessageClass(fd, messageClass)
       val typeKey = s"${nestedClass.getName}_${fd.getMessageType.getFullName}"
@@ -224,8 +228,11 @@ object ProtoToRowGenerator {
       descriptor: Descriptor,
       messageClass: Class[_ <: Message],
       numNestedTypes: Int): StringBuilder = {
-    // Create per-field parser indices for message fields
-    val messageFields = descriptor.getFields.asScala.filter(_.getJavaType == FieldDescriptor.JavaType.MESSAGE).toList
+    // Create per-field parser indices for message fields (excluding maps)
+    val messageFields = descriptor.getFields.asScala.filter { fd =>
+      fd.getJavaType == FieldDescriptor.JavaType.MESSAGE &&
+      !(fd.isRepeated && fd.getMessageType.getOptions.hasMapEntry)
+    }.toList
 
     // Verify we have the expected number of nested types
     assert(messageFields.size == numNestedTypes,
@@ -244,6 +251,7 @@ object ProtoToRowGenerator {
     code ++= "import org.apache.spark.sql.types.StructType;\n"
     code ++= "import org.apache.spark.unsafe.types.UTF8String;\n"
     code ++= "import fastproto.AbstractMessageParser;\n"
+    code ++= "import java.util.Map;\n"
 
     // Begin class declaration
     code ++= s"public final class ${className} extends fastproto.AbstractMessageParser<${messageClass.getName}> {\n"
@@ -387,6 +395,37 @@ object ProtoToRowGenerator {
           code ++= s"    writer.setOffsetAndSizeFromPreviousCursor($idx, offset);\n"
           code ++= s"  }\n\n"
 
+        case FieldDescriptor.JavaType.MESSAGE if fd.isRepeated && fd.getMessageType.getOptions.hasMapEntry =>
+          // Generate method for map field - extract key/value types dynamically
+          val mapFields = fd.getMessageType.getFields.asScala.toList
+          val keyField = mapFields.find(_.getName == "key").get
+          val valueField = mapFields.find(_.getName == "value").get
+          val keyJavaType = getJavaTypeString(keyField)
+          val valueJavaType = getJavaTypeString(valueField)
+
+          code ++= s"  private void write${accessor}Field(UnsafeRowWriter writer, ${messageClass.getName} msg) {\n"
+          code ++= s"    java.util.Map mapField = msg.get${accessor}Map();\n"
+          code ++= s"    int count = mapField.size();\n"
+          code ++= s"    int offset = writer.cursor();\n"
+          code ++= s"    UnsafeArrayWriter arrayWriter = new UnsafeArrayWriter(writer, 8);\n"
+          code ++= s"    arrayWriter.initialize(count);\n"
+          code ++= s"    int entryIndex = 0;\n"
+          code ++= s"    for (java.util.Map.Entry entry : (java.util.Set<java.util.Map.Entry>) mapField.entrySet()) {\n"
+          code ++= s"      int elemOffset = arrayWriter.cursor();\n"
+          code ++= s"      UnsafeRowWriter structWriter = new UnsafeRowWriter(arrayWriter, 2);\n"
+          code ++= s"      structWriter.resetRowWriter();\n"
+          code ++= s"      // Write key (field 0)\n"
+          code ++= s"      ${keyJavaType} key = (${keyJavaType}) entry.getKey();\n"
+          code ++= s"      ${generateFieldWriteCode(keyField, "key", "structWriter", 0)}\n"
+          code ++= s"      // Write value (field 1)\n"
+          code ++= s"      ${valueJavaType} value = (${valueJavaType}) entry.getValue();\n"
+          code ++= s"      ${generateFieldWriteCode(valueField, "value", "structWriter", 1)}\n"
+          code ++= s"      arrayWriter.setOffsetAndSizeFromPreviousCursor(entryIndex, elemOffset);\n"
+          code ++= s"      entryIndex++;\n"
+          code ++= s"    }\n"
+          code ++= s"    writer.setOffsetAndSizeFromPreviousCursor($idx, offset);\n"
+          code ++= s"  }\n\n"
+
         case FieldDescriptor.JavaType.MESSAGE if fd.isRepeated =>
           // Generate method for repeated message field
           val parserIndex = fieldToParserIndex(fd)
@@ -506,6 +545,8 @@ object ProtoToRowGenerator {
           code ++= s"    write${accessor}Field(writer, msg);\n"
         case FieldDescriptor.JavaType.ENUM if fd.isRepeated =>
           code ++= s"    write${accessor}Field(writer, msg);\n"
+        case FieldDescriptor.JavaType.MESSAGE if fd.isRepeated && fd.getMessageType.getOptions.hasMapEntry =>
+          code ++= s"    write${accessor}Field(writer, msg);\n"
         case FieldDescriptor.JavaType.MESSAGE if fd.isRepeated =>
           code ++= s"    write${accessor}Field(writer, msg);\n"
         case FieldDescriptor.JavaType.MESSAGE if !fd.isRepeated =>
@@ -592,5 +633,49 @@ object ProtoToRowGenerator {
     // Create parser with schema - dependencies will be set via setters
     val constructor = parserClass.getConstructor(classOf[StructType])
     constructor.newInstance(schema).asInstanceOf[Parser]
+  }
+
+  /**
+   * Get the Java type string for a protobuf field descriptor.
+   */
+  private def getJavaTypeString(fd: FieldDescriptor): String = {
+    fd.getJavaType match {
+      case FieldDescriptor.JavaType.INT => "Integer"
+      case FieldDescriptor.JavaType.LONG => "Long"
+      case FieldDescriptor.JavaType.FLOAT => "Float"
+      case FieldDescriptor.JavaType.DOUBLE => "Double"
+      case FieldDescriptor.JavaType.BOOLEAN => "Boolean"
+      case FieldDescriptor.JavaType.STRING => "String"
+      case FieldDescriptor.JavaType.BYTE_STRING => "com.google.protobuf.ByteString"
+      case FieldDescriptor.JavaType.ENUM => fd.getEnumType.getName
+      case FieldDescriptor.JavaType.MESSAGE => fd.getMessageType.getName
+    }
+  }
+
+  /**
+   * Generate code to write a field value to an UnsafeRowWriter.
+   */
+  private def generateFieldWriteCode(fd: FieldDescriptor, varName: String, writerName: String, fieldIndex: Int): String = {
+    fd.getJavaType match {
+      case FieldDescriptor.JavaType.INT =>
+        s"if ($varName == null) { $writerName.setNullAt($fieldIndex); } else { $writerName.write($fieldIndex, $varName.intValue()); }"
+      case FieldDescriptor.JavaType.LONG =>
+        s"if ($varName == null) { $writerName.setNullAt($fieldIndex); } else { $writerName.write($fieldIndex, $varName.longValue()); }"
+      case FieldDescriptor.JavaType.FLOAT =>
+        s"if ($varName == null) { $writerName.setNullAt($fieldIndex); } else { $writerName.write($fieldIndex, $varName.floatValue()); }"
+      case FieldDescriptor.JavaType.DOUBLE =>
+        s"if ($varName == null) { $writerName.setNullAt($fieldIndex); } else { $writerName.write($fieldIndex, $varName.doubleValue()); }"
+      case FieldDescriptor.JavaType.BOOLEAN =>
+        s"if ($varName == null) { $writerName.setNullAt($fieldIndex); } else { $writerName.write($fieldIndex, $varName.booleanValue()); }"
+      case FieldDescriptor.JavaType.STRING =>
+        s"if ($varName == null) { $writerName.setNullAt($fieldIndex); } else { $writerName.write($fieldIndex, UTF8String.fromString($varName)); }"
+      case FieldDescriptor.JavaType.BYTE_STRING =>
+        s"if ($varName == null) { $writerName.setNullAt($fieldIndex); } else { $writerName.write($fieldIndex, $varName.toByteArray()); }"
+      case FieldDescriptor.JavaType.ENUM =>
+        s"if ($varName == null) { $writerName.setNullAt($fieldIndex); } else { $writerName.write($fieldIndex, UTF8String.fromString($varName.toString())); }"
+      case FieldDescriptor.JavaType.MESSAGE =>
+        // For map nested messages, this shouldn't be called, but provide a fallback
+        s"$writerName.setNullAt($fieldIndex); // Nested message not supported in map values"
+    }
   }
 }
