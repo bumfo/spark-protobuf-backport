@@ -99,6 +99,10 @@ The backport supports three protobuf usage patterns:
 2. **Descriptor file**: `from_protobuf(col("data"), "MyMessage", "/path/to/schema.desc")`  
 3. **Binary descriptor set**: `from_protobuf(col("data"), "MyMessage", descriptor_bytes)`
 
+## Documentation Style
+
+Write concisely while staying accurate. Focus on practical usage patterns and examples over lengthy explanations.
+
 # important-instruction-reminders
 Do what has been asked; nothing more, nothing less.
 NEVER create files unless they're absolutely necessary for achieving your goal.
