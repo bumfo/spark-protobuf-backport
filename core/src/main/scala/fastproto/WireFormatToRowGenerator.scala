@@ -135,7 +135,7 @@ object WireFormatToRowGenerator {
       case FLOAT => Some(4)
       case DOUBLE => Some(8)
       case BOOL => Some(1)
-      case _ => None  // Variable-length types
+      case _ => None // Variable-length types
     }
   }
 
@@ -418,9 +418,10 @@ object WireFormatToRowGenerator {
 
     messageFields.foreach { field =>
       val fieldNum = field.getNumber
-      code ++= s"  public void setNestedParser${fieldNum}(StreamWireParser conv) {\n"
-      code ++= s"    this.nestedConv${fieldNum} = conv;\n"
-      code ++= "  }\n\n"
+      code ++= s"""  public void setNestedParser${fieldNum}(StreamWireParser conv) {\n"""
+      code ++= s"""    if (this.nestedConv${fieldNum} != null) throw new IllegalStateException("Parser ${fieldNum} already set");\n"""
+      code ++= s"""    this.nestedConv${fieldNum} = conv;\n"""
+      code ++= s"""  }\n\n"""
     }
   }
 
@@ -440,7 +441,7 @@ object WireFormatToRowGenerator {
           // For repeated fields, also generate packed wire type tag if packable
           field.getType match {
             case FieldDescriptor.Type.STRING | FieldDescriptor.Type.BYTES | FieldDescriptor.Type.MESSAGE =>
-              // These types are not packable, skip
+            // These types are not packable, skip
             case _ =>
               // Generate packed tag (always LENGTH_DELIMITED for packed fields)
               val packedTag = (field.getNumber << 3) | 2 // WIRETYPE_LENGTH_DELIMITED = 2
@@ -449,7 +450,7 @@ object WireFormatToRowGenerator {
         }
       } catch {
         case _: IllegalArgumentException =>
-          // Field not in schema, skip
+        // Field not in schema, skip
       }
     }
     code ++= "\n"
@@ -493,9 +494,9 @@ object WireFormatToRowGenerator {
     repeatedFields.foreach { field =>
       field.getType match {
         case FieldDescriptor.Type.INT32 | FieldDescriptor.Type.SINT32 =>
-          // IntList is initialized in field declaration, no initialization needed
+        // IntList is initialized in field declaration, no initialization needed
         case FieldDescriptor.Type.INT64 | FieldDescriptor.Type.SINT64 =>
-          // LongList is initialized in field declaration, no initialization needed
+        // LongList is initialized in field declaration, no initialization needed
         case _ =>
           val javaType = getJavaElementType(field.getType)
           val initialCapacity = getInitialCapacity(field.getType)
@@ -661,7 +662,7 @@ object WireFormatToRowGenerator {
     // Generate packed tag case if applicable
     field.getType match {
       case FieldDescriptor.Type.STRING | FieldDescriptor.Type.BYTES | FieldDescriptor.Type.MESSAGE =>
-        // These types are not packable, skip packed case
+      // These types are not packable, skip packed case
       case _ =>
         code ++= s"          case FIELD_${fieldNum}_PACKED_TAG:\n"
         code ++= s"            // Packed repeated values for field ${field.getName}\n"
