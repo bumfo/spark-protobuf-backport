@@ -54,8 +54,7 @@ class ProtobufConversionJmhBenchmarkDom {
 
   // Parsers for DOM structure (using standard complexity)
   // var domDirectParser: WireFormatParser = _
-  var domGeneratedWireParser: StreamWireParser = _
-  var domProtoToRowParser: Parser = _  // ProtoToRowGenerator produces parsers that implement Parser
+  var domGeneratedParser: StreamWireParser = _
   // var domDynamicParser: DynamicMessageParser = _
 
   @Setup
@@ -98,8 +97,7 @@ class ProtobufConversionJmhBenchmarkDom {
 
     // === Initialize DOM Parsers ===
     // domDirectParser = new WireFormatParser(domDescriptor, domSparkSchema)
-    domGeneratedWireParser = WireFormatToRowGenerator.generateParser(domDescriptor, domSparkSchema)
-    domProtoToRowParser = ProtoToRowGenerator.generateParser(domDescriptor, classOf[DomDocument], domSparkSchema)
+    domGeneratedParser = WireFormatToRowGenerator.generateParser(domDescriptor, domSparkSchema)
     // domDynamicParser = new DynamicMessageParser(domDescriptor, domSparkSchema)
 
     // Print test data statistics
@@ -115,25 +113,19 @@ class ProtobufConversionJmhBenchmarkDom {
 
   // === DOM Tree Benchmarks (Standard Complexity: depth=6, breadth=3) ===
 
-  @Benchmark
+  // @Benchmark
   def domStandardGeneratedWireFormatParser(bh: Blackhole): Unit = {
-    bh.consume(domGeneratedWireParser.parse(standardDomBinary))
+    bh.consume(domGeneratedParser.parse(standardDomBinary))
   }
 
-  // @Benchmark
-  def domStandardProtoToRowParser(bh: Blackhole): Unit = {
-    bh.consume(domProtoToRowParser.parse(standardDomBinary))
-  }
+  // def domStandardDirectWireFormatParser(bh: Blackhole): Unit = {
+  //   bh.consume(domDirectParser.parse(standardDomBinary))
+  // }
 
   // @Benchmark
-  def domStandardDirectWireFormatParser(bh: Blackhole): Unit = {
-    bh.consume(domDirectParser.parse(standardDomBinary))
-  }
-
-  // @Benchmark
-  def domStandardDynamicMessageParser(bh: Blackhole): Unit = {
-    bh.consume(domDynamicParser.parse(standardDomBinary))
-  }
+  // def domStandardDynamicMessageParser(bh: Blackhole): Unit = {
+  //   bh.consume(domDynamicParser.parse(standardDomBinary))
+  // }
 
   // @Benchmark
   def domStandardDynamicMessageDescriptorFile(bh: Blackhole): Unit = {
@@ -148,46 +140,35 @@ class ProtobufConversionJmhBenchmarkDom {
   // === Shallow DOM Benchmarks (depth=3, breadth=2) ===
   // Tests performance with wide but shallow trees
 
-  @Benchmark
+  // @Benchmark
   def domShallowGeneratedWireFormatParser(bh: Blackhole): Unit = {
-    bh.consume(domGeneratedWireParser.parse(shallowDomBinary))
+    bh.consume(domGeneratedParser.parse(shallowDomBinary))
   }
 
-  // @Benchmark
-  def domShallowProtoToRowParser(bh: Blackhole): Unit = {
-    bh.consume(domProtoToRowParser.parse(shallowDomBinary))
-  }
+  // def domShallowDirectWireFormatParser(bh: Blackhole): Unit = {
+  //   bh.consume(domDirectParser.parse(shallowDomBinary))
+  // }
 
   // @Benchmark
-  def domShallowDirectWireFormatParser(bh: Blackhole): Unit = {
-    bh.consume(domDirectParser.parse(shallowDomBinary))
-  }
-
-  // @Benchmark
-  def domShallowDynamicMessageParser(bh: Blackhole): Unit = {
-    bh.consume(domDynamicParser.parse(shallowDomBinary))
-  }
+  // def domShallowDynamicMessageParser(bh: Blackhole): Unit = {
+  //   bh.consume(domDynamicParser.parse(shallowDomBinary))
+  // }
 
   // === Deep DOM Benchmarks (depth=8, breadth=4) ===
   // Tests performance with deep recursive structures
 
   @Benchmark
   def domDeepGeneratedWireFormatParser(bh: Blackhole): Unit = {
-    bh.consume(domGeneratedWireParser.parse(deepDomBinary))
-  }
-
-  @Benchmark
-  def domDeepProtoToRowParser(bh: Blackhole): Unit = {
-    bh.consume(domProtoToRowParser.parse(deepDomBinary))
+    bh.consume(domGeneratedParser.parse(deepDomBinary))
   }
 
   // @Benchmark
-  def domDeepDirectWireFormatParser(bh: Blackhole): Unit = {
-    bh.consume(domDirectParser.parse(deepDomBinary))
-  }
+  // def domDeepDirectWireFormatParser(bh: Blackhole): Unit = {
+  //   bh.consume(domDirectParser.parse(deepDomBinary))
+  // }
 
   // @Benchmark
-  def domDeepDynamicMessageParser(bh: Blackhole): Unit = {
-    bh.consume(domDynamicParser.parse(deepDomBinary))
-  }
+  // def domDeepDynamicMessageParser(bh: Blackhole): Unit = {
+  //   bh.consume(domDynamicParser.parse(deepDomBinary))
+  // }
 }
