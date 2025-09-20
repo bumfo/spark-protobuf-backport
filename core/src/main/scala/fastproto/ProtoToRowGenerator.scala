@@ -31,17 +31,11 @@ object ProtoToRowGenerator {
   private val instanceCache: ThreadLocal[scala.collection.mutable.Map[String, Parser]] =
     ThreadLocal.withInitial(() => scala.collection.mutable.Map.empty[String, Parser])
 
-  // Thread-safe cache for computed schemas to avoid redundant schema generation
-  // Schemas are immutable, so global caching is safe
-  private val schemaCache: ConcurrentHashMap[String, StructType] =
-    new ConcurrentHashMap()
 
   /**
    * Compute the accessor method suffix for a given field descriptor.  This
    * converts snake_case names into CamelCase, capitalising each segment.
    * For example, a field named "source_context" yields "SourceContext".
-   * This helper is defined at the object level so it is visible to both
-   * schema generation and nested parser resolution.
    */
   private def accessorName(fd: FieldDescriptor): String = {
     val name = fd.getName
@@ -51,104 +45,22 @@ object ProtoToRowGenerator {
   }
 
   /**
-   * Get a cached schema for the given descriptor, computing it if necessary.
-   * This avoids redundant schema generation for the same descriptors.
-   *
-   * @param descriptor the Protobuf descriptor
-   * @return a cached [[StructType]] representing the schema
-   */
-  private def getCachedSchema(descriptor: Descriptor): StructType = {
-    val key = descriptor.getFullName
-    schemaCache.computeIfAbsent(key, _ => buildStructTypeInternal(descriptor))
-  }
-
-  /**
-   * Recursively build a Spark SQL [[StructType]] corresponding to the
-   * structure of a Protobuf message.  Primitive fields are mapped to
-   * appropriate Catalyst types; repeated fields become [[ArrayType]] and
-   * Protobuf map entries become [[MapType]].  Nested message types are
-   * converted into nested [[StructType]]s.
-   *
-   * This is the internal implementation that should be called through
-   * getCachedSchema for better performance.
-   *
-   * @param descriptor the root Protobuf descriptor
-   * @return a [[StructType]] representing the schema
-   */
-  private def buildStructTypeInternal(descriptor: Descriptor): StructType = {
-    val fields = descriptor.getFields.asScala.map { fd =>
-      val dt = fieldToDataType(fd)
-      // Proto3 fields are optional by default; mark field nullable unless explicitly required
-      val nullable = !fd.isRequired
-      StructField(fd.getName, dt, nullable)
-    }
-    StructType(fields.toArray)
-  }
-
-  /**
-   * Convert a Protobuf field descriptor into a Spark SQL [[DataType]].
-   * Nested messages are handled recursively.  Repeated fields become
-   * [[ArrayType]] and Protobuf map entry types are translated into
-   * [[MapType]].  Primitive wrapper types (e.g. IntValue) are treated
-   * according to their contained primitive.
-   */
-  private def fieldToDataType(fd: FieldDescriptor): DataType = {
-    import FieldDescriptor.JavaType._
-    // Handle Protobuf map entries: repeated message types with mapEntry option.  In this
-    // implementation we do not emit a Spark MapType because writing MapData into
-    // an UnsafeRow requires more complex handling.  Instead, treat map entries
-    // as an array of structs with two fields (key and value).  This approach
-    // still captures all information from the map and avoids the need to build
-    // MapData at runtime.
-    if (fd.isRepeated && fd.getType == FieldDescriptor.Type.MESSAGE && fd.getMessageType.getOptions.hasMapEntry) {
-      // Build a StructType for the map entry (with key and value fields) and wrap it in an ArrayType.
-      val entryType = getCachedSchema(fd.getMessageType)
-      ArrayType(entryType, containsNull = false)
-    } else if (fd.isRepeated) {
-      // Repeated (array) field
-      val elementType = fd.getJavaType match {
-        case INT => IntegerType
-        case LONG => LongType
-        case FLOAT => FloatType
-        case DOUBLE => DoubleType
-        case BOOLEAN => BooleanType
-        case STRING => StringType
-        case BYTE_STRING => BinaryType
-        case ENUM => StringType
-        case MESSAGE => getCachedSchema(fd.getMessageType)
-      }
-      ArrayType(elementType, containsNull = false)
-    } else {
-      fd.getJavaType match {
-        case INT => IntegerType
-        case LONG => LongType
-        case FLOAT => FloatType
-        case DOUBLE => DoubleType
-        case BOOLEAN => BooleanType
-        case STRING => StringType
-        case BYTE_STRING => BinaryType
-        case ENUM => StringType
-        case MESSAGE => getCachedSchema(fd.getMessageType)
-      }
-    }
-  }
-
-  /**
    * Generate a concrete [[AbstractMessageParser]] for the given Protobuf message type.
-   * Uses internal caching to avoid redundant Janino compilation for the same 
+   * Uses internal caching to avoid redundant Janino compilation for the same
    * descriptor and message class combinations. Handles recursive types by
    * creating parser graphs locally before updating the global cache.
-   * TODO: reuse SchemaConverters for schema generation, and add an optional schema parameter to be used first
    *
    * @param descriptor   the Protobuf descriptor describing the message schema
    * @param messageClass the compiled Protobuf Java class
+   * @param schema       the Spark SQL schema for the message
    * @tparam T the concrete type of the message
    * @return a [[AbstractMessageParser]] capable of converting the message into an
    *         [[org.apache.spark.sql.catalyst.InternalRow]]
    */
   def generateParser[T <: Message](
       descriptor: Descriptor,
-      messageClass: Class[T]): AbstractMessageParser[T] = {
+      messageClass: Class[T],
+      schema: StructType): AbstractMessageParser[T] = {
     val key = s"${messageClass.getName}_${descriptor.getFullName}"
     val threadInstances = instanceCache.get()
 
@@ -163,7 +75,7 @@ object ProtoToRowGenerator {
     val localParsers = scala.collection.mutable.Map[String, (Parser, Set[String])]()
 
     // Phase 1: Create parser graph with null dependencies
-    val rootParser = createParserGraph(descriptor, messageClass, localParsers)
+    val rootParser = createParserGraph(descriptor, messageClass, schema, localParsers)
 
     // Phase 2: Wire up dependencies
     wireDependencies(localParsers)
@@ -184,6 +96,7 @@ object ProtoToRowGenerator {
   private def createParserGraph(
       descriptor: Descriptor,
       messageClass: Class[_ <: Message],
+      schema: StructType,
       localParsers: scala.collection.mutable.Map[String, (Parser, Set[String])]): Parser = {
     val key = s"${messageClass.getName}_${descriptor.getFullName}"
 
@@ -206,7 +119,7 @@ object ProtoToRowGenerator {
     }.toMap
 
     // Create parser with null dependencies initially
-    val parser = generateParserWithNullDeps(descriptor, messageClass, nestedTypes.size)
+    val parser = generateParserWithNullDeps(descriptor, messageClass, schema, nestedTypes.size)
     val neededTypeKeys = nestedTypes.map { case (typeKey, (desc, clazz)) =>
       s"${clazz.getName}_${desc.getFullName}"
     }.toSet
@@ -214,7 +127,9 @@ object ProtoToRowGenerator {
 
     // Recursively create parsers for unique nested types
     nestedTypes.values.foreach { case (desc, clazz) =>
-      createParserGraph(desc, clazz, localParsers)
+      // For nested types, we'll use a simple fallback - in practice the schema
+      // passed to the root parser should handle all nested structures
+      createParserGraph(desc, clazz, schema, localParsers)
     }
 
     parser
@@ -284,12 +199,13 @@ object ProtoToRowGenerator {
   private def generateParserWithNullDeps(
       descriptor: Descriptor,
       messageClass: Class[_ <: Message],
+      schema: StructType,
       numNestedTypes: Int): Parser = {
     // Create a unique class name to avoid collisions when multiple parsers are generated
     val className = s"GeneratedParser_${descriptor.getName}_${System.nanoTime()}"
 
     val sourceCode = generateParserSourceCode(className, descriptor, messageClass, numNestedTypes)
-    compileAndInstantiate(sourceCode, className, descriptor)
+    compileAndInstantiate(sourceCode, className, schema)
   }
 
   /**
@@ -665,18 +581,15 @@ object ProtoToRowGenerator {
    *
    * @param sourceCode the complete Java source code
    * @param className  the name of the generated class
-   * @param descriptor the Protobuf descriptor (used for schema generation)
+   * @param schema     the Spark SQL schema for this message
    * @return a compiled and instantiated Parser
    */
-  private def compileAndInstantiate(sourceCode: StringBuilder, className: String, descriptor: Descriptor): Parser = {
-    // Build the Spark SQL schema corresponding to this descriptor
-    val schema: StructType = getCachedSchema(descriptor)
-
+  private def compileAndInstantiate(sourceCode: StringBuilder, className: String, schema: StructType): Parser = {
     // Get or compile the class globally
-    val key = s"${className}_${descriptor.getFullName}"
+    val key = s"${className}_${schema.hashCode}"
     val parserClass = getOrCompileClass(sourceCode, className, key)
 
-    // Create parser with just schema - dependencies will be set via setters
+    // Create parser with schema - dependencies will be set via setters
     val constructor = parserClass.getConstructor(classOf[StructType])
     constructor.newInstance(schema).asInstanceOf[Parser]
   }

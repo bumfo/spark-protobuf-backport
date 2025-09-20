@@ -3,8 +3,9 @@ package org.apache.spark.sql.protobuf.backport
 import com.google.protobuf.Message
 import fastproto.ProtoToRowGenerator
 import org.apache.spark.rdd.RDD
-import org.apache.spark.sql.protobuf.backport.utils.ProtobufUtils
+import org.apache.spark.sql.protobuf.backport.utils.{ProtobufUtils, SchemaConverters}
 import org.apache.spark.sql.{DataFrame, Dataset}
+import org.apache.spark.sql.types.StructType
 
 import scala.reflect.ClassTag
 
@@ -37,9 +38,10 @@ object ProtoDataset {
     // Build a descriptor from the message class name.  This handles class
     // loading and shaded Protobuf classes via ProtobufUtils.
     val descriptor = ProtobufUtils.buildDescriptorFromJavaClass(clazz.getName)
+    // Generate schema using SchemaConverters
+    val schema = SchemaConverters.toSqlType(descriptor).dataType.asInstanceOf[StructType]
     // Generate a parser using our implementation (caching is handled internally)
-    val parser = ProtoToRowGenerator.generateParser(descriptor, clazz)
-    val schema = parser.schema
+    val parser = ProtoToRowGenerator.generateParser(descriptor, clazz, schema)
     val rows: RDD[org.apache.spark.sql.catalyst.InternalRow] = ds.rdd.map { msg =>
       // Cast to MessageParser to access message conversion methods
       parser.parse(msg)

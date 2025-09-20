@@ -98,7 +98,7 @@ class SimpleMessageTest extends AnyFunSuite with Matchers {
 
   test("Compiled message converter should produce same results as WireFormat") {
     val WireFormatParser = WireFormatToRowGenerator.generateParser(descriptor, sparkSchema)
-    val compiledParser = ProtoToRowGenerator.generateParser(descriptor, classOf[SimpleBenchmarkProtos.SimpleMessage])
+    val compiledParser = ProtoToRowGenerator.generateParser(descriptor, classOf[SimpleBenchmarkProtos.SimpleMessage], sparkSchema)
 
     val wireFormatRow = WireFormatParser.parse(binaryData)
     val compiledRow = compiledParser.parse(binaryData)
