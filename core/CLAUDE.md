@@ -158,3 +158,23 @@ sbt "testOnly *ProtobufConversionBenchmark*"
 **Byte handling optimizations**:
 - UnsafeRow strings can be written from bytes directly without `UTF8String.fromBytes` intermediate
 - Use `readByteArray()` instead of `readBytes().toByteArray()` for cleaner code
+
+## Referencing Source Dependencies
+
+```bash
+COURSIER_CACHE=~/Library/Caches/Coursier/v1/https/repo1.maven.org/maven2
+
+# Protobuf Java 3.21.7 sources
+PROTOBUF_JAR=$COURSIER_CACHE/com/google/protobuf/protobuf-java/3.21.7/protobuf-java-3.21.7-sources.jar
+
+# Spark SQL 3.2.1 sources
+SPARK_JAR=$COURSIER_CACHE/org/apache/spark/spark-sql_2.12/3.2.1/spark-sql_2.12-3.2.1-sources.jar
+
+# Search for files (use rg if available, otherwise grep)
+jar tf $PROTOBUF_JAR | rg CodedInputStream
+jar tf $SPARK_JAR | rg FileScan.scala
+
+# Read source file (first 200 lines)
+unzip -p $PROTOBUF_JAR com/google/protobuf/CodedInputStream.java | sed -n '1,200p'
+unzip -p $SPARK_JAR org/apache/spark/sql/execution/datasources/v2/FileScan.scala | sed -n '1,200p'
+```
