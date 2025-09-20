@@ -67,7 +67,7 @@ lazy val core = project
 
 // Dedicated benchmark project
 lazy val bench = project
-  .dependsOn(core)
+  .dependsOn(core, core % "test->test")
   .enablePlugins(JmhPlugin)
   .settings(commonSettings)
   .settings(
