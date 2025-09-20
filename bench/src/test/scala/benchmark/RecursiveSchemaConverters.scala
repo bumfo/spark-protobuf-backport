@@ -36,18 +36,13 @@ object RecursiveSchemaConverters {
    * Convert protobuf descriptor to Spark SQL type with TRUE recursion support.
    *
    * This creates actual recursive schemas where fields can reference back to their parent types.
-   * This is invalid for Spark SQL but works for benchmarking purposes since we leverage the
-   * mutability of StructType's internal fields array to patch in recursive references after
-   * initial creation.
-   *
-   * WARNING: The resulting schemas are NOT compatible with Spark SQL operations, only
-   * use for parser generation and benchmarking.
+   * Uses RecursiveStructType which can handle circular references in hashCode and string methods.
    *
    * @param descriptor the protobuf message descriptor
-   * @return StructType with true recursive references
+   * @return RecursiveStructType with true recursive references
    */
-  def toSqlTypeWithTrueRecursion(descriptor: Descriptor): StructType = {
-    val schemaMap = mutable.Map[String, StructType]()
+  def toSqlTypeWithTrueRecursion(descriptor: Descriptor): RecursiveStructType = {
+    val schemaMap = mutable.Map[String, RecursiveStructType]()
 
     // Pass 1: Create all StructTypes with placeholder fields for recursion
     val rootSchema = createSchemaWithPlaceholders(descriptor, schemaMap)
@@ -202,12 +197,12 @@ object RecursiveSchemaConverters {
   // ========== True Recursion Support Methods ==========
 
   /**
-   * Create StructType with placeholder fields for recursive references.
+   * Create RecursiveStructType with placeholder fields for recursive references.
    * This is Pass 1 of the two-pass algorithm.
    */
   private def createSchemaWithPlaceholders(
       descriptor: Descriptor,
-      schemaMap: mutable.Map[String, StructType]): StructType = {
+      schemaMap: mutable.Map[String, RecursiveStructType]): RecursiveStructType = {
 
     val typeName = descriptor.getFullName
 
@@ -220,7 +215,7 @@ object RecursiveSchemaConverters {
           StructField(field.getName, NullType, nullable = true)
         }.toArray
 
-        val schema = StructType(placeholderFields)
+        val schema = new RecursiveStructType(placeholderFields, typeName)
         schemaMap(typeName) = schema
 
         // Now populate the fields properly
@@ -239,7 +234,7 @@ object RecursiveSchemaConverters {
    */
   private def convertFieldTypeForTrueRecursion(
       field: FieldDescriptor,
-      schemaMap: mutable.Map[String, StructType]): DataType = {
+      schemaMap: mutable.Map[String, RecursiveStructType]): DataType = {
 
     val baseType = field.getJavaType match {
       case FieldDescriptor.JavaType.MESSAGE =>
@@ -295,8 +290,8 @@ object RecursiveSchemaConverters {
    */
   private def patchRecursiveReferences(
       descriptor: Descriptor,
-      schema: StructType,
-      schemaMap: mutable.Map[String, StructType]): Unit = {
+      schema: RecursiveStructType,
+      schemaMap: mutable.Map[String, RecursiveStructType]): Unit = {
 
     // Since Pass 1 creates schemas recursively, most recursive references are already correct.
     // We only need to patch cases where we had to break cycles during creation.
