@@ -501,7 +501,7 @@ object RowEquivalenceChecker {
         fieldDescriptor match {
           case Some(fd) if fd.getType == FieldDescriptor.Type.ENUM =>
             val enumValue = fd.getEnumType.findValueByNumber(intVal)
-            if (enumValue eq null) fail(s"Unexpected enum value $enumValue for enum field: $dataType")
+            if (enumValue eq null) fail(s"Unexpected enum int $intVal for enum field: $dataType")
             enumValue.getName
           // case _ => intVal.toString
         }
