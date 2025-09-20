@@ -41,10 +41,36 @@ object RowEquivalenceChecker {
 
   /**
    * Assert that two InternalRows are equivalent according to protobuf semantics.
+   * Supports different schemas for each row to handle cases where parsers
+   * generate different representations (e.g., enum as string vs int).
+   *
+   * @param row1       First row to compare
+   * @param schema1    Spark schema for row1
+   * @param row2       Second row to compare
+   * @param schema2    Spark schema for row2
+   * @param descriptor Optional protobuf descriptor for enum field identification
+   * @param options    Comparison options
+   * @param path       Field path for error reporting
+   */
+  def assertRowsEquivalent(
+      row1: InternalRow,
+      schema1: StructType,
+      row2: InternalRow,
+      schema2: StructType,
+      descriptor: Option[Descriptor],
+      options: EquivalenceOptions,
+      path: String
+  ): Unit = {
+    compareRows(row1, row2, schema1, schema2, descriptor, options, path)
+  }
+
+  /**
+   * Assert that two InternalRows are equivalent using the same schema.
+   * Convenience method for backward compatibility.
    *
    * @param row1       First row to compare
    * @param row2       Second row to compare
-   * @param schema     Spark schema for the rows
+   * @param schema     Spark schema for both rows
    * @param descriptor Optional protobuf descriptor for enum field identification
    * @param options    Comparison options
    * @param path       Field path for error reporting
@@ -57,27 +83,34 @@ object RowEquivalenceChecker {
       options: EquivalenceOptions = EquivalenceOptions.default,
       path: String = "root"
   ): Unit = {
-    compareRows(row1, row2, schema, descriptor, options, path)
+    assertRowsEquivalent(row1, schema, row2, schema, descriptor, options, path)
   }
 
   private def compareRows(
       row1: InternalRow,
       row2: InternalRow,
-      schema: StructType,
+      schema1: StructType,
+      schema2: StructType,
       descriptor: Option[Descriptor],
       options: EquivalenceOptions,
       path: String
   ): Unit = {
     row1.numFields shouldBe row2.numFields
+    schema1.fields.length shouldBe schema2.fields.length
 
-    for (i <- schema.fields.indices) {
-      val field = schema.fields(i)
-      val fieldPath = s"$path.${field.name}"
+    for (i <- schema1.fields.indices) {
+      val field1 = schema1.fields(i)
+      val field2 = schema2.fields(i)
+
+      // Field names should match
+      field1.name shouldBe field2.name
+
+      val fieldPath = s"$path.${field1.name}"
       val fieldDescriptor = descriptor.flatMap(d =>
-        Option(d.findFieldByName(field.name))
+        Option(d.findFieldByName(field1.name))
       )
 
-      compareField(row1, row2, i, field.dataType, fieldDescriptor, options, fieldPath)
+      compareField(row1, row2, i, field1.dataType, field2.dataType, fieldDescriptor, options, fieldPath)
     }
   }
 
@@ -85,7 +118,8 @@ object RowEquivalenceChecker {
       row1: InternalRow,
       row2: InternalRow,
       fieldIndex: Int,
-      dataType: DataType,
+      dataType1: DataType,
+      dataType2: DataType,
       fieldDescriptor: Option[FieldDescriptor],
       options: EquivalenceOptions,
       fieldPath: String
@@ -97,64 +131,85 @@ object RowEquivalenceChecker {
       return
     }
 
-    dataType match {
-      case _: org.apache.spark.sql.types.StringType =>
-        compareStringField(row1, row2, fieldIndex, fieldDescriptor, options, fieldPath)
+    // Check if this is an enum field - enums can be stored as either string or int by different parsers
+    val isEnum = fieldDescriptor.exists(_.getType == FieldDescriptor.Type.ENUM)
 
-      case _: org.apache.spark.sql.types.IntegerType =>
-        compareIntField(row1, row2, fieldIndex, fieldDescriptor, options, fieldPath)
+    if (isEnum && options.allowEnumStringIntEquivalence) {
+      // For enum fields, read each row according to its schema and normalize to enum name
+      val enumStr1 = getEnumAsString(row1, fieldIndex, dataType1, fieldDescriptor)
+      val enumStr2 = getEnumAsString(row2, fieldIndex, dataType2, fieldDescriptor)
 
-      case _: org.apache.spark.sql.types.LongType =>
-        val long1 = if (isNull1) 0L else row1.getLong(fieldIndex)
-        val long2 = if (isNull2) 0L else row2.getLong(fieldIndex)
-        if (long1 != long2) {
-          fail(s"Long mismatch at $fieldPath: $long1 != $long2")
-        }
+      if (enumStr1 != enumStr2) {
+        fail(s"Enum mismatch at $fieldPath: '$enumStr1' != '$enumStr2'")
+      }
+    } else {
+      // For non-enum fields, data types should match
+      if (dataType1 != dataType2) {
+        fail(s"Data type mismatch at $fieldPath: $dataType1 != $dataType2")
+      }
 
-      case _: org.apache.spark.sql.types.BooleanType =>
-        val bool1 = if (isNull1) false else row1.getBoolean(fieldIndex)
-        val bool2 = if (isNull2) false else row2.getBoolean(fieldIndex)
-        if (bool1 != bool2) {
-          fail(s"Boolean mismatch at $fieldPath: $bool1 != $bool2")
-        }
+      dataType1 match {
+        case _: org.apache.spark.sql.types.StringType =>
+          compareStringField(row1, row2, fieldIndex, fieldDescriptor, options, fieldPath)
 
-      case _: org.apache.spark.sql.types.DoubleType =>
-        val double1 = if (isNull1) 0.0 else row1.getDouble(fieldIndex)
-        val double2 = if (isNull2) 0.0 else row2.getDouble(fieldIndex)
-        if (math.abs(double1 - double2) > 1e-9) {
-          fail(s"Double mismatch at $fieldPath: $double1 != $double2")
-        }
+        case _: org.apache.spark.sql.types.IntegerType =>
+          compareIntField(row1, row2, fieldIndex, fieldDescriptor, options, fieldPath)
 
-      case _: org.apache.spark.sql.types.FloatType =>
-        val float1 = if (isNull1) 0.0f else row1.getFloat(fieldIndex)
-        val float2 = if (isNull2) 0.0f else row2.getFloat(fieldIndex)
-        if (math.abs(float1 - float2) > 1e-6f) {
-          fail(s"Float mismatch at $fieldPath: $float1 != $float2")
-        }
-
-      case _: org.apache.spark.sql.types.BinaryType =>
-        if (isNull1 != isNull2) {
-          fail(s"Binary null mismatch at $fieldPath")
-        }
-        if (!isNull1 && !isNull2) {
-          val bin1 = row1.getBinary(fieldIndex)
-          val bin2 = row2.getBinary(fieldIndex)
-          if (!java.util.Arrays.equals(bin1, bin2)) {
-            fail(s"Binary mismatch at $fieldPath")
+        case _: org.apache.spark.sql.types.LongType =>
+          val long1 = if (isNull1) 0L else row1.getLong(fieldIndex)
+          val long2 = if (isNull2) 0L else row2.getLong(fieldIndex)
+          if (long1 != long2) {
+            fail(s"Long mismatch at $fieldPath: $long1 != $long2")
           }
-        }
 
-      case arrayType: ArrayType =>
-        compareArrayField(row1, row2, fieldIndex, arrayType, fieldDescriptor, options, fieldPath)
+        case _: org.apache.spark.sql.types.BooleanType =>
+          val bool1 = if (isNull1) false else row1.getBoolean(fieldIndex)
+          val bool2 = if (isNull2) false else row2.getBoolean(fieldIndex)
+          if (bool1 != bool2) {
+            fail(s"Boolean mismatch at $fieldPath: $bool1 != $bool2")
+          }
 
-      case structType: StructType =>
-        compareStructField(row1, row2, fieldIndex, structType, fieldDescriptor, options, fieldPath)
+        case _: org.apache.spark.sql.types.DoubleType =>
+          val double1 = if (isNull1) 0.0 else row1.getDouble(fieldIndex)
+          val double2 = if (isNull2) 0.0 else row2.getDouble(fieldIndex)
+          if (math.abs(double1 - double2) > 1e-9) {
+            fail(s"Double mismatch at $fieldPath: $double1 != $double2")
+          }
 
-      case mapType: MapType =>
-        compareMapField(row1, row2, fieldIndex, mapType, options, fieldPath)
+        case _: org.apache.spark.sql.types.FloatType =>
+          val float1 = if (isNull1) 0.0f else row1.getFloat(fieldIndex)
+          val float2 = if (isNull2) 0.0f else row2.getFloat(fieldIndex)
+          if (math.abs(float1 - float2) > 1e-6f) {
+            fail(s"Float mismatch at $fieldPath: $float1 != $float2")
+          }
 
-      case other =>
-        fail(s"Unsupported field type $other at $fieldPath")
+        case _: org.apache.spark.sql.types.BinaryType =>
+          if (isNull1 != isNull2) {
+            fail(s"Binary null mismatch at $fieldPath")
+          }
+          if (!isNull1 && !isNull2) {
+            val bin1 = row1.getBinary(fieldIndex)
+            val bin2 = row2.getBinary(fieldIndex)
+            if (!java.util.Arrays.equals(bin1, bin2)) {
+              fail(s"Binary mismatch at $fieldPath")
+            }
+          }
+
+        case arrayType: ArrayType =>
+          val arrayType2 = dataType2.asInstanceOf[ArrayType]
+          compareArrayField(row1, row2, fieldIndex, arrayType, arrayType2, fieldDescriptor, options, fieldPath)
+
+        case structType: StructType =>
+          val structType2 = dataType2.asInstanceOf[StructType]
+          compareStructField(row1, row2, fieldIndex, structType, structType2, fieldDescriptor, options, fieldPath)
+
+        case mapType: MapType =>
+          val mapType2 = dataType2.asInstanceOf[MapType]
+          compareMapField(row1, row2, fieldIndex, mapType, mapType2, options, fieldPath)
+
+        case other =>
+          fail(s"Unsupported field type $other at $fieldPath")
+      }
     }
   }
 
@@ -214,7 +269,8 @@ object RowEquivalenceChecker {
       row1: InternalRow,
       row2: InternalRow,
       fieldIndex: Int,
-      arrayType: ArrayType,
+      arrayType1: ArrayType,
+      arrayType2: ArrayType,
       fieldDescriptor: Option[FieldDescriptor],
       options: EquivalenceOptions,
       fieldPath: String
@@ -230,14 +286,15 @@ object RowEquivalenceChecker {
     val array1 = row1.getArray(fieldIndex)
     val array2 = row2.getArray(fieldIndex)
 
-    compareArrays(array1, array2, arrayType, fieldDescriptor, options, fieldPath)
+    compareArrays(array1, array2, arrayType1, arrayType2, fieldDescriptor, options, fieldPath)
   }
 
   private def compareStructField(
       row1: InternalRow,
       row2: InternalRow,
       fieldIndex: Int,
-      structType: StructType,
+      structType1: StructType,
+      structType2: StructType,
       fieldDescriptor: Option[FieldDescriptor],
       options: EquivalenceOptions,
       fieldPath: String
@@ -250,21 +307,22 @@ object RowEquivalenceChecker {
       fail(s"Struct null mismatch at $fieldPath")
     }
 
-    val struct1 = row1.getStruct(fieldIndex, structType.size)
-    val struct2 = row2.getStruct(fieldIndex, structType.size)
+    val struct1 = row1.getStruct(fieldIndex, structType1.size)
+    val struct2 = row2.getStruct(fieldIndex, structType2.size)
 
     val nestedDescriptor = fieldDescriptor.flatMap(fd =>
       if (fd.getType == FieldDescriptor.Type.MESSAGE) Some(fd.getMessageType) else None
     )
 
-    compareRows(struct1, struct2, structType, nestedDescriptor, options, fieldPath)
+    compareRows(struct1, struct2, structType1, structType2, nestedDescriptor, options, fieldPath)
   }
 
   private def compareMapField(
       row1: InternalRow,
       row2: InternalRow,
       fieldIndex: Int,
-      mapType: MapType,
+      mapType1: MapType,
+      mapType2: MapType,
       options: EquivalenceOptions,
       fieldPath: String
   ): Unit = {
@@ -283,18 +341,24 @@ object RowEquivalenceChecker {
       fail(s"Map size mismatch at $fieldPath: ${array1.numElements()} != ${array2.numElements()}")
     }
 
-    val keyValueSchema = StructType(Seq(
-      org.apache.spark.sql.types.StructField("key", mapType.keyType),
-      org.apache.spark.sql.types.StructField("value", mapType.valueType)
+    val keyValueSchema1 = StructType(Seq(
+      org.apache.spark.sql.types.StructField("key", mapType1.keyType),
+      org.apache.spark.sql.types.StructField("value", mapType1.valueType)
     ))
 
-    compareArrays(array1, array2, ArrayType(keyValueSchema), None, options, fieldPath)
+    val keyValueSchema2 = StructType(Seq(
+      org.apache.spark.sql.types.StructField("key", mapType2.keyType),
+      org.apache.spark.sql.types.StructField("value", mapType2.valueType)
+    ))
+
+    compareArrays(array1, array2, ArrayType(keyValueSchema1), ArrayType(keyValueSchema2), None, options, fieldPath)
   }
 
   private def compareArrays(
       array1: ArrayData,
       array2: ArrayData,
-      arrayType: ArrayType,
+      arrayType1: ArrayType,
+      arrayType2: ArrayType,
       fieldDescriptor: Option[FieldDescriptor],
       options: EquivalenceOptions,
       path: String
@@ -305,7 +369,7 @@ object RowEquivalenceChecker {
 
     for (i <- 0 until array1.numElements()) {
       val elemPath = s"$path[$i]"
-      compareArrayElement(array1, array2, i, arrayType.elementType, fieldDescriptor, options, elemPath)
+      compareArrayElement(array1, array2, i, arrayType1.elementType, arrayType2.elementType, fieldDescriptor, options, elemPath)
     }
   }
 
@@ -313,7 +377,8 @@ object RowEquivalenceChecker {
       array1: ArrayData,
       array2: ArrayData,
       index: Int,
-      elementType: DataType,
+      elementType1: DataType,
+      elementType2: DataType,
       fieldDescriptor: Option[FieldDescriptor],
       options: EquivalenceOptions,
       path: String
@@ -326,47 +391,147 @@ object RowEquivalenceChecker {
       fail(s"Array element null mismatch at $path")
     }
 
-    elementType match {
-      case _: org.apache.spark.sql.types.StringType =>
-        val str1 = array1.getUTF8String(index).toString
-        val str2 = array2.getUTF8String(index).toString
+    // Check if this is an enum element
+    val isEnum = fieldDescriptor.exists(_.getType == FieldDescriptor.Type.ENUM)
 
-        val isEnum = fieldDescriptor.exists(_.getType == FieldDescriptor.Type.ENUM)
-        if (isEnum && options.allowEnumStringIntEquivalence) {
-          if (!areEnumsEquivalent(str1, str2, fieldDescriptor)) {
-            fail(s"Array enum mismatch at $path: '$str1' != '$str2'")
+    if (isEnum && options.allowEnumStringIntEquivalence) {
+      // For enum elements, read each according to its schema and normalize to enum name
+      val enumStr1 = getEnumAsString(array1, index, elementType1, fieldDescriptor)
+      val enumStr2 = getEnumAsString(array2, index, elementType2, fieldDescriptor)
+
+      if (enumStr1 != enumStr2) {
+        fail(s"Array enum mismatch at $path: '$enumStr1' != '$enumStr2'")
+      }
+    } else {
+      // For non-enum elements, types should match
+      if (elementType1 != elementType2) {
+        fail(s"Array element type mismatch at $path: $elementType1 != $elementType2")
+      }
+
+      elementType1 match {
+        case _: org.apache.spark.sql.types.StringType =>
+          val str1 = array1.getUTF8String(index).toString
+          val str2 = array2.getUTF8String(index).toString
+
+          if (options.treatEmptyStringAsNull) {
+            val normalizedStr1 = if (str1 == null || str1.isEmpty) null else str1
+            val normalizedStr2 = if (str2 == null || str2.isEmpty) null else str2
+            if (normalizedStr1 != normalizedStr2) {
+              fail(s"Array string mismatch at $path: '$str1' != '$str2'")
+            }
+          } else {
+            if (str1 != str2) {
+              fail(s"Array string mismatch at $path: '$str1' != '$str2'")
+            }
           }
-        } else if (options.treatEmptyStringAsNull) {
-          val normalizedStr1 = if (str1 == null || str1.isEmpty) null else str1
-          val normalizedStr2 = if (str2 == null || str2.isEmpty) null else str2
-          if (normalizedStr1 != normalizedStr2) {
-            fail(s"Array string mismatch at $path: '$str1' != '$str2'")
+
+        case _: org.apache.spark.sql.types.IntegerType =>
+          val int1 = array1.getInt(index)
+          val int2 = array2.getInt(index)
+          if (int1 != int2) {
+            fail(s"Array int mismatch at $path: $int1 != $int2")
+          }
+
+        case structType1: StructType =>
+          val structType2 = elementType2.asInstanceOf[StructType]
+          val struct1 = array1.getStruct(index, structType1.size)
+          val struct2 = array2.getStruct(index, structType2.size)
+
+          val nestedDescriptor = fieldDescriptor.flatMap(fd =>
+            if (fd.getType == FieldDescriptor.Type.MESSAGE) Some(fd.getMessageType) else None
+          )
+
+          compareRows(struct1, struct2, structType1, structType2, nestedDescriptor, options, path)
+
+        case other =>
+          fail(s"Unsupported array element type $other at $path")
+      }
+    }
+  }
+
+  /**
+   * Get enum value as a normalized string representation.
+   * If stored as int, converts to enum name. If stored as string, returns as-is.
+   */
+  private def getEnumAsString(
+      row: InternalRow,
+      fieldIndex: Int,
+      dataType: DataType,
+      fieldDescriptor: Option[FieldDescriptor]
+  ): String = {
+    if (row.isNullAt(fieldIndex)) return ""
+
+    dataType match {
+      case _: org.apache.spark.sql.types.StringType =>
+        // Stored as string - return as-is (could be enum name or empty/garbage if actually int)
+        val str = row.getUTF8String(fieldIndex).toString
+        // If empty string, likely int bytes read as UTF8 - assume it's enum value 0
+        if (str.isEmpty) {
+          fieldDescriptor match {
+            case Some(fd) if fd.getType == FieldDescriptor.Type.ENUM =>
+              val enumValue = fd.getEnumType.findValueByNumber(0)
+              if (enumValue != null) enumValue.getName else str
+            case _ => str
           }
         } else {
-          if (str1 != str2) {
-            fail(s"Array string mismatch at $path: '$str1' != '$str2'")
-          }
+          str
         }
 
       case _: org.apache.spark.sql.types.IntegerType =>
-        val int1 = array1.getInt(index)
-        val int2 = array2.getInt(index)
-        if (int1 != int2) {
-          fail(s"Array int mismatch at $path: $int1 != $int2")
+        // Stored as int - convert to enum name
+        val intVal = row.getInt(fieldIndex)
+        fieldDescriptor match {
+          case Some(fd) if fd.getType == FieldDescriptor.Type.ENUM =>
+            val enumValue = fd.getEnumType.findValueByNumber(intVal)
+            if (enumValue != null) enumValue.getName else intVal.toString
+          case _ => intVal.toString
         }
 
-      case structType: StructType =>
-        val struct1 = array1.getStruct(index, structType.size)
-        val struct2 = array2.getStruct(index, structType.size)
+      case _ =>
+        fail(s"Unexpected data type for enum field: $dataType")
+    }
+  }
 
-        val nestedDescriptor = fieldDescriptor.flatMap(fd =>
-          if (fd.getType == FieldDescriptor.Type.MESSAGE) Some(fd.getMessageType) else None
-        )
+  /**
+   * Get enum value as a normalized string representation from an ArrayData element.
+   * If stored as int, converts to enum name. If stored as string, returns as-is.
+   */
+  private def getEnumAsString(
+      array: ArrayData,
+      index: Int,
+      dataType: DataType,
+      fieldDescriptor: Option[FieldDescriptor]
+  ): String = {
+    if (array.isNullAt(index)) return ""
 
-        compareRows(struct1, struct2, structType, nestedDescriptor, options, path)
+    dataType match {
+      case _: org.apache.spark.sql.types.StringType =>
+        // Stored as string - return as-is
+        val str = array.getUTF8String(index).toString
+        // If empty string, likely int bytes read as UTF8 - assume it's enum value 0
+        if (str.isEmpty) {
+          fieldDescriptor match {
+            case Some(fd) if fd.getType == FieldDescriptor.Type.ENUM =>
+              val enumValue = fd.getEnumType.findValueByNumber(0)
+              if (enumValue != null) enumValue.getName else str
+            case _ => str
+          }
+        } else {
+          str
+        }
 
-      case other =>
-        fail(s"Unsupported array element type $other at $path")
+      case _: org.apache.spark.sql.types.IntegerType =>
+        // Stored as int - convert to enum name
+        val intVal = array.getInt(index)
+        fieldDescriptor match {
+          case Some(fd) if fd.getType == FieldDescriptor.Type.ENUM =>
+            val enumValue = fd.getEnumType.findValueByNumber(intVal)
+            if (enumValue != null) enumValue.getName else intVal.toString
+          case _ => intVal.toString
+        }
+
+      case _ =>
+        fail(s"Unexpected data type for enum array element: $dataType")
     }
   }
 
