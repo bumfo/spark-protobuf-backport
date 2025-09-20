@@ -261,8 +261,19 @@ object WireFormatToRowGenerator {
   private def wireDependencies(
       localParsers: scala.collection.mutable.Map[String, StreamWireParser],
       descriptor: Descriptor,
-      schema: StructType
+      schema: StructType,
+      visited: scala.collection.mutable.Set[String] = scala.collection.mutable.Set()
   ): Unit = {
+    // Use only descriptor name for visited tracking
+    val descriptorName = descriptor.getFullName
+
+    // Skip if already wired
+    if (visited.contains(descriptorName)) {
+      return
+    }
+    visited.add(descriptorName)
+
+    // Parser lookup still uses the full key with schema hash
     val key = s"${descriptor.getFullName}_${schema.hashCode()}"
     val parser = localParsers(key)
 
@@ -304,7 +315,7 @@ object WireFormatToRowGenerator {
         case _ => throw new IllegalArgumentException(s"Expected StructType or ArrayType[StructType] for message field ${field.getName}")
       }
 
-      wireDependencies(localParsers, field.getMessageType, nestedSchema)
+      wireDependencies(localParsers, field.getMessageType, nestedSchema, visited)
     }
   }
 
