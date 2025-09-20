@@ -1,8 +1,9 @@
 package org.apache.spark.sql.protobuf.backport.jmh
 
 import benchmark.{RecursiveSchemaConverters, DomBenchmarkProtos, DomTestDataGenerator}
+import benchmark.DomBenchmarkProtos.DomDocument
 import com.google.protobuf.{DescriptorProtos, Descriptors}
-import fastproto.{StreamWireParser, WireFormatParser, WireFormatToRowGenerator}
+import fastproto.{Parser, ProtoToRowGenerator, StreamWireParser, WireFormatParser, WireFormatToRowGenerator}
 import org.apache.spark.sql.catalyst.expressions.Literal
 import org.apache.spark.sql.protobuf.backport.utils.SchemaConverters
 import org.apache.spark.sql.protobuf.backport.{DynamicMessageParser, ProtobufDataToCatalyst}
@@ -52,13 +53,10 @@ class ProtobufConversionJmhBenchmarkDom {
   var domTempDescFile: java.io.File = _
 
   // Parsers for DOM structure (using standard complexity)
-  var domDirectParser: WireFormatParser = _
-  var domGeneratedParser: StreamWireParser = _
-  var domDynamicParser: DynamicMessageParser = _
-
-  // Catalyst expressions for integration testing
-  var domBinaryDescExpression: ProtobufDataToCatalyst = _
-  var domDescriptorFileExpression: ProtobufDataToCatalyst = _
+  // var domDirectParser: WireFormatParser = _
+  var domGeneratedWireParser: StreamWireParser = _
+  var domProtoToRowParser: Parser = _  // ProtoToRowGenerator produces parsers that implement Parser
+  // var domDynamicParser: DynamicMessageParser = _
 
   @Setup
   def setup(): Unit = {
@@ -99,26 +97,10 @@ class ProtobufConversionJmhBenchmarkDom {
     domTempDescFile.deleteOnExit()
 
     // === Initialize DOM Parsers ===
-    domDirectParser = new WireFormatParser(domDescriptor, domSparkSchema)
-    domGeneratedParser = WireFormatToRowGenerator.generateParser(domDescriptor, domSparkSchema)
-    domDynamicParser = new DynamicMessageParser(domDescriptor, domSparkSchema)
-
-    // === Initialize Catalyst Expressions ===
-    domBinaryDescExpression = ProtobufDataToCatalyst(
-      child = Literal.create(standardDomBinary, BinaryType),
-      messageName = domDescriptor.getFullName,
-      descFilePath = None,
-      options = Map.empty,
-      binaryDescriptorSet = Some(domDescSet)
-    )
-
-    domDescriptorFileExpression = ProtobufDataToCatalyst(
-      child = Literal.create(standardDomBinary, BinaryType),
-      messageName = domDescriptor.getFullName,
-      descFilePath = Some(domTempDescFile.getAbsolutePath),
-      options = Map.empty,
-      binaryDescriptorSet = None
-    )
+    // domDirectParser = new WireFormatParser(domDescriptor, domSparkSchema)
+    domGeneratedWireParser = WireFormatToRowGenerator.generateParser(domDescriptor, domSparkSchema)
+    domProtoToRowParser = ProtoToRowGenerator.generateParser(domDescriptor, classOf[DomDocument], domSparkSchema)
+    // domDynamicParser = new DynamicMessageParser(domDescriptor, domSparkSchema)
 
     // Print test data statistics
     println(s"Shallow DOM: ${shallowDomBinary.length} bytes")
@@ -135,25 +117,30 @@ class ProtobufConversionJmhBenchmarkDom {
 
   @Benchmark
   def domStandardGeneratedWireFormatParser(bh: Blackhole): Unit = {
-    bh.consume(domGeneratedParser.parse(standardDomBinary))
+    bh.consume(domGeneratedWireParser.parse(standardDomBinary))
   }
 
-  @Benchmark
+  // @Benchmark
+  def domStandardProtoToRowParser(bh: Blackhole): Unit = {
+    bh.consume(domProtoToRowParser.parse(standardDomBinary))
+  }
+
+  // @Benchmark
   def domStandardDirectWireFormatParser(bh: Blackhole): Unit = {
     bh.consume(domDirectParser.parse(standardDomBinary))
   }
 
-  @Benchmark
+  // @Benchmark
   def domStandardDynamicMessageParser(bh: Blackhole): Unit = {
     bh.consume(domDynamicParser.parse(standardDomBinary))
   }
 
-  @Benchmark
+  // @Benchmark
   def domStandardDynamicMessageDescriptorFile(bh: Blackhole): Unit = {
     bh.consume(domDescriptorFileExpression.nullSafeEval(standardDomBinary))
   }
 
-  @Benchmark
+  // @Benchmark
   def domStandardDynamicMessageBinaryDescriptor(bh: Blackhole): Unit = {
     bh.consume(domBinaryDescExpression.nullSafeEval(standardDomBinary))
   }
@@ -163,15 +150,20 @@ class ProtobufConversionJmhBenchmarkDom {
 
   @Benchmark
   def domShallowGeneratedWireFormatParser(bh: Blackhole): Unit = {
-    bh.consume(domGeneratedParser.parse(shallowDomBinary))
+    bh.consume(domGeneratedWireParser.parse(shallowDomBinary))
   }
 
-  @Benchmark
+  // @Benchmark
+  def domShallowProtoToRowParser(bh: Blackhole): Unit = {
+    bh.consume(domProtoToRowParser.parse(shallowDomBinary))
+  }
+
+  // @Benchmark
   def domShallowDirectWireFormatParser(bh: Blackhole): Unit = {
     bh.consume(domDirectParser.parse(shallowDomBinary))
   }
 
-  @Benchmark
+  // @Benchmark
   def domShallowDynamicMessageParser(bh: Blackhole): Unit = {
     bh.consume(domDynamicParser.parse(shallowDomBinary))
   }
@@ -181,15 +173,20 @@ class ProtobufConversionJmhBenchmarkDom {
 
   @Benchmark
   def domDeepGeneratedWireFormatParser(bh: Blackhole): Unit = {
-    bh.consume(domGeneratedParser.parse(deepDomBinary))
+    bh.consume(domGeneratedWireParser.parse(deepDomBinary))
   }
 
   @Benchmark
+  def domDeepProtoToRowParser(bh: Blackhole): Unit = {
+    bh.consume(domProtoToRowParser.parse(deepDomBinary))
+  }
+
+  // @Benchmark
   def domDeepDirectWireFormatParser(bh: Blackhole): Unit = {
     bh.consume(domDirectParser.parse(deepDomBinary))
   }
 
-  @Benchmark
+  // @Benchmark
   def domDeepDynamicMessageParser(bh: Blackhole): Unit = {
     bh.consume(domDynamicParser.parse(deepDomBinary))
   }
