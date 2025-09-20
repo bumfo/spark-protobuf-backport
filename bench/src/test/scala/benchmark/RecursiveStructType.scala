@@ -101,6 +101,11 @@ class RecursiveStructType(fields: Array[StructField], override val typeName: Str
    */
   override def simpleString: String = simpleStringInternal(mutable.Set.empty[Int])
 
+  /**
+   * Override toString to use the recursion-safe simpleString instead of the problematic default.
+   */
+  override def toString: String = simpleString
+
   private def simpleStringInternal(visitedIdentities: mutable.Set[Int]): String = {
     val thisIdentity = System.identityHashCode(this)
     if (visitedIdentities.contains(thisIdentity)) {

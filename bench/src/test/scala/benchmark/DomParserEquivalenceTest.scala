@@ -27,10 +27,10 @@ class DomParserEquivalenceTest extends AnyFunSuite with Matchers {
   private val descriptor = shallowDom.getDescriptorForType
 
   // ProtoToRowParser uses string representation for enums (current behavior)
-  private val protoToRowSchema = RecursiveSchemaConverters.toSqlTypeWithRecursionMocking(descriptor, enumAsInt = false).asInstanceOf[StructType]
+  private val protoToRowSchema = RecursiveSchemaConverters.toSqlTypeWithTrueRecursion(descriptor, enumAsInt = false)
 
   // WireFormatParser stores enum values as integers - schema should reflect this
-  private val wireFormatSchema = RecursiveSchemaConverters.toSqlTypeWithRecursionMocking(descriptor, enumAsInt = true).asInstanceOf[StructType]
+  private val wireFormatSchema = RecursiveSchemaConverters.toSqlTypeWithTrueRecursion(descriptor, enumAsInt = true)
 
   test("ProtoToRowGenerator and WireFormatToRowGenerator should produce equivalent results for shallow DOM") {
     val wireFormatParser = WireFormatToRowGenerator.generateParser(descriptor, wireFormatSchema)
