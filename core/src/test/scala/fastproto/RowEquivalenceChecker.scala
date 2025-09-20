@@ -482,17 +482,18 @@ object RowEquivalenceChecker {
       case _: org.apache.spark.sql.types.StringType =>
         // Stored as string - return as-is (could be enum name or empty/garbage if actually int)
         val str = row.getUTF8String(fieldIndex).toString
-        // If empty string, likely int bytes read as UTF8 - assume it's enum value 0
-        if (str.isEmpty) {
-          fieldDescriptor match {
-            case Some(fd) if fd.getType == FieldDescriptor.Type.ENUM =>
-              val enumValue = fd.getEnumType.findValueByNumber(0)
-              if (enumValue != null) enumValue.getName else str
-            case _ => str
-          }
-        } else {
-          str
-        }
+        // // If empty string, likely int bytes read as UTF8 - assume it's enum value 0
+        // if (str.isEmpty) {
+        //   fieldDescriptor match {
+        //     case Some(fd) if fd.getType == FieldDescriptor.Type.ENUM =>
+        //       val enumValue = fd.getEnumType.findValueByNumber(0)
+        //       if (enumValue != null) enumValue.getName else str
+        //     case _ => str
+        //   }
+        // } else {
+        //   str
+        // }
+      str
 
       case _: org.apache.spark.sql.types.IntegerType =>
         // Stored as int - convert to enum name
@@ -500,8 +501,9 @@ object RowEquivalenceChecker {
         fieldDescriptor match {
           case Some(fd) if fd.getType == FieldDescriptor.Type.ENUM =>
             val enumValue = fd.getEnumType.findValueByNumber(intVal)
-            if (enumValue != null) enumValue.getName else intVal.toString
-          case _ => intVal.toString
+            if (enumValue eq null) fail(s"Unexpected enum value $enumValue for enum field: $dataType")
+            enumValue.getName
+          // case _ => intVal.toString
         }
 
       case _ =>
