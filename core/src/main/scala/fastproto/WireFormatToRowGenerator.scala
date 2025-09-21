@@ -469,17 +469,64 @@ object WireFormatToRowGenerator {
 
   /**
    * Generate repeated field accumulator declarations.
+   * Uses hybrid approach: instance fields for non-recursive messages, local variables for recursive messages.
    */
   private def generateRepeatedFieldAccumulators(code: StringBuilder, descriptor: Descriptor, schema: StructType): Unit = {
-    // No longer generate instance fields for accumulators
-    // Accumulators are now declared as local variables in parseInto() method
+    val repeatedFields = descriptor.getFields.asScala.filter(field =>
+      field.isRepeated && schema.fieldNames.contains(field.getName)
+    )
+
+    // Only generate instance fields for non-recursive messages
+    if (repeatedFields.nonEmpty && !hasRecursiveMessages(descriptor)) {
+      code ++= "  // Repeated field accumulators (instance fields for non-recursive messages)\n"
+      repeatedFields.foreach { field =>
+        val fieldNum = field.getNumber
+
+        if (isVarint32(field.getType)) {
+          code ++= s"  private final IntList field${fieldNum}_list = new IntList();\n"
+        } else if (isVarint64(field.getType)) {
+          code ++= s"  private final LongList field${fieldNum}_list = new LongList();\n"
+        } else {
+          val javaType = getJavaElementType(field.getType)
+          code ++= s"  private $javaType[] field${fieldNum}_values;\n"
+          code ++= s"  private int field${fieldNum}_count = 0;\n"
+        }
+      }
+      code ++= "\n"
+    }
   }
 
   /**
    * Generate repeated field initialization in constructor.
+   * Only needed for non-recursive messages that use instance fields.
    */
   private def generateRepeatedFieldInitialization(code: StringBuilder, descriptor: Descriptor, schema: StructType): Unit = {
-    // No longer need initialization - accumulators are local variables in parseInto()
+    val repeatedFields = descriptor.getFields.asScala.filter(field =>
+      field.isRepeated && schema.fieldNames.contains(field.getName)
+    )
+
+    // Only initialize instance fields for non-recursive messages
+    if (repeatedFields.nonEmpty && !hasRecursiveMessages(descriptor)) {
+      repeatedFields.foreach { field =>
+        field.getType match {
+          case FieldDescriptor.Type.INT32 | FieldDescriptor.Type.SINT32 =>
+          // IntList is initialized in field declaration, no initialization needed
+          case FieldDescriptor.Type.INT64 | FieldDescriptor.Type.SINT64 =>
+          // LongList is initialized in field declaration, no initialization needed
+          case _ =>
+            val javaType = getJavaElementType(field.getType)
+            val initialCapacity = getInitialCapacity(field.getType)
+            // For primitive types, javaType is "int", "long", etc. -> new int[8]
+            // For byte array types, javaType is "byte[]" -> new byte[8][]
+            if (javaType.endsWith("[]")) {
+              val baseType = javaType.dropRight(2)
+              code ++= s"    field${field.getNumber}_values = new $baseType[$initialCapacity][];\n"
+            } else {
+              code ++= s"    field${field.getNumber}_values = new $javaType[$initialCapacity];\n"
+            }
+        }
+      }
+    }
   }
 
   /**
@@ -489,29 +536,43 @@ object WireFormatToRowGenerator {
     code ++= "  @Override\n"
     code ++= "  protected void parseInto(CodedInputStream input, UnsafeRowWriter writer) {\n\n"
 
-    // Declare local accumulators for repeated fields
+    // Handle repeated field accumulators based on recursion
     val repeatedFields = descriptor.getFields.asScala.filter(field =>
       field.isRepeated && schema.fieldNames.contains(field.getName)
     )
     if (repeatedFields.nonEmpty) {
-      code ++= "    // Local repeated field accumulators\n"
-      repeatedFields.foreach { field =>
-        val fieldNum = field.getNumber
-        if (isVarint32(field.getType)) {
-          code ++= s"    IntList field${fieldNum}_list = new IntList();\n"
-        } else if (isVarint64(field.getType)) {
-          code ++= s"    LongList field${fieldNum}_list = new LongList();\n"
-        } else {
-          val javaType = getJavaElementType(field.getType)
-          val initialCapacity = getInitialCapacity(field.getType)
-          if (javaType.endsWith("[]")) {
-            // For byte array types: javaType is "byte[]", we want "byte[][]" for the variable
-            val baseType = javaType.dropRight(2)  // "byte"
-            code ++= s"    $javaType[] field${fieldNum}_values = new $baseType[$initialCapacity][];\n"
+      if (hasRecursiveMessages(descriptor)) {
+        // Use local accumulators for recursive messages to prevent state corruption
+        code ++= "    // Local repeated field accumulators (recursive message - prevents state corruption)\n"
+        repeatedFields.foreach { field =>
+          val fieldNum = field.getNumber
+          if (isVarint32(field.getType)) {
+            code ++= s"    IntList field${fieldNum}_list = new IntList();\n"
+          } else if (isVarint64(field.getType)) {
+            code ++= s"    LongList field${fieldNum}_list = new LongList();\n"
           } else {
-            code ++= s"    $javaType[] field${fieldNum}_values = new $javaType[$initialCapacity];\n"
+            val javaType = getJavaElementType(field.getType)
+            val initialCapacity = getInitialCapacity(field.getType)
+            if (javaType.endsWith("[]")) {
+              // For byte array types: javaType is "byte[]", we want "byte[][]" for the variable
+              val baseType = javaType.dropRight(2)  // "byte"
+              code ++= s"    $javaType[] field${fieldNum}_values = new $baseType[$initialCapacity][];\n"
+            } else {
+              code ++= s"    $javaType[] field${fieldNum}_values = new $javaType[$initialCapacity];\n"
+            }
+            code ++= s"    int field${fieldNum}_count = 0;\n"
           }
-          code ++= s"    int field${fieldNum}_count = 0;\n"
+        }
+      } else {
+        // Reset instance field counters for non-recursive messages (better performance)
+        code ++= "    // Reset instance field counters (non-recursive message - optimal performance)\n"
+        repeatedFields.foreach { field =>
+          val fieldNum = field.getNumber
+          if (isVarint32(field.getType) || isVarint64(field.getType)) {
+            code ++= s"    field${fieldNum}_list.count = 0;\n"
+          } else {
+            code ++= s"    field${fieldNum}_count = 0;\n"
+          }
         }
       }
     }
@@ -842,5 +903,25 @@ object WireFormatToRowGenerator {
   private def getInitialCapacity(fieldType: FieldDescriptor.Type): Int = {
     // Start with reasonable defaults - will grow if needed
     8
+  }
+
+  /**
+   * Check if a descriptor contains recursive message fields.
+   * Returns true if any message field refers back to the same type, indicating recursion.
+   */
+  private def hasRecursiveMessages(descriptor: Descriptor): Boolean = {
+    def checkRecursion(currentDesc: Descriptor, visited: Set[String]): Boolean = {
+      if (visited.contains(currentDesc.getFullName)) {
+        return true
+      }
+
+      val newVisited = visited + currentDesc.getFullName
+      currentDesc.getFields.asScala.exists { field =>
+        field.getType == FieldDescriptor.Type.MESSAGE &&
+        checkRecursion(field.getMessageType, newVisited)
+      }
+    }
+
+    checkRecursion(descriptor, Set.empty)
   }
 }
