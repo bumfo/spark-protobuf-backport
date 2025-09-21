@@ -39,7 +39,6 @@ class DomParserEquivalenceTest extends AnyFunSuite with Matchers {
     val wireFormatRow = wireFormatParser.parse(binaryData)
     val protoToRowRow = protoToRowParser.parse(binaryData)
 
-
     // Both should produce the same number of fields
     wireFormatRow.numFields shouldBe protoToRowRow.numFields
 

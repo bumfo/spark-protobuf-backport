@@ -82,8 +82,8 @@ class ProtobufConversionJmhBenchmarkDom {
     // Now works correctly since we pass the schema explicitly to parsers
     domSparkSchema = RecursiveSchemaConverters.toSqlTypeWithTrueRecursion(domDescriptor)
 
-    println(s"DOM Schema created with ${domSparkSchema.fields.length} fields")
-    RecursiveSchemaConverters.printTrueRecursiveSchemaInfo(domDescriptor)
+    // println(s"DOM Schema created with ${domSparkSchema.fields.length} fields")
+    // RecursiveSchemaConverters.printTrueRecursiveSchemaInfo(domDescriptor)
 
     // === Create FileDescriptorSet ===
     domDescSet = DescriptorProtos.FileDescriptorSet.newBuilder()
@@ -103,9 +103,9 @@ class ProtobufConversionJmhBenchmarkDom {
     // domDynamicParser = new DynamicMessageParser(domDescriptor, domSparkSchema)
 
     // Print test data statistics
-    println(s"Shallow DOM: ${shallowDomBinary.length} bytes")
-    println(s"Standard DOM: ${standardDomBinary.length} bytes")
-    println(s"Deep DOM: ${deepDomBinary.length} bytes")
+    // println(s"Shallow DOM: ${shallowDomBinary.length} bytes")
+    // println(s"Standard DOM: ${standardDomBinary.length} bytes")
+    // println(s"Deep DOM: ${deepDomBinary.length} bytes")
   }
 
   @TearDown
