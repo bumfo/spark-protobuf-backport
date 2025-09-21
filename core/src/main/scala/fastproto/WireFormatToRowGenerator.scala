@@ -395,8 +395,8 @@ object WireFormatToRowGenerator {
     // Nested parser setter methods
     generateNestedParserSetters(code, descriptor, schema)
 
-    // Helper methods for enum fields
-    // Enum helper methods no longer needed - we write enums as integers directly
+    // Helper methods for enum fields (only generate for StringType enum fields)
+    generateEnumHelperMethods(code, descriptor, schema)
 
     code ++= "}\n"
     code
@@ -471,56 +471,15 @@ object WireFormatToRowGenerator {
    * Generate repeated field accumulator declarations.
    */
   private def generateRepeatedFieldAccumulators(code: StringBuilder, descriptor: Descriptor, schema: StructType): Unit = {
-    val repeatedFields = descriptor.getFields.asScala.filter(field =>
-      field.isRepeated && schema.fieldNames.contains(field.getName)
-    )
-
-    if (repeatedFields.nonEmpty) {
-      code ++= "  // Repeated field accumulators\n"
-      repeatedFields.foreach { field =>
-        val fieldNum = field.getNumber
-
-        if (isVarint32(field.getType)) {
-          code ++= s"  private final IntList field${fieldNum}_list = new IntList();\n"
-        } else if (isVarint64(field.getType)) {
-          code ++= s"  private final LongList field${fieldNum}_list = new LongList();\n"
-        } else {
-          val javaType = getJavaElementType(field.getType)
-          code ++= s"  private $javaType[] field${fieldNum}_values;\n"
-          code ++= s"  private int field${fieldNum}_count = 0;\n"
-        }
-      }
-      code ++= "\n"
-    }
+    // No longer generate instance fields for accumulators
+    // Accumulators are now declared as local variables in parseInto() method
   }
 
   /**
    * Generate repeated field initialization in constructor.
    */
   private def generateRepeatedFieldInitialization(code: StringBuilder, descriptor: Descriptor, schema: StructType): Unit = {
-    val repeatedFields = descriptor.getFields.asScala.filter(field =>
-      field.isRepeated && schema.fieldNames.contains(field.getName)
-    )
-
-    repeatedFields.foreach { field =>
-      field.getType match {
-        case FieldDescriptor.Type.INT32 | FieldDescriptor.Type.SINT32 =>
-        // IntList is initialized in field declaration, no initialization needed
-        case FieldDescriptor.Type.INT64 | FieldDescriptor.Type.SINT64 =>
-        // LongList is initialized in field declaration, no initialization needed
-        case _ =>
-          val javaType = getJavaElementType(field.getType)
-          val initialCapacity = getInitialCapacity(field.getType)
-          // For primitive types, javaType is "int", "long", etc. -> new int[8]
-          // For byte array types, javaType is "byte[]" -> new byte[8][]
-          if (javaType.endsWith("[]")) {
-            val baseType = javaType.dropRight(2)
-            code ++= s"    field${field.getNumber}_values = new $baseType[$initialCapacity][];\n"
-          } else {
-            code ++= s"    field${field.getNumber}_values = new $javaType[$initialCapacity];\n"
-          }
-      }
-    }
+    // No longer need initialization - accumulators are local variables in parseInto()
   }
 
   /**
@@ -530,16 +489,30 @@ object WireFormatToRowGenerator {
     code ++= "  @Override\n"
     code ++= "  protected void parseInto(CodedInputStream input, UnsafeRowWriter writer) {\n\n"
 
-    // Reset repeated field counters
+    // Declare local accumulators for repeated fields
     val repeatedFields = descriptor.getFields.asScala.filter(field =>
       field.isRepeated && schema.fieldNames.contains(field.getName)
     )
-    repeatedFields.foreach { field =>
-      val fieldNum = field.getNumber
-      if (isVarint32(field.getType) || isVarint64(field.getType)) {
-        code ++= s"    field${fieldNum}_list.count = 0;\n"
-      } else {
-        code ++= s"    field${fieldNum}_count = 0;\n"
+    if (repeatedFields.nonEmpty) {
+      code ++= "    // Local repeated field accumulators\n"
+      repeatedFields.foreach { field =>
+        val fieldNum = field.getNumber
+        if (isVarint32(field.getType)) {
+          code ++= s"    IntList field${fieldNum}_list = new IntList();\n"
+        } else if (isVarint64(field.getType)) {
+          code ++= s"    LongList field${fieldNum}_list = new LongList();\n"
+        } else {
+          val javaType = getJavaElementType(field.getType)
+          val initialCapacity = getInitialCapacity(field.getType)
+          if (javaType.endsWith("[]")) {
+            // For byte array types: javaType is "byte[]", we want "byte[][]" for the variable
+            val baseType = javaType.dropRight(2)  // "byte"
+            code ++= s"    $javaType[] field${fieldNum}_values = new $baseType[$initialCapacity][];\n"
+          } else {
+            code ++= s"    $javaType[] field${fieldNum}_values = new $javaType[$initialCapacity];\n"
+          }
+          code ++= s"    int field${fieldNum}_count = 0;\n"
+        }
       }
     }
 
@@ -596,14 +569,14 @@ object WireFormatToRowGenerator {
     if (field.isRepeated) {
       generateRepeatedFieldTagCases(code, field, ordinal)
     } else {
-      generateSingularFieldTagCase(code, field, ordinal)
+      generateSingularFieldTagCase(code, field, ordinal, schema)
     }
   }
 
   /**
    * Generate switch case for a singular field tag.
    */
-  private def generateSingularFieldTagCase(code: StringBuilder, field: FieldDescriptor, ordinal: Int): Unit = {
+  private def generateSingularFieldTagCase(code: StringBuilder, field: FieldDescriptor, ordinal: Int, schema: StructType): Unit = {
     val fieldNum = field.getNumber
     code ++= s"          case FIELD_${fieldNum}_TAG:\n"
 
@@ -639,8 +612,16 @@ object WireFormatToRowGenerator {
       case FieldDescriptor.Type.BYTES =>
         code ++= s"            writer.write($ordinal, input.readByteArray());\n"
       case FieldDescriptor.Type.ENUM =>
-        // Write enum as integer to match schema created with enumAsInt = true
-        code ++= s"            writer.write($ordinal, input.readEnum());\n"
+        // Check schema to determine if enum should be written as integer or string
+        val enumField = schema.fields(ordinal)
+        enumField.dataType match {
+          case IntegerType =>
+            code ++= s"            writer.write($ordinal, input.readEnum());\n"
+          case StringType =>
+            code ++= s"            writer.write($ordinal, UTF8String.fromString(getEnumName${fieldNum}(input.readEnum())));\n"
+          case other =>
+            throw new IllegalArgumentException(s"Unsupported enum target type: $other")
+        }
       case FieldDescriptor.Type.MESSAGE =>
         code ++= s"            byte[] messageBytes = input.readByteArray();\n"
         code ++= s"            if (nestedConv${fieldNum} != null) {\n"
@@ -826,7 +807,34 @@ object WireFormatToRowGenerator {
     }
   }
 
-  // generateEnumHelperMethods removed - enums are now written as integers directly
+  /**
+   * Generate enum helper methods for fields that need string conversion.
+   */
+  private def generateEnumHelperMethods(code: StringBuilder, descriptor: Descriptor, schema: StructType): Unit = {
+    val enumFields = descriptor.getFields.asScala.filter { field =>
+      field.getType == FieldDescriptor.Type.ENUM &&
+      schema.fieldNames.contains(field.getName) &&
+      schema.fields(schema.fieldIndex(field.getName)).dataType == StringType
+    }
+
+    enumFields.foreach { field =>
+      val fieldNum = field.getNumber
+      val enumType = field.getEnumType
+
+      code ++= s"  private String getEnumName${fieldNum}(int value) {\n"
+      code ++= "    switch (value) {\n"
+
+      enumType.getValues.asScala.foreach { enumValue =>
+        val enumName = enumValue.getName
+        val enumNumber = enumValue.getNumber
+        code ++= s"""      case $enumNumber: return "$enumName";\n"""
+      }
+
+      code ++= s"""      default: return "UNKNOWN_ENUM_VALUE_" + value;\n"""
+      code ++= "    }\n"
+      code ++= "  }\n\n"
+    }
+  }
 
   /**
    * Get initial array capacity for repeated fields.
