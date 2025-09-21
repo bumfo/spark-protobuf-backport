@@ -296,7 +296,7 @@ object ProtoToRowGenerator {
           code ++= s"    UnsafeArrayWriter arrayWriter = new UnsafeArrayWriter(writer, 8);\n"
           code ++= s"    arrayWriter.initialize(count);\n"
           code ++= s"    for (int i = 0; i < count; i++) {\n"
-          code ++= s"      com.google.protobuf.ByteString bs = msg.${getBytesMethodName}(i);\n"
+          code ++= s"      ${classOf[ByteString].getName} bs = msg.${getBytesMethodName}(i);\n"
           code ++= s"      byte[] bytes = bs.toByteArray();\n"
           code ++= s"      arrayWriter.write(i, bytes);\n"
           code ++= s"    }\n"
@@ -647,7 +647,7 @@ object ProtoToRowGenerator {
       case FieldDescriptor.JavaType.DOUBLE => "Double"
       case FieldDescriptor.JavaType.BOOLEAN => "Boolean"
       case FieldDescriptor.JavaType.STRING => "String"
-      case FieldDescriptor.JavaType.BYTE_STRING => "com.google.protobuf.ByteString"
+      case FieldDescriptor.JavaType.BYTE_STRING => classOf[ByteString].getName
       case FieldDescriptor.JavaType.ENUM => fd.getEnumType.getName
       case FieldDescriptor.JavaType.MESSAGE => fd.getMessageType.getName
     }
