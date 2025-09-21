@@ -477,7 +477,7 @@ object WireFormatToRowGenerator {
     )
 
     // Only generate instance fields for non-recursive messages
-    if (repeatedFields.nonEmpty && !hasRecursiveMessages(descriptor)) {
+    if (repeatedFields.nonEmpty && !isDirectlyRecursive(descriptor)) {
       code ++= "  // Repeated field accumulators (instance fields for non-recursive messages)\n"
       repeatedFields.foreach { field =>
         val fieldNum = field.getNumber
@@ -506,7 +506,7 @@ object WireFormatToRowGenerator {
     )
 
     // Only initialize instance fields for non-recursive messages
-    if (repeatedFields.nonEmpty && !hasRecursiveMessages(descriptor)) {
+    if (repeatedFields.nonEmpty && !isDirectlyRecursive(descriptor)) {
       repeatedFields.foreach { field =>
         field.getType match {
           case FieldDescriptor.Type.INT32 | FieldDescriptor.Type.SINT32 =>
@@ -541,7 +541,7 @@ object WireFormatToRowGenerator {
       field.isRepeated && schema.fieldNames.contains(field.getName)
     )
     if (repeatedFields.nonEmpty) {
-      if (hasRecursiveMessages(descriptor)) {
+      if (isDirectlyRecursive(descriptor)) {
         // Use local accumulators for recursive messages to prevent state corruption
         code ++= "    // Local repeated field accumulators (recursive message - prevents state corruption)\n"
         repeatedFields.foreach { field =>
@@ -906,22 +906,30 @@ object WireFormatToRowGenerator {
   }
 
   /**
-   * Check if a descriptor contains recursive message fields.
-   * Returns true if any message field refers back to the same type, indicating recursion.
+   * Check if a specific descriptor is directly recursive (refers to itself).
+   * This is more precise than checking if it contains any recursive types,
+   * allowing non-recursive parent types to use instance fields even when
+   * they contain recursive nested types.
    */
-  private def hasRecursiveMessages(descriptor: Descriptor): Boolean = {
-    def checkRecursion(currentDesc: Descriptor, visited: Set[String]): Boolean = {
-      if (visited.contains(currentDesc.getFullName)) {
+  private def isDirectlyRecursive(descriptor: Descriptor): Boolean = {
+    def checkDirectRecursion(currentDesc: Descriptor, visited: Set[String]): Boolean = {
+      val currentName = currentDesc.getFullName
+      if (visited.contains(currentName)) {
         return true
       }
 
-      val newVisited = visited + currentDesc.getFullName
+      val newVisited = visited + currentName
       currentDesc.getFields.asScala.exists { field =>
-        field.getType == FieldDescriptor.Type.MESSAGE &&
-        checkRecursion(field.getMessageType, newVisited)
+        field.getType == FieldDescriptor.Type.MESSAGE && {
+          val fieldTypeName = field.getMessageType.getFullName
+          // Direct recursion: field refers back to a type already in our path
+          newVisited.contains(fieldTypeName) ||
+          // Indirect recursion: continue checking the field's message type
+          checkDirectRecursion(field.getMessageType, newVisited)
+        }
       }
     }
 
-    checkRecursion(descriptor, Set.empty)
+    checkDirectRecursion(descriptor, Set.empty)
   }
 }
