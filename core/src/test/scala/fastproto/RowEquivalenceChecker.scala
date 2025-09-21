@@ -14,6 +14,7 @@ import scala.util.control.NonFatal
 case class EquivalenceOptions(
     treatEmptyStringAsNull: Boolean = true,
     allowEnumStringIntEquivalence: Boolean = true,
+    // FIXME: Honor ignoreMapOrder when comparing map fields, see https://github.com/bumfo/spark-protobuf-backport/pull/17/files/5685b440e18207b3e412853ce874d943f2973b38#r2366192461
     ignoreMapOrder: Boolean = true,
     strictMode: Boolean = false
 )
