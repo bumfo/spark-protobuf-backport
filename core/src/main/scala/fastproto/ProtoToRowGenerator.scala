@@ -133,6 +133,7 @@ object ProtoToRowGenerator {
     nestedTypes.values.foreach { case (desc, clazz) =>
       // For nested types, we'll use a simple fallback - in practice the schema
       // passed to the root parser should handle all nested structures
+      // FIXME: Pass nested schemas instead of root schema, see https://github.com/bumfo/spark-protobuf-backport/pull/19/files/0953545dc109e448842a6a706054d4a65f7ea15a#r2366204259
       createParserGraph(desc, clazz, schema, localParsers)
     }
 
