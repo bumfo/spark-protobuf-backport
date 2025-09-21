@@ -142,3 +142,6 @@ lazy val root = (project in file("."))
 // Command aliases for convenience
 addCommandAlias("jmh", "bench/Test/compile; bench/Jmh/run")
 addCommandAlias("jmhQuick", "bench/Test/compile; bench/Jmh/run -wi 2 -i 3 -f 1")
+addCommandAlias("jmhSimple", "bench/Test/compile; bench/Jmh/run .*ProtobufConversionJmhBenchmarkSimple.*")
+addCommandAlias("jmhComplex", "bench/Test/compile; bench/Jmh/run .*ProtobufConversionJmhBenchmarkComplex.*")
+addCommandAlias("jmhDom", "bench/Test/compile; bench/Jmh/run .*ProtobufConversionJmhBenchmarkDom.*")
