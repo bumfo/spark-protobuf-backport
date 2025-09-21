@@ -135,7 +135,7 @@ object WireFormatToRowGenerator {
       case FLOAT => Some(4)
       case DOUBLE => Some(8)
       case BOOL => Some(1)
-      case _ => None  // Variable-length types
+      case _ => None // Variable-length types
     }
   }
 
@@ -261,8 +261,19 @@ object WireFormatToRowGenerator {
   private def wireDependencies(
       localParsers: scala.collection.mutable.Map[String, StreamWireParser],
       descriptor: Descriptor,
-      schema: StructType
+      schema: StructType,
+      visited: scala.collection.mutable.Set[String] = scala.collection.mutable.Set()
   ): Unit = {
+    // Use only descriptor name for visited tracking
+    val descriptorName = descriptor.getFullName
+
+    // Skip if already wired
+    if (visited.contains(descriptorName)) {
+      return
+    }
+    visited.add(descriptorName)
+
+    // Parser lookup still uses the full key with schema hash
     val key = s"${descriptor.getFullName}_${schema.hashCode()}"
     val parser = localParsers(key)
 
@@ -304,7 +315,7 @@ object WireFormatToRowGenerator {
         case _ => throw new IllegalArgumentException(s"Expected StructType or ArrayType[StructType] for message field ${field.getName}")
       }
 
-      wireDependencies(localParsers, field.getMessageType, nestedSchema)
+      wireDependencies(localParsers, field.getMessageType, nestedSchema, visited)
     }
   }
 
@@ -335,7 +346,7 @@ object WireFormatToRowGenerator {
    * Compile and instantiate a single parser.
    */
   private def compileParser(descriptor: Descriptor, schema: StructType): StreamWireParser = {
-    val key = s"${descriptor.getFullName}_${schema.hashCode()}"
+    val key = s"${descriptor.getFullName}_${schema.hashCode()}" // TODO: prevent coupling schema in cache key
     val parserClass = getOrCompileClass(descriptor, schema, key)
 
     // Instantiate parser
@@ -418,9 +429,10 @@ object WireFormatToRowGenerator {
 
     messageFields.foreach { field =>
       val fieldNum = field.getNumber
-      code ++= s"  public void setNestedParser${fieldNum}(StreamWireParser conv) {\n"
-      code ++= s"    this.nestedConv${fieldNum} = conv;\n"
-      code ++= "  }\n\n"
+      code ++= s"""  public void setNestedParser${fieldNum}(StreamWireParser conv) {\n"""
+      code ++= s"""    if (this.nestedConv${fieldNum} != null) throw new IllegalStateException("Parser ${fieldNum} already set");\n"""
+      code ++= s"""    this.nestedConv${fieldNum} = conv;\n"""
+      code ++= s"""  }\n\n"""
     }
   }
 
@@ -440,7 +452,7 @@ object WireFormatToRowGenerator {
           // For repeated fields, also generate packed wire type tag if packable
           field.getType match {
             case FieldDescriptor.Type.STRING | FieldDescriptor.Type.BYTES | FieldDescriptor.Type.MESSAGE =>
-              // These types are not packable, skip
+            // These types are not packable, skip
             case _ =>
               // Generate packed tag (always LENGTH_DELIMITED for packed fields)
               val packedTag = (field.getNumber << 3) | 2 // WIRETYPE_LENGTH_DELIMITED = 2
@@ -449,7 +461,7 @@ object WireFormatToRowGenerator {
         }
       } catch {
         case _: IllegalArgumentException =>
-          // Field not in schema, skip
+        // Field not in schema, skip
       }
     }
     code ++= "\n"
@@ -457,14 +469,16 @@ object WireFormatToRowGenerator {
 
   /**
    * Generate repeated field accumulator declarations.
+   * Uses hybrid approach: instance fields for non-recursive messages, local variables for recursive messages.
    */
   private def generateRepeatedFieldAccumulators(code: StringBuilder, descriptor: Descriptor, schema: StructType): Unit = {
     val repeatedFields = descriptor.getFields.asScala.filter(field =>
       field.isRepeated && schema.fieldNames.contains(field.getName)
     )
 
-    if (repeatedFields.nonEmpty) {
-      code ++= "  // Repeated field accumulators\n"
+    // Only generate instance fields for non-recursive messages
+    if (repeatedFields.nonEmpty && !isDirectlyRecursive(descriptor)) {
+      code ++= "  // Repeated field accumulators (instance fields for non-recursive messages)\n"
       repeatedFields.foreach { field =>
         val fieldNum = field.getNumber
 
@@ -484,29 +498,33 @@ object WireFormatToRowGenerator {
 
   /**
    * Generate repeated field initialization in constructor.
+   * Only needed for non-recursive messages that use instance fields.
    */
   private def generateRepeatedFieldInitialization(code: StringBuilder, descriptor: Descriptor, schema: StructType): Unit = {
     val repeatedFields = descriptor.getFields.asScala.filter(field =>
       field.isRepeated && schema.fieldNames.contains(field.getName)
     )
 
-    repeatedFields.foreach { field =>
-      field.getType match {
-        case FieldDescriptor.Type.INT32 | FieldDescriptor.Type.SINT32 =>
+    // Only initialize instance fields for non-recursive messages
+    if (repeatedFields.nonEmpty && !isDirectlyRecursive(descriptor)) {
+      repeatedFields.foreach { field =>
+        field.getType match {
+          case FieldDescriptor.Type.INT32 | FieldDescriptor.Type.SINT32 =>
           // IntList is initialized in field declaration, no initialization needed
-        case FieldDescriptor.Type.INT64 | FieldDescriptor.Type.SINT64 =>
+          case FieldDescriptor.Type.INT64 | FieldDescriptor.Type.SINT64 =>
           // LongList is initialized in field declaration, no initialization needed
-        case _ =>
-          val javaType = getJavaElementType(field.getType)
-          val initialCapacity = getInitialCapacity(field.getType)
-          // For primitive types, javaType is "int", "long", etc. -> new int[8]
-          // For byte array types, javaType is "byte[]" -> new byte[8][]
-          if (javaType.endsWith("[]")) {
-            val baseType = javaType.dropRight(2)
-            code ++= s"    field${field.getNumber}_values = new $baseType[$initialCapacity][];\n"
-          } else {
-            code ++= s"    field${field.getNumber}_values = new $javaType[$initialCapacity];\n"
-          }
+          case _ =>
+            val javaType = getJavaElementType(field.getType)
+            val initialCapacity = getInitialCapacity(field.getType)
+            // For primitive types, javaType is "int", "long", etc. -> new int[8]
+            // For byte array types, javaType is "byte[]" -> new byte[8][]
+            if (javaType.endsWith("[]")) {
+              val baseType = javaType.dropRight(2)
+              code ++= s"    field${field.getNumber}_values = new $baseType[$initialCapacity][];\n"
+            } else {
+              code ++= s"    field${field.getNumber}_values = new $javaType[$initialCapacity];\n"
+            }
+        }
       }
     }
   }
@@ -518,18 +536,47 @@ object WireFormatToRowGenerator {
     code ++= "  @Override\n"
     code ++= "  protected void parseInto(CodedInputStream input, UnsafeRowWriter writer) {\n\n"
 
-    // Reset repeated field counters
+    // Handle repeated field accumulators based on recursion
     val repeatedFields = descriptor.getFields.asScala.filter(field =>
       field.isRepeated && schema.fieldNames.contains(field.getName)
     )
-    repeatedFields.foreach { field =>
-      val fieldNum = field.getNumber
-      if (isVarint32(field.getType) || isVarint64(field.getType)) {
-        code ++= s"    field${fieldNum}_list.count = 0;\n"
+    if (repeatedFields.nonEmpty) {
+      if (isDirectlyRecursive(descriptor)) {
+        // Use local accumulators for recursive messages to prevent state corruption
+        code ++= "    // Local repeated field accumulators (recursive message - prevents state corruption)\n"
+        repeatedFields.foreach { field =>
+          val fieldNum = field.getNumber
+          if (isVarint32(field.getType)) {
+            code ++= s"    IntList field${fieldNum}_list = new IntList();\n"
+          } else if (isVarint64(field.getType)) {
+            code ++= s"    LongList field${fieldNum}_list = new LongList();\n"
+          } else {
+            val javaType = getJavaElementType(field.getType)
+            val initialCapacity = getInitialCapacity(field.getType)
+            if (javaType.endsWith("[]")) {
+              // For byte array types: javaType is "byte[]", we want "byte[][]" for the variable
+              val baseType = javaType.dropRight(2)  // "byte"
+              code ++= s"    $javaType[] field${fieldNum}_values = new $baseType[$initialCapacity][];\n"
+            } else {
+              code ++= s"    $javaType[] field${fieldNum}_values = new $javaType[$initialCapacity];\n"
+            }
+            code ++= s"    int field${fieldNum}_count = 0;\n"
+          }
+        }
       } else {
-        code ++= s"    field${fieldNum}_count = 0;\n"
+        // Reset instance field counters for non-recursive messages (better performance)
+        code ++= "    // Reset instance field counters (non-recursive message - optimal performance)\n"
+        repeatedFields.foreach { field =>
+          val fieldNum = field.getNumber
+          if (isVarint32(field.getType) || isVarint64(field.getType)) {
+            code ++= s"    field${fieldNum}_list.count = 0;\n"
+          } else {
+            code ++= s"    field${fieldNum}_count = 0;\n"
+          }
+        }
       }
     }
+
 
     code ++= "\n    try {\n"
     code ++= "      while (!input.isAtEnd()) {\n"
@@ -570,6 +617,7 @@ object WireFormatToRowGenerator {
       }
     }
 
+
     code ++= "  }\n\n"
   }
 
@@ -582,14 +630,14 @@ object WireFormatToRowGenerator {
     if (field.isRepeated) {
       generateRepeatedFieldTagCases(code, field, ordinal)
     } else {
-      generateSingularFieldTagCase(code, field, ordinal)
+      generateSingularFieldTagCase(code, field, ordinal, schema)
     }
   }
 
   /**
    * Generate switch case for a singular field tag.
    */
-  private def generateSingularFieldTagCase(code: StringBuilder, field: FieldDescriptor, ordinal: Int): Unit = {
+  private def generateSingularFieldTagCase(code: StringBuilder, field: FieldDescriptor, ordinal: Int, schema: StructType): Unit = {
     val fieldNum = field.getNumber
     code ++= s"          case FIELD_${fieldNum}_TAG:\n"
 
@@ -630,7 +678,13 @@ object WireFormatToRowGenerator {
         code ++= s"            writer.write($ordinal, UTF8String.fromString(getEnumName${fieldNum}(input.readEnum())));\n"
       case FieldDescriptor.Type.MESSAGE =>
         code ++= s"            byte[] messageBytes = input.readByteArray();\n"
-        code ++= s"            writeMessage(messageBytes, $ordinal, nestedConv${fieldNum}, writer);\n"
+        code ++= s"            if (nestedConv${fieldNum} != null) {\n"
+        code ++= s"              int offset = writer.cursor();\n"
+        code ++= s"              UnsafeRowWriter nestedWriter = nestedConv${fieldNum}.acquireNestedWriter(writer);\n"
+        code ++= s"              nestedWriter.resetRowWriter();\n"
+        code ++= s"              nestedConv${fieldNum}.parseInto(messageBytes, nestedWriter);\n"
+        code ++= s"              writer.setOffsetAndSizeFromPreviousCursor($ordinal, offset);\n"
+        code ++= s"            }\n"
       case _ =>
         code ++= s"            input.skipField(tag); // Unsupported type\n"
     }
@@ -653,7 +707,7 @@ object WireFormatToRowGenerator {
     // Generate packed tag case if applicable
     field.getType match {
       case FieldDescriptor.Type.STRING | FieldDescriptor.Type.BYTES | FieldDescriptor.Type.MESSAGE =>
-        // These types are not packable, skip packed case
+      // These types are not packable, skip packed case
       case _ =>
         code ++= s"          case FIELD_${fieldNum}_PACKED_TAG:\n"
         code ++= s"            // Packed repeated values for field ${field.getName}\n"
@@ -841,5 +895,33 @@ object WireFormatToRowGenerator {
   private def getInitialCapacity(fieldType: FieldDescriptor.Type): Int = {
     // Start with reasonable defaults - will grow if needed
     8
+  }
+
+  /**
+   * Check if a specific descriptor is directly recursive (refers to itself).
+   * This is more precise than checking if it contains any recursive types,
+   * allowing non-recursive parent types to use instance fields even when
+   * they contain recursive nested types.
+   */
+  private def isDirectlyRecursive(descriptor: Descriptor): Boolean = {
+    def checkDirectRecursion(currentDesc: Descriptor, visited: Set[String]): Boolean = {
+      val currentName = currentDesc.getFullName
+      if (visited.contains(currentName)) {
+        return true
+      }
+
+      val newVisited = visited + currentName
+      currentDesc.getFields.asScala.exists { field =>
+        field.getType == FieldDescriptor.Type.MESSAGE && {
+          val fieldTypeName = field.getMessageType.getFullName
+          // Direct recursion: field refers back to a type already in our path
+          newVisited.contains(fieldTypeName) ||
+          // Indirect recursion: continue checking the field's message type
+          checkDirectRecursion(field.getMessageType, newVisited)
+        }
+      }
+    }
+
+    checkDirectRecursion(descriptor, Set.empty)
   }
 }
