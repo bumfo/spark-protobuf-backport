@@ -346,7 +346,7 @@ object WireFormatToRowGenerator {
    * Compile and instantiate a single parser.
    */
   private def compileParser(descriptor: Descriptor, schema: StructType): StreamWireParser = {
-    val key = s"${descriptor.getFullName}_${schema.hashCode()}"
+    val key = s"${descriptor.getFullName}_${schema.hashCode()}" // TODO: prevent coupling schema in cache key
     val parserClass = getOrCompileClass(descriptor, schema, key)
 
     // Instantiate parser
