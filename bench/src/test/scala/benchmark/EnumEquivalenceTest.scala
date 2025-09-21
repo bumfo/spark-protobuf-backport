@@ -1,10 +1,10 @@
 package benchmark
 
 import benchmark.DomBenchmarkProtos.DomNode
+import benchmark.RecursiveSchemaConverters
 import fastproto.{ProtoToRowGenerator, WireFormatToRowGenerator}
 import fastproto.{EquivalenceOptions, RowEquivalenceChecker}
-import org.apache.spark.sql.protobuf.backport.utils.SchemaConverters
-import org.apache.spark.sql.types.{IntegerType, StringType, StructType}
+import org.apache.spark.sql.types.StructType
 import org.scalatest.funsuite.AnyFunSuite
 import org.scalatest.matchers.should.Matchers
 
@@ -28,10 +28,8 @@ class EnumEquivalenceTest extends AnyFunSuite with Matchers {
     val descriptor = domNode.getDescriptorForType
 
     // Create schemas with different enum representations
-    val stringEnumSchema = SchemaConverters.toSqlType(descriptor).dataType.asInstanceOf[StructType]
-    // Note: We would need to extend SchemaConverters to support enumAsInt parameter
-    // For now, manually create a schema with IntegerType for enums
-    val intEnumSchema = createIntEnumSchema(stringEnumSchema)
+    val stringEnumSchema = RecursiveSchemaConverters.toSqlTypeWithTrueRecursion(descriptor, enumAsInt = false)
+    val intEnumSchema = RecursiveSchemaConverters.toSqlTypeWithTrueRecursion(descriptor, enumAsInt = true)
 
     // Generate parsers with their respective schemas
     val protoToRowParser = ProtoToRowGenerator.generateParser(descriptor, classOf[DomNode], stringEnumSchema)
@@ -53,18 +51,4 @@ class EnumEquivalenceTest extends AnyFunSuite with Matchers {
     )
   }
 
-  /**
-   * Helper method to create a schema with IntegerType for enum fields.
-   * This is a simplified version - a full implementation would recursively handle nested types.
-   */
-  private def createIntEnumSchema(stringSchema: StructType): StructType = {
-    val newFields = stringSchema.fields.map { field =>
-      val newDataType = field.dataType match {
-        case StringType => IntegerType  // Convert all string types to int (simplified)
-        case other => other
-      }
-      field.copy(dataType = newDataType)
-    }
-    StructType(newFields)
-  }
 }
