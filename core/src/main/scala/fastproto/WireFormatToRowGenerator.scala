@@ -346,7 +346,7 @@ object WireFormatToRowGenerator {
    * Compile and instantiate a single parser.
    */
   private def compileParser(descriptor: Descriptor, schema: StructType): StreamWireParser = {
-    val key = s"${descriptor.getFullName}_${schema.hashCode()}" // TODO: prevent coupling schema in cache key
+    val key = s"${descriptor.getFullName}_${schema.hashCode()}"
     val parserClass = getOrCompileClass(descriptor, schema, key)
 
     // Instantiate parser
@@ -395,7 +395,7 @@ object WireFormatToRowGenerator {
     // Nested parser setter methods
     generateNestedParserSetters(code, descriptor, schema)
 
-    // Helper methods for enum fields
+    // Helper methods for enum fields (only generate for StringType enum fields)
     generateEnumHelperMethods(code, descriptor, schema)
 
     code ++= "}\n"
@@ -673,9 +673,16 @@ object WireFormatToRowGenerator {
       case FieldDescriptor.Type.BYTES =>
         code ++= s"            writer.write($ordinal, input.readByteArray());\n"
       case FieldDescriptor.Type.ENUM =>
-        // FIXME unify enum representation in single/repeated, and update schema generation accordingly
-        // see https://github.com/bumfo/spark-protobuf-backport/pull/10/files/a9ff39ca02f0b7ce811158ded8281940e40aeb3f#r2354592327
-        code ++= s"            writer.write($ordinal, UTF8String.fromString(getEnumName${fieldNum}(input.readEnum())));\n"
+        // Check schema to determine if enum should be written as integer or string
+        val enumField = schema.fields(ordinal)
+        enumField.dataType match {
+          case IntegerType =>
+            code ++= s"            writer.write($ordinal, input.readEnum());\n"
+          case StringType =>
+            code ++= s"            writer.write($ordinal, UTF8String.fromString(getEnumName${fieldNum}(input.readEnum())));\n"
+          case other =>
+            throw new IllegalArgumentException(s"Unsupported enum target type: $other")
+        }
       case FieldDescriptor.Type.MESSAGE =>
         code ++= s"            byte[] messageBytes = input.readByteArray();\n"
         code ++= s"            if (nestedConv${fieldNum} != null) {\n"
@@ -862,25 +869,26 @@ object WireFormatToRowGenerator {
   }
 
   /**
-   * Generate helper methods for enum fields to convert enum values to names.
+   * Generate enum helper methods for fields that need string conversion.
    */
   private def generateEnumHelperMethods(code: StringBuilder, descriptor: Descriptor, schema: StructType): Unit = {
     val enumFields = descriptor.getFields.asScala.filter { field =>
-      field.getType == FieldDescriptor.Type.ENUM && schema.fieldNames.contains(field.getName)
+      field.getType == FieldDescriptor.Type.ENUM &&
+      schema.fieldNames.contains(field.getName) &&
+      schema.fields(schema.fieldIndex(field.getName)).dataType == StringType
     }
 
     enumFields.foreach { field =>
       val fieldNum = field.getNumber
-      val enumDescriptor = field.getEnumType
+      val enumType = field.getEnumType
 
       code ++= s"  private String getEnumName${fieldNum}(int value) {\n"
       code ++= "    switch (value) {\n"
 
-      // Generate case for each enum value
-      enumDescriptor.getValues.asScala.foreach { enumValue =>
-        val name = enumValue.getName
-        val number = enumValue.getNumber
-        code ++= s"""      case $number: return "$name";\n"""
+      enumType.getValues.asScala.foreach { enumValue =>
+        val enumName = enumValue.getName
+        val enumNumber = enumValue.getNumber
+        code ++= s"""      case $enumNumber: return "$enumName";\n"""
       }
 
       code ++= s"""      default: return "UNKNOWN_ENUM_VALUE_" + value;\n"""
