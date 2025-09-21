@@ -128,14 +128,14 @@ class ProtobufConversionJmhBenchmarkDom {
   // }
 
   // @Benchmark
-  def domStandardDynamicMessageDescriptorFile(bh: Blackhole): Unit = {
-    bh.consume(domDescriptorFileExpression.nullSafeEval(standardDomBinary))
-  }
+  // def domStandardDynamicMessageDescriptorFile(bh: Blackhole): Unit = {
+  //   bh.consume(domDescriptorFileExpression.nullSafeEval(standardDomBinary))
+  // }
 
   // @Benchmark
-  def domStandardDynamicMessageBinaryDescriptor(bh: Blackhole): Unit = {
-    bh.consume(domBinaryDescExpression.nullSafeEval(standardDomBinary))
-  }
+  // def domStandardDynamicMessageBinaryDescriptor(bh: Blackhole): Unit = {
+  //   bh.consume(domBinaryDescExpression.nullSafeEval(standardDomBinary))
+  // }
 
   // === Shallow DOM Benchmarks (depth=3, breadth=2) ===
   // Tests performance with wide but shallow trees
