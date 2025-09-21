@@ -486,7 +486,9 @@ object ProtoToRowGenerator {
           code ++= s"        arrayWriter.setNull(i);\n"
           code ++= s"      } else {\n"
           code ++= s"        int elemOffset = arrayWriter.cursor();\n"
-          code ++= s"        ${nestedParserName}.parseWithSharedBuffer(element, writer);\n"
+          // Inline parseWithSharedBuffer to enable loop-invariant code motion for writer reuse
+          code ++= s"        UnsafeRowWriter nestedWriter = ${nestedParserName}.acquireWriter(writer);\n"
+          code ++= s"        ${nestedParserName}.parseInto(element, nestedWriter);\n"
           code ++= s"        arrayWriter.setOffsetAndSizeFromPreviousCursor(i, elemOffset);\n"
           code ++= s"      }\n"
           code ++= s"    }\n"
@@ -514,7 +516,9 @@ object ProtoToRowGenerator {
               code ++= s"        writer.setNullAt($idx);\n"
               code ++= s"      } else {\n"
               code ++= s"        int offset = writer.cursor();\n"
-              code ++= s"        ${nestedParserName}.parseWithSharedBuffer(v, writer);\n"
+              // Inline parseWithSharedBuffer for potential optimizations
+              code ++= s"        UnsafeRowWriter nestedWriter = ${nestedParserName}.acquireWriter(writer);\n"
+              code ++= s"        ${nestedParserName}.parseInto(v, nestedWriter);\n"
               code ++= s"        writer.setOffsetAndSizeFromPreviousCursor($idx, offset);\n"
               code ++= s"      }\n"
               code ++= s"    }\n"
@@ -524,7 +528,9 @@ object ProtoToRowGenerator {
               code ++= s"      writer.setNullAt($idx);\n"
               code ++= s"    } else {\n"
               code ++= s"      int offset = writer.cursor();\n"
-              code ++= s"      ${nestedParserName}.parseWithSharedBuffer(v, writer);\n"
+              // Inline parseWithSharedBuffer for potential optimizations
+              code ++= s"      UnsafeRowWriter nestedWriter = ${nestedParserName}.acquireWriter(writer);\n"
+              code ++= s"      ${nestedParserName}.parseInto(v, nestedWriter);\n"
               code ++= s"      writer.setOffsetAndSizeFromPreviousCursor($idx, offset);\n"
               code ++= s"    }\n"
           }

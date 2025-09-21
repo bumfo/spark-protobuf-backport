@@ -19,6 +19,7 @@ import scala.collection.JavaConverters._
  * - Leveraging packed field parsing methods from StreamWireParser
  * - Direct byte copying for strings/bytes/messages
  * - Single-pass streaming parse to UnsafeRow
+ * TODO support skipping GROUP wire type by default
  *
  * @param descriptor the protobuf message descriptor
  * @param schema     the corresponding Spark SQL schema
@@ -185,6 +186,7 @@ class WireFormatParser(
       return
     }
 
+    // TODO JIT friendly: split repeated and single into separate method to reduce bytecode size
     if (mapping.isRepeated) {
       // For repeated fields, accumulate values using type-specific accumulators
       mapping.fieldDescriptor.getType match {

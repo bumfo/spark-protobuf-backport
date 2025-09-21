@@ -13,6 +13,8 @@ import java.io.IOException;
  * <p>
  * Provides optimized array writing methods with size parameters to eliminate
  * array slicing and reduce memory allocations, plus CodedInputStream-specific parsing utilities.
+ * TODO Leverage enableAliasing by using readByteBuffer instead of readByteArray, and
+ *      use UnsafeWriter.write with offset and length to eliminate copying
  */
 @SuppressWarnings("unused")
 public abstract class StreamWireParser extends BufferSharingParser {
@@ -27,7 +29,18 @@ public abstract class StreamWireParser extends BufferSharingParser {
      */
     @Override
     public final void parseInto(byte[] binary, UnsafeRowWriter writer) {
-        CodedInputStream input = CodedInputStream.newInstance(binary);
+        parseInto(binary, 0, binary.length, writer);
+    }
+
+    /**
+     * Convenience method that creates a CodedInputStream from a partial byte array and delegates
+     * to the abstract parseInto(CodedInputStream, UnsafeRowWriter) method.
+     * This avoids array copying when parsing embedded or streamed protobuf data.
+     */
+    @Override
+    public final void parseInto(byte[] binary, int offset, int length, UnsafeRowWriter writer) {
+        CodedInputStream input = CodedInputStream.newInstance(binary, offset, length);
+        input.enableAliasing(true);
 
         parseInto(input, writer);
     }
@@ -310,7 +323,9 @@ public abstract class StreamWireParser extends BufferSharingParser {
 
         for (int i = 0; i < size; i++) {
             int elemOffset = arrayWriter.cursor();
-            parser.parseWithSharedBuffer(messageBytes[i], writer);
+            // Inline parseWithSharedBuffer to enable loop-invariant code motion for writer reuse
+            UnsafeRowWriter nestedWriter = parser.acquireWriter(writer);
+            parser.parseInto(messageBytes[i], nestedWriter);
             arrayWriter.setOffsetAndSizeFromPreviousCursor(i, elemOffset);
         }
 
@@ -325,7 +340,9 @@ public abstract class StreamWireParser extends BufferSharingParser {
      */
     protected void writeMessage(byte[] messageBytes, int ordinal, StreamWireParser parser, UnsafeRowWriter writer) {
         int offset = writer.cursor();
-        parser.parseWithSharedBuffer(messageBytes, writer);
+        // Inline parseWithSharedBuffer for potential optimizations
+        UnsafeRowWriter nestedWriter = parser.acquireWriter(writer);
+        parser.parseInto(messageBytes, nestedWriter);
         writer.setOffsetAndSizeFromPreviousCursor(ordinal, offset);
     }
 
