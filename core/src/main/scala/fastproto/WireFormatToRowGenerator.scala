@@ -361,8 +361,8 @@ object WireFormatToRowGenerator {
     val code = new StringBuilder
 
     // Imports
-    code ++= "import com.google.protobuf.CodedInputStream;\n"
-    code ++= "import com.google.protobuf.WireFormat;\n"
+    code ++= s"import ${classOf[com.google.protobuf.CodedInputStream].getName};\n"
+    code ++= s"import ${classOf[WireFormat].getName};\n"
     code ++= "import org.apache.spark.sql.catalyst.expressions.codegen.UnsafeRowWriter;\n"
     code ++= "import org.apache.spark.sql.types.StructType;\n"
     code ++= "import org.apache.spark.unsafe.types.UTF8String;\n"
