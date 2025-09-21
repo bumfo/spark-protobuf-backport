@@ -84,6 +84,15 @@ Before creating a PR, ensure you are on a feature branch:
 - `perf/description` - for performance improvements
 - `test/description` - for test-only changes
 
+### Commit Guidelines
+**Always check what will be committed before running `git commit`**:
+```bash
+git -c color.status=never status -sb    # Check staged and unstaged files
+git diff --cached    # Review staged changes
+```
+
+**Stage files in a single command with all changed files from current session** - avoid repeated `git add <file>`, `git add -A`, or `git add .`
+
 ## Module Documentation
 
 For detailed implementation and development information:
@@ -98,6 +107,10 @@ The backport supports three protobuf usage patterns:
 1. **Compiled Java class**: `from_protobuf(col("data"), "com.example.MyMessage")`
 2. **Descriptor file**: `from_protobuf(col("data"), "MyMessage", "/path/to/schema.desc")`  
 3. **Binary descriptor set**: `from_protobuf(col("data"), "MyMessage", descriptor_bytes)`
+
+## Documentation Style
+
+Write concisely while staying accurate. Focus on practical usage patterns and examples over lengthy explanations.
 
 # important-instruction-reminders
 Do what has been asked; nothing more, nothing less.
