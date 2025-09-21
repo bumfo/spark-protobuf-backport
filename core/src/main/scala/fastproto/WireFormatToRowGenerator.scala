@@ -385,7 +385,7 @@ object WireFormatToRowGenerator {
     generateNestedParserSetters(code, descriptor, schema)
 
     // Helper methods for enum fields
-    // Enum helper methods no longer needed - we write enums as integers directly
+    generateEnumHelperMethods(code, descriptor, schema)
 
     code ++= "}\n"
     code
@@ -625,8 +625,9 @@ object WireFormatToRowGenerator {
       case FieldDescriptor.Type.BYTES =>
         code ++= s"            writer.write($ordinal, input.readByteArray());\n"
       case FieldDescriptor.Type.ENUM =>
-        // Write enum as integer to match schema created with enumAsInt = true
-        code ++= s"            writer.write($ordinal, input.readEnum());\n"
+        // FIXME unify enum representation in single/repeated, and update schema generation accordingly
+        // see https://github.com/bumfo/spark-protobuf-backport/pull/10/files/a9ff39ca02f0b7ce811158ded8281940e40aeb3f#r2354592327
+        code ++= s"            writer.write($ordinal, UTF8String.fromString(getEnumName${fieldNum}(input.readEnum())));\n"
       case FieldDescriptor.Type.MESSAGE =>
         code ++= s"            byte[] messageBytes = input.readByteArray();\n"
         code ++= s"            writeMessage(messageBytes, $ordinal, nestedConv${fieldNum}, writer);\n"
@@ -806,7 +807,33 @@ object WireFormatToRowGenerator {
     }
   }
 
-  // generateEnumHelperMethods removed - enums are now written as integers directly
+  /**
+   * Generate helper methods for enum fields to convert enum values to names.
+   */
+  private def generateEnumHelperMethods(code: StringBuilder, descriptor: Descriptor, schema: StructType): Unit = {
+    val enumFields = descriptor.getFields.asScala.filter { field =>
+      field.getType == FieldDescriptor.Type.ENUM && schema.fieldNames.contains(field.getName)
+    }
+
+    enumFields.foreach { field =>
+      val fieldNum = field.getNumber
+      val enumDescriptor = field.getEnumType
+
+      code ++= s"  private String getEnumName${fieldNum}(int value) {\n"
+      code ++= "    switch (value) {\n"
+
+      // Generate case for each enum value
+      enumDescriptor.getValues.asScala.foreach { enumValue =>
+        val name = enumValue.getName
+        val number = enumValue.getNumber
+        code ++= s"""      case $number: return "$name";\n"""
+      }
+
+      code ++= s"""      default: return "UNKNOWN_ENUM_VALUE_" + value;\n"""
+      code ++= "    }\n"
+      code ++= "  }\n\n"
+    }
+  }
 
   /**
    * Get initial array capacity for repeated fields.
