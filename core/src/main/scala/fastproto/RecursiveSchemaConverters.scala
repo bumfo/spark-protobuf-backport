@@ -1,11 +1,10 @@
-package benchmark
+package fastproto
 
-import com.google.protobuf.Descriptors
 import com.google.protobuf.Descriptors.{Descriptor, FieldDescriptor}
 import org.apache.spark.sql.types._
 
-import scala.collection.mutable
 import scala.collection.JavaConverters._
+import scala.collection.mutable
 
 /**
  * Custom schema converter for benchmarks that handles recursive message types.
