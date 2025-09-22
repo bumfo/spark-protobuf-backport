@@ -16,7 +16,7 @@
 package org.apache.spark.sql.protobuf.backport
 
 import com.google.protobuf.{Message => PbMessage}
-import fastproto.{Parser, ProtoToRowGenerator, StreamWireParser, WireFormatToRowGenerator}
+import fastproto._
 import org.apache.spark.internal.Logging
 import org.apache.spark.sql.catalyst.expressions.codegen.{CodeGenerator, CodegenContext, ExprCode}
 import org.apache.spark.sql.catalyst.expressions.{ExpectsInputTypes, Expression, UnaryExpression}
@@ -64,8 +64,15 @@ private[backport] case class ProtobufDataToCatalyst(
 
   override def inputTypes: Seq[AbstractDataType] = Seq(BinaryType)
 
-  override lazy val dataType: StructType =
-    SchemaConverters.toSqlType(messageDescriptor, protobufOptions).dataType
+  override lazy val dataType: StructType = {
+    binaryDescriptorSet match {
+      // TODO always prefer wireFormatParser
+      case Some(_) =>
+        RecursiveSchemaConverters.toSqlTypeWithTrueRecursion(messageDescriptor, enumAsInt = true)
+      case None =>
+        SchemaConverters.toSqlType(messageDescriptor, protobufOptions).dataType
+    }
+  }
 
   override def nullable: Boolean = true
 
@@ -178,16 +185,13 @@ private[backport] case class ProtobufDataToCatalyst(
 
   override def nullSafeEval(input: Any): Any = {
     val binary = input.asInstanceOf[Array[Byte]]
-    try {
-      // Try parsers in priority order:
-      // 1. Compiled class parser (messageParserOpt)
-      // 2. Wire format parser (wireFormatParserOpt)
-      // 3. DynamicMessage parser (dynamicMessageParserOpt)
-      val parser = messageParserOpt
-        .orElse(wireFormatParserOpt)
-        .orElse(dynamicMessageParserOpt)
-        .getOrElse(throw new IllegalStateException("No parser available"))
 
+    val parser = messageParserOpt
+      .orElse(wireFormatParserOpt)
+      .orElse(dynamicMessageParserOpt)
+      .getOrElse(throw new IllegalStateException("No parser available"))
+
+    try {
       parser.parse(binary)
     } catch {
       case NonFatal(e) => handleException(e)
@@ -198,58 +202,58 @@ private[backport] case class ProtobufDataToCatalyst(
 
   override protected def doGenCode(ctx: CodegenContext, ev: ExprCode): ExprCode = {
     // Check if we can generate optimized code using any available parser
-    val parserOpt = messageParserOpt
-      .orElse(wireFormatParserOpt)
-      .orElse(dynamicMessageParserOpt)
-
-    parserOpt match {
-      case Some(parser) =>
-        // Generate optimized code path using the parser directly
-        val expr = ctx.addReferenceObj("this", this)
-        val parserRef = ctx.addReferenceObj("parser", parser)
-
-        nullSafeCodeGen(
-          ctx,
-          ev,
-          eval => {
-            val result = ctx.freshName("result")
-            val dt = CodeGenerator.boxedType(dataType)
-            s"""
-               |// Optimized codegen path using parser with direct binary conversion
-               |try {
-               |  $dt $result = ($dt) $parserRef.parse($eval);
-               |  if ($result == null) {
-               |    ${ev.isNull} = true;
-               |  } else {
-               |    ${ev.value} = $result;
-               |  }
-               |} catch (java.lang.Exception e) {
-               |  $expr.handleException(e);
-               |  ${ev.isNull} = true;
-               |}
-               |""".stripMargin
-          }
-        )
-      case None =>
-        // Fallback to standard codegen path that calls nullSafeEval
-        val expr = ctx.addReferenceObj("this", this)
-        nullSafeCodeGen(
-          ctx,
-          ev,
-          eval => {
-            val result = ctx.freshName("result")
-            val dt = CodeGenerator.boxedType(dataType)
-            s"""
-               |$dt $result = ($dt) $expr.nullSafeEval($eval);
-               |if ($result == null) {
-               |  ${ev.isNull} = true;
-               |} else {
-               |  ${ev.value} = $result;
-               |}
-               |""".stripMargin
-          }
-        )
-    }
+    // val parserOpt = messageParserOpt
+    //   .orElse(wireFormatParserOpt)
+    //   .orElse(dynamicMessageParserOpt)
+    //
+    // parserOpt match {
+    //   case Some(parser) =>
+    //     // Generate optimized code path using the parser directly
+    //     val expr = ctx.addReferenceObj("this", this)
+    //     val parserRef = ctx.addReferenceObj("parser", parser)
+    //
+    //     nullSafeCodeGen(
+    //       ctx,
+    //       ev,
+    //       eval => {
+    //         val result = ctx.freshName("result")
+    //         val dt = CodeGenerator.boxedType(dataType)
+    //         s"""
+    //            |// Optimized codegen path using parser with direct binary conversion
+    //            |try {
+    //            |  $dt $result = ($dt) $parserRef.parse($eval);
+    //            |  if ($result == null) {
+    //            |    ${ev.isNull} = true;
+    //            |  } else {
+    //            |    ${ev.value} = $result;
+    //            |  }
+    //            |} catch (java.lang.Exception e) {
+    //            |  $expr.handleException(e);
+    //            |  ${ev.isNull} = true;
+    //            |}
+    //            |""".stripMargin
+    //       }
+    //     )
+    //   case None =>
+    // Fallback to standard codegen path that calls nullSafeEval
+    val expr = ctx.addReferenceObj("this", this)
+    nullSafeCodeGen(
+      ctx,
+      ev,
+      eval => {
+        val result = ctx.freshName("result")
+        val dt = CodeGenerator.boxedType(dataType)
+        s"""
+           |$dt $result = ($dt) $expr.nullSafeEval($eval);
+           |if ($result == null) {
+           |  ${ev.isNull} = true;
+           |} else {
+           |  ${ev.value} = $result;
+           |}
+           |""".stripMargin
+      }
+    )
+    // }
   }
 
   override protected def withNewChildInternal(newChild: Expression): ProtobufDataToCatalyst =
