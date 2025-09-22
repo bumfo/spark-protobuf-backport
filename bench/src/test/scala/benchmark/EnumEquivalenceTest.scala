@@ -1,10 +1,7 @@
 package benchmark
 
 import benchmark.DomBenchmarkProtos.DomNode
-import benchmark.RecursiveSchemaConverters
-import fastproto.{ProtoToRowGenerator, WireFormatToRowGenerator}
-import fastproto.{EquivalenceOptions, RowEquivalenceChecker}
-import org.apache.spark.sql.types.StructType
+import fastproto._
 import org.scalatest.funsuite.AnyFunSuite
 import org.scalatest.matchers.should.Matchers
 

@@ -1,12 +1,9 @@
 package org.apache.spark.sql.protobuf.backport.jmh
 
-import benchmark.{RecursiveSchemaConverters, DomBenchmarkProtos, DomTestDataGenerator}
 import benchmark.DomBenchmarkProtos.DomDocument
+import benchmark.DomTestDataGenerator
 import com.google.protobuf.{DescriptorProtos, Descriptors}
-import fastproto.{Parser, ProtoToRowGenerator, StreamWireParser, WireFormatParser, WireFormatToRowGenerator}
-import org.apache.spark.sql.catalyst.expressions.Literal
-import org.apache.spark.sql.protobuf.backport.utils.SchemaConverters
-import org.apache.spark.sql.protobuf.backport.{DynamicMessageParser, ProtobufDataToCatalyst}
+import fastproto._
 import org.apache.spark.sql.types._
 import org.openjdk.jmh.annotations._
 import org.openjdk.jmh.infra.Blackhole
