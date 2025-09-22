@@ -684,12 +684,12 @@ object WireFormatToRowGenerator {
             throw new IllegalArgumentException(s"Unsupported enum target type: $other")
         }
       case FieldDescriptor.Type.MESSAGE =>
-        code ++= s"            byte[] messageBytes = input.readByteArray();\n"
+        code ++= s"            byte[] messageBytes${fieldNum} = input.readByteArray();\n"
         code ++= s"            if (nestedConv${fieldNum} != null) {\n"
         code ++= s"              int offset = writer.cursor();\n"
         code ++= s"              UnsafeRowWriter nestedWriter = nestedConv${fieldNum}.acquireNestedWriter(writer);\n"
         code ++= s"              nestedWriter.resetRowWriter();\n"
-        code ++= s"              nestedConv${fieldNum}.parseInto(messageBytes, nestedWriter);\n"
+        code ++= s"              nestedConv${fieldNum}.parseInto(messageBytes${fieldNum}, nestedWriter);\n"
         code ++= s"              writer.setOffsetAndSizeFromPreviousCursor($ordinal, offset);\n"
         code ++= s"            }\n"
       case _ =>
