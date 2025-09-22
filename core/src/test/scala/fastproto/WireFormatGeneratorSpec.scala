@@ -577,6 +577,8 @@ class WireFormatGeneratorSpec extends AnyFlatSpec with Matchers {
       .master("local[1]")
       .config("spark.ui.enabled", "false")
       .config("spark.sql.adaptive.enabled", "false")
+      .config("spark.sql.codegen.wholeStage", "true")
+      .config("spark.sql.codegen.maxFields", "1000")
       .config("spark.serializer", "org.apache.spark.serializer.KryoSerializer")
       .getOrCreate()
 
