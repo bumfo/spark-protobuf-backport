@@ -335,7 +335,7 @@ object WireFormatToRowGenerator {
         val compiler = new SimpleCompiler()
         compiler.setParentClassLoader(this.getClass.getClassLoader)
         compiler.cook(sourceCode.toString)
-        val generatedClass = compiler.getClassLoader.loadClass(className).asInstanceOf[Class[_ <: StreamWireParser]]
+        val generatedClass = compiler.getClassLoader.loadClass(s"fastproto.generated.$className").asInstanceOf[Class[_ <: StreamWireParser]]
 
         // Cache the compiled class globally and return
         Option(classCache.putIfAbsent(key, generatedClass)).getOrElse(generatedClass)
@@ -359,6 +359,9 @@ object WireFormatToRowGenerator {
    */
   private def generateSourceCode(className: String, descriptor: Descriptor, schema: StructType): StringBuilder = {
     val code = new StringBuilder
+
+    // Package declaration
+    code ++= "package fastproto.generated;\n\n"
 
     // Imports
     code ++= s"import ${classOf[com.google.protobuf.CodedInputStream].getName};\n"

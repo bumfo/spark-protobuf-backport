@@ -243,6 +243,10 @@ object ProtoToRowGenerator {
     val fieldToParserIndex: Map[FieldDescriptor, Int] = messageFields.zipWithIndex.toMap
 
     val code = new StringBuilder
+
+    // Package declaration
+    code ++= "package fastproto.generated;\n\n"
+
     // Imports required by the generated Java source
     code ++= "import org.apache.spark.sql.catalyst.expressions.UnsafeRow;\n"
     code ++= "import org.apache.spark.sql.catalyst.expressions.codegen.UnsafeRowWriter;\n"
@@ -611,7 +615,7 @@ object ProtoToRowGenerator {
         val compiler = new SimpleCompiler()
         compiler.setParentClassLoader(this.getClass.getClassLoader)
         compiler.cook(sourceCode.toString)
-        val generatedClass = compiler.getClassLoader.loadClass(className).asInstanceOf[Class[_ <: Parser]]
+        val generatedClass = compiler.getClassLoader.loadClass(s"fastproto.generated.$className").asInstanceOf[Class[_ <: Parser]]
 
         // Cache the compiled class globally and return
         Option(classCache.putIfAbsent(key, generatedClass)).getOrElse(generatedClass)
