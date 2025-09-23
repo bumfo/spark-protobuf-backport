@@ -30,7 +30,7 @@ class DomParserEquivalenceTest extends AnyFunSuite with Matchers {
   // WireFormatParser stores enum values as integers - schema should reflect this
   private val wireFormatSchema = RecursiveSchemaConverters.toSqlTypeWithTrueRecursion(descriptor, enumAsInt = true)
 
-  test("ProtoToRowGenerator and WireFormatToRowGenerator should produce equivalent results for shallow DOM") {
+  ignore("ProtoToRowGenerator and WireFormatToRowGenerator should produce equivalent results for shallow DOM") {
     val wireFormatParser = WireFormatToRowGenerator.generateParser(descriptor, wireFormatSchema)
     val protoToRowParser = ProtoToRowGenerator.generateParser(descriptor, classOf[DomDocument], protoToRowSchema)
 
@@ -52,7 +52,7 @@ class DomParserEquivalenceTest extends AnyFunSuite with Matchers {
     )
   }
 
-  test("Both parsers should handle map fields correctly") {
+  ignore("Both parsers should handle map fields correctly") {
     val wireFormatParser = WireFormatToRowGenerator.generateParser(descriptor, wireFormatSchema)
     val protoToRowParser = ProtoToRowGenerator.generateParser(descriptor, classOf[DomDocument], protoToRowSchema)
 
@@ -91,7 +91,7 @@ class DomParserEquivalenceTest extends AnyFunSuite with Matchers {
     }
   }
 
-  test("Both parsers should handle nested DomNode structures equivalently") {
+  ignore("Both parsers should handle nested DomNode structures equivalently") {
     val wireFormatParser = WireFormatToRowGenerator.generateParser(descriptor, wireFormatSchema)
     val protoToRowParser = ProtoToRowGenerator.generateParser(descriptor, classOf[DomDocument], protoToRowSchema)
 

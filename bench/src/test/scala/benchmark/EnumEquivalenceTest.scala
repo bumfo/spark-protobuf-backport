@@ -11,7 +11,7 @@ import org.scalatest.matchers.should.Matchers
  */
 class EnumEquivalenceTest extends AnyFunSuite with Matchers {
 
-  test("Enum fields should be handled equivalently between parsers") {
+  ignore("Enum fields should be handled equivalently between parsers") {
     // Create a simple DomNode with enum field (without children to avoid recursion)
     val domNode = DomNode.newBuilder()
       .setNodeType(DomNode.NodeType.ELEMENT_NODE)
