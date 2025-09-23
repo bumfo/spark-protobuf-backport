@@ -692,9 +692,8 @@ object WireFormatToRowGenerator {
         code ++= s"              int offset = writer.cursor();\n"
         code ++= s"              UnsafeRowWriter nestedWriter = nestedConv${fieldNum}.acquireNestedWriter(writer);\n"
         code ++= s"              nestedWriter.resetRowWriter();\n"
-        code ++= s"              " + classOf[UnsafeRowWriterHelper].getName + ".setAllFieldsNull(nestedWriter);\n"
         code ++= s"              nestedConv${fieldNum}.parseInto(messageBytes${fieldNum}, nestedWriter);\n"
-        code ++= s"              writer.setOffsetAndSizeFromPreviousCursor($ordinal, offset);\n"
+        code ++= s"              writer.writeVariableField($ordinal, offset);\n"
         code ++= s"            }\n"
       case _ =>
         code ++= s"            input.skipField(tag); // Unsupported type\n"
