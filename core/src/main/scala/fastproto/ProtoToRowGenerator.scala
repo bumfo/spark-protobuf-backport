@@ -530,6 +530,8 @@ object ProtoToRowGenerator {
 
     // Typed parseInto implementation (called by bridge method)
     code ++= "  private void parseInto(" + messageClass.getName + " msg, UnsafeRowWriter writer) {\n"
+    code ++= "    // Cache startingOffset for efficient null bit clearing\n"
+    code ++= "    int startingOffset = UnsafeRowWriterHelper.getStartingOffset(writer);\n"
 
     // Generate per‑field extraction and writing logic using writer
     descriptor.getFields.asScala.zipWithIndex.foreach { case (fd, idx) =>
@@ -571,24 +573,24 @@ object ProtoToRowGenerator {
         // For simple singular fields, keep inline with optimized string handling
         case FieldDescriptor.JavaType.INT =>
           code ++= s"    writer.write($idx, msg.${getterName}());\n"
-          code ++= s"    UnsafeRowWriterHelper.clearNullAt(writer, $idx);\n"
+          code ++= s"    UnsafeRowWriterHelper.clearNullAt(writer, startingOffset, $idx);\n"
         case FieldDescriptor.JavaType.LONG =>
           code ++= s"    writer.write($idx, msg.${getterName}());\n"
-          code ++= s"    UnsafeRowWriterHelper.clearNullAt(writer, $idx);\n"
+          code ++= s"    UnsafeRowWriterHelper.clearNullAt(writer, startingOffset, $idx);\n"
         case FieldDescriptor.JavaType.FLOAT =>
           code ++= s"    writer.write($idx, msg.${getterName}());\n"
-          code ++= s"    UnsafeRowWriterHelper.clearNullAt(writer, $idx);\n"
+          code ++= s"    UnsafeRowWriterHelper.clearNullAt(writer, startingOffset, $idx);\n"
         case FieldDescriptor.JavaType.DOUBLE =>
           code ++= s"    writer.write($idx, msg.${getterName}());\n"
-          code ++= s"    UnsafeRowWriterHelper.clearNullAt(writer, $idx);\n"
+          code ++= s"    UnsafeRowWriterHelper.clearNullAt(writer, startingOffset, $idx);\n"
         case FieldDescriptor.JavaType.BOOLEAN =>
           code ++= s"    writer.write($idx, msg.${getterName}());\n"
-          code ++= s"    UnsafeRowWriterHelper.clearNullAt(writer, $idx);\n"
+          code ++= s"    UnsafeRowWriterHelper.clearNullAt(writer, startingOffset, $idx);\n"
         case FieldDescriptor.JavaType.STRING =>
           // Optimized singular string: use direct bytes
           code ++= s"    byte[] bytes${idx} = msg.${getBytesMethodName}().toByteArray();\n"
           code ++= s"    writer.write($idx, bytes${idx});\n"
-          code ++= s"    UnsafeRowWriterHelper.clearNullAt(writer, $idx);\n"
+          code ++= s"    UnsafeRowWriterHelper.clearNullAt(writer, startingOffset, $idx);\n"
         case FieldDescriptor.JavaType.BYTE_STRING =>
           // Singular ByteString: already optimized in original code
           code ++= s"    " + classOf[ByteString].getName + s" b${idx} = msg.${getterName}();\n"
