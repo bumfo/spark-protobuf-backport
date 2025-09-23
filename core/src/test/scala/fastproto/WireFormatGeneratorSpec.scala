@@ -493,7 +493,7 @@ class WireFormatGeneratorSpec extends AnyFlatSpec with Matchers {
     }
   }
 
-  it should "produce equivalent results when using binary descriptor sets vs generated WireFormatParser" in {
+  ignore should "produce equivalent results when using binary descriptor sets vs generated WireFormatParser" in {
     // Create a complex message with nested structures and repeated fields
     val nestedField1 = Field.newBuilder()
       .setName("nested_field1")

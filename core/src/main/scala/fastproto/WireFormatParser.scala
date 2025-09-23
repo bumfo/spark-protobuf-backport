@@ -2,8 +2,8 @@ package fastproto
 
 import com.google.protobuf.Descriptors.{Descriptor, FieldDescriptor}
 import com.google.protobuf.{CodedInputStream, WireFormat}
-import StreamWireParser._
-import org.apache.spark.sql.catalyst.expressions.codegen.{NullDefaultRowWriter, UnsafeRowWriter}
+import fastproto.StreamWireParser._
+import org.apache.spark.sql.catalyst.expressions.codegen.NullDefaultRowWriter
 import org.apache.spark.sql.types.{ArrayType, StructType}
 import org.apache.spark.unsafe.types.UTF8String
 
@@ -177,7 +177,6 @@ class WireFormatParser(
       wireType: Int,
       mapping: FieldMapping,
       writer: NullDefaultRowWriter): Unit = {
-    import FieldDescriptor.Type._
 
     // Validate wire type matches expected type for this field
     val expectedWireType = getExpectedWireType(mapping.fieldDescriptor.getType)
@@ -338,11 +337,7 @@ class WireFormatParser(
       case BYTES =>
         writer.writeBytes(mapping.rowOrdinal, input.readByteArray())
       case ENUM =>
-        val enumValue = input.readEnum()
-        val enumDescriptor = mapping.fieldDescriptor.getEnumType
-        val enumValueDescriptor = enumDescriptor.findValueByNumber(enumValue)
-        val enumName = if (enumValueDescriptor != null) enumValueDescriptor.getName else enumValue.toString
-        writer.writeUTF8String(mapping.rowOrdinal, UTF8String.fromString(enumName))
+        writer.write(mapping.rowOrdinal, input.readEnum())
       case SINT32 =>
         writer.write(mapping.rowOrdinal, input.readSInt32())
       case SINT64 =>
