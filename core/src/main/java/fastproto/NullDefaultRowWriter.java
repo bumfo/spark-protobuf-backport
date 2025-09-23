@@ -15,14 +15,14 @@
  * limitations under the License.
  */
 
-package org.apache.spark.sql.catalyst.expressions.codegen;
+package fastproto;
 
-import org.apache.spark.sql.catalyst.expressions.UnsafeRow;
+import org.apache.spark.sql.catalyst.expressions.codegen.AbstractRowWriter;
+import org.apache.spark.sql.catalyst.expressions.codegen.UnsafeWriter;
 import org.apache.spark.sql.types.Decimal;
 import org.apache.spark.unsafe.Platform;
 import org.apache.spark.unsafe.bitset.BitSetMethods;
 import org.apache.spark.unsafe.types.UTF8String;
-import fastproto.RowWriter;
 
 /**
  * A row writer that defaults all fields to null, optimized for sparse data like protobuf messages.
@@ -40,48 +40,22 @@ import fastproto.RowWriter;
  * 2. Write field data - null bits are automatically cleared
  * 3. No need for explicit null bit management
  */
-public final class NullDefaultRowWriter extends UnsafeWriter implements RowWriter {
-
-    private final UnsafeRow row;
-
-    private final int nullBitsSize;
-    private final int fixedSize;
+public final class NullDefaultRowWriter extends AbstractRowWriter implements RowWriter {
 
     public NullDefaultRowWriter(int numFields) {
-        this(new UnsafeRow(numFields));
+        super(numFields);
     }
 
     public NullDefaultRowWriter(int numFields, int initialBufferSize) {
-        this(new UnsafeRow(numFields), initialBufferSize);
+        super(numFields, initialBufferSize);
     }
 
     public NullDefaultRowWriter(UnsafeWriter writer, int numFields) {
-        this(null, writer.getBufferHolder(), numFields);
+        super(writer, numFields);
     }
 
-    private NullDefaultRowWriter(UnsafeRow row) {
-        this(row, new BufferHolder(row), row.numFields());
-    }
-
-    private NullDefaultRowWriter(UnsafeRow row, int initialBufferSize) {
-        this(row, new BufferHolder(row, initialBufferSize), row.numFields());
-    }
-
-    private NullDefaultRowWriter(UnsafeRow row, BufferHolder holder, int numFields) {
-        super(holder);
-        this.row = row;
-        this.nullBitsSize = UnsafeRow.calculateBitSetWidthInBytes(numFields);
-        this.fixedSize = nullBitsSize + 8 * numFields;
-        this.startingOffset = cursor();
-    }
-
-    /**
-     * Updates total size of the UnsafeRow using the size collected by BufferHolder, and returns
-     * the UnsafeRow created at a constructor
-     */
-    public UnsafeRow getRow() {
-        row.setTotalSize(totalSize());
-        return row;
+    public NullDefaultRowWriter(RowWriter writer, int numFields) {
+        super(writer.toUnsafeWriter(), numFields);
     }
 
     /**
@@ -135,10 +109,6 @@ public final class NullDefaultRowWriter extends UnsafeWriter implements RowWrite
     @Override
     public void setNull8Bytes(int ordinal) {
         setNullAt(ordinal);
-    }
-
-    public long getFieldOffset(int ordinal) {
-        return startingOffset + nullBitsSize + 8L * ordinal;
     }
 
     /**
@@ -221,7 +191,7 @@ public final class NullDefaultRowWriter extends UnsafeWriter implements RowWrite
             }
         } else {
             // grow the global buffer before writing data.
-            holder.grow(16);
+            grow(16);
 
             // always zero-out the 16-byte buffer
             Platform.putLong(getBuffer(), cursor(), 0L);
