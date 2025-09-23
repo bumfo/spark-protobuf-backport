@@ -1,5 +1,6 @@
 package fastproto
 
+import org.apache.spark.sql.catalyst.expressions.UnsafeRow
 import org.apache.spark.sql.catalyst.expressions.codegen.UnsafeWriter
 import org.apache.spark.sql.types.Decimal
 import org.apache.spark.unsafe.types.UTF8String
@@ -14,8 +15,18 @@ trait RowWriter {
   /** Clear the null bit for a field, marking it as non-null */
   def clearNullBit(ordinal: Int): Unit
 
+  def setNullAt(ordinal: Int): Unit
+
   /** Cast this RowWriter to UnsafeWriter for accessing base class methods */
   def toUnsafeWriter: UnsafeWriter = this
+
+  /** Get the UnsafeRow result */
+  def getRow: UnsafeRow
+
+  def cursor: Int
+
+  /** Reset the row writer and set all fields to null */
+  def resetRowWriter(): Unit
 
   // Write methods that automatically clear null bits
   def write(ordinal: Int, value: Boolean): Unit

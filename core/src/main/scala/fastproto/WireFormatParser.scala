@@ -4,7 +4,6 @@ import com.google.protobuf.Descriptors.{Descriptor, FieldDescriptor}
 import com.google.protobuf.{CodedInputStream, WireFormat}
 import fastproto.StreamWireParser._
 import org.apache.spark.sql.types.{ArrayType, StructType}
-import org.apache.spark.unsafe.types.UTF8String
 
 import scala.collection.JavaConverters._
 
@@ -37,7 +36,7 @@ class WireFormatParser(
   private val nestedParsersArray: Array[WireFormatParser] = buildNestedParsersArray()
 
 
-  override protected def parseInto(input: CodedInputStream, writer: NullDefaultRowWriter): Unit = {
+  override protected def parseInto(input: CodedInputStream, writer: RowWriter): Unit = {
 
     // Reset all field accumulators for this conversion
     resetAccumulators()
@@ -175,7 +174,7 @@ class WireFormatParser(
       tag: Int,
       wireType: Int,
       mapping: FieldMapping,
-      writer: NullDefaultRowWriter): Unit = {
+      writer: RowWriter): Unit = {
 
     // Validate wire type matches expected type for this field
     val expectedWireType = getExpectedWireType(mapping.fieldDescriptor.getType)
@@ -311,7 +310,7 @@ class WireFormatParser(
   private def parseSingleField(
       input: CodedInputStream,
       mapping: FieldMapping,
-      writer: NullDefaultRowWriter): Unit = {
+      writer: RowWriter): Unit = {
     import FieldDescriptor.Type._
 
     // Single field - write directly to the row
@@ -350,16 +349,16 @@ class WireFormatParser(
   private def parseNestedMessage(
       input: CodedInputStream,
       mapping: FieldMapping,
-      writer: NullDefaultRowWriter): Unit = {
+      writer: RowWriter): Unit = {
     val messageBytes = input.readByteArray()
     val fieldNumber = mapping.fieldDescriptor.getNumber
     val parser = nestedParsersArray(fieldNumber)
 
     if (parser != null) {
-      val offset = writer.cursor()
+      val offset = writer.cursor
 
       // Write directly to parent writer like repeated messages - unified approach
-      val nestedWriter = parser.acquireNestedWriter(writer)
+      val nestedWriter = parser.acquireNestedWriter(writer.toUnsafeWriter)
       nestedWriter.resetRowWriter()  // resetRowWriter automatically calls setAllNullBytes()
       parser.parseInto(messageBytes, nestedWriter)
 
@@ -369,7 +368,7 @@ class WireFormatParser(
     }
   }
 
-  private def writeAccumulatedRepeatedFields(writer: NullDefaultRowWriter): Unit = {
+  private def writeAccumulatedRepeatedFields(writer: RowWriter): Unit = {
     var fieldNumber = 0
     while (fieldNumber < fieldMappingArray.length) {
       val mapping = fieldMappingArray(fieldNumber)
@@ -415,7 +414,7 @@ class WireFormatParser(
     }
   }
 
-  private def writeEnumArray(list: IntList, mapping: FieldMapping, writer: NullDefaultRowWriter): Unit = {
+  private def writeEnumArray(list: IntList, mapping: FieldMapping, writer: RowWriter): Unit = {
     // Convert enum values to string array
     val enumDescriptor = mapping.fieldDescriptor.getEnumType
     val stringBytes = new Array[Array[Byte]](list.count)

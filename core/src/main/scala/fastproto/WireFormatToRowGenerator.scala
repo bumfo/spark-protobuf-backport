@@ -366,7 +366,7 @@ object WireFormatToRowGenerator {
     // Imports
     code ++= s"import ${classOf[com.google.protobuf.CodedInputStream].getName};\n"
     code ++= s"import ${classOf[WireFormat].getName};\n"
-    code ++= "import fastproto.NullDefaultRowWriter;\n"
+    code ++= "import fastproto.RowWriter;\n"
     code ++= "import org.apache.spark.sql.types.StructType;\n"
     code ++= "import org.apache.spark.unsafe.types.UTF8String;\n"
     code ++= "import fastproto.StreamWireParser;\n"
@@ -537,7 +537,7 @@ object WireFormatToRowGenerator {
    */
   private def generateParseIntoMethod(code: StringBuilder, descriptor: Descriptor, schema: StructType): Unit = {
     code ++= "  @Override\n"
-    code ++= "  protected void parseInto(CodedInputStream input, NullDefaultRowWriter writer) {\n\n"
+    code ++= "  protected void parseInto(CodedInputStream input, RowWriter writer) {\n\n"
 
     // Handle repeated field accumulators based on recursion
     val repeatedFields = descriptor.getFields.asScala.filter(field =>
@@ -690,7 +690,7 @@ object WireFormatToRowGenerator {
         code ++= s"            byte[] messageBytes${fieldNum} = input.readByteArray();\n"
         code ++= s"            if (nestedConv${fieldNum} != null) {\n"
         code ++= s"              int offset = writer.cursor();\n"
-        code ++= s"              NullDefaultRowWriter nestedWriter = nestedConv${fieldNum}.acquireNestedWriter(writer);\n"
+        code ++= s"              RowWriter nestedWriter = nestedConv${fieldNum}.acquireNestedWriter(writer);\n"
         code ++= s"              nestedWriter.resetRowWriter();\n"
         code ++= s"              nestedConv${fieldNum}.parseInto(messageBytes${fieldNum}, nestedWriter);\n"
         code ++= s"              writer.writeVariableField($ordinal, offset);\n"

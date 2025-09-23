@@ -7,7 +7,7 @@ import org.apache.spark.sql.types.StructType
 abstract class BufferSharingParser(val schema: StructType) extends Parser {
   protected val instanceWriter = new NullDefaultRowWriter(schema.length)
 
-  def acquireWriter(parentWriter: UnsafeWriter): NullDefaultRowWriter = {
+  def acquireWriter(parentWriter: UnsafeWriter): RowWriter = {
     if (parentWriter == null) {
       instanceWriter.reset()
       instanceWriter.setAllNullBytes()  // Explicitly set all fields null for reused instance
@@ -19,7 +19,11 @@ abstract class BufferSharingParser(val schema: StructType) extends Parser {
     }
   }
 
-  def acquireNestedWriter(parentWriter: UnsafeWriter): NullDefaultRowWriter = new NullDefaultRowWriter(parentWriter, schema.length)
+  def acquireNestedWriter(parentWriter: UnsafeWriter): RowWriter = new NullDefaultRowWriter(parentWriter, schema.length)
+
+  def acquireWriter(parentWriter: RowWriter): RowWriter = acquireWriter(parentWriter.toUnsafeWriter)
+
+  def acquireNestedWriter(parentWriter: RowWriter): RowWriter = acquireNestedWriter(parentWriter.toUnsafeWriter)
 
   /**
    * Core parsing method that implementations must override to write protobuf data to row writer.
@@ -42,7 +46,7 @@ abstract class BufferSharingParser(val schema: StructType) extends Parser {
    * @param binary the protobuf binary data to parse
    * @param writer the row writer to populate with parsed field data
    */
-  def parseInto(binary: Array[Byte], writer: NullDefaultRowWriter): Unit
+  def parseInto(binary: Array[Byte], writer: RowWriter): Unit
 
   /**
    * Core parsing method with partial byte array support that implementations must override.
@@ -62,7 +66,7 @@ abstract class BufferSharingParser(val schema: StructType) extends Parser {
    * @param length the number of bytes to read from the array
    * @param writer the row writer to populate with parsed field data
    */
-  def parseInto(binary: Array[Byte], offset: Int, length: Int, writer: NullDefaultRowWriter): Unit
+  def parseInto(binary: Array[Byte], offset: Int, length: Int, writer: RowWriter): Unit
 
   /**
    * Convert protobuf binary data using a shared UnsafeWriter for BufferHolder sharing.
