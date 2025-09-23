@@ -21,6 +21,7 @@ import org.apache.spark.sql.catalyst.expressions.UnsafeRow;
 import org.apache.spark.sql.types.Decimal;
 import org.apache.spark.unsafe.Platform;
 import org.apache.spark.unsafe.bitset.BitSetMethods;
+import org.apache.spark.unsafe.types.UTF8String;
 
 /**
  * A row writer that defaults all fields to null, optimized for sparse data like protobuf messages.
@@ -237,6 +238,32 @@ public final class NullDefaultRowWriter extends UnsafeWriter {
             // move the cursor forward.
             increaseCursor(16);
         }
+    }
+
+    /**
+     * Writes a byte array and automatically clears the null bit.
+     * This wraps the final write(int, byte[]) method from parent class with automatic null bit clearing
+     * to maintain NullDefaultRowWriter's design principle that all writes mark fields as non-null.
+     *
+     * @param ordinal the field ordinal to write
+     * @param value the byte array to write
+     */
+    public void writeBytes(int ordinal, byte[] value) {
+        write(ordinal, value);  // Call parent's final method
+        BitSetMethods.unset(getBuffer(), startingOffset, ordinal);
+    }
+
+    /**
+     * Writes a UTF8String and automatically clears the null bit.
+     * This wraps the final write(int, UTF8String) method from parent class with automatic null bit clearing
+     * to maintain NullDefaultRowWriter's design principle that all writes mark fields as non-null.
+     *
+     * @param ordinal the field ordinal to write
+     * @param value the UTF8String to write
+     */
+    public void writeUTF8String(int ordinal, UTF8String value) {
+        write(ordinal, value);  // Call parent's final method
+        BitSetMethods.unset(getBuffer(), startingOffset, ordinal);
     }
 
     /**
