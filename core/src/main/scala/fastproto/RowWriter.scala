@@ -8,7 +8,8 @@ import org.apache.spark.unsafe.types.UTF8String
  * Trait for row writers that manage null bits automatically.
  * Requires extending UnsafeWriter but encapsulates it from the public interface.
  */
-sealed trait RowWriter { self: UnsafeWriter =>
+trait RowWriter {
+  self: UnsafeWriter =>
 
   /** Clear the null bit for a field, marking it as non-null */
   def clearNullBit(ordinal: Int): Unit
