@@ -413,7 +413,7 @@ object ProtoToRowGenerator {
           code ++= s"    int entryIndex = 0;\n"
           code ++= s"    for (java.util.Map.Entry entry : (java.util.Set<java.util.Map.Entry>) mapField.entrySet()) {\n"
           code ++= s"      int elemOffset = arrayWriter.cursor();\n"
-          code ++= s"      RowWriter structWriter = new RowWriter(arrayWriter, 2);\n"
+          code ++= s"      RowWriter structWriter = new fastproto.NullDefaultRowWriter(arrayWriter, 2);\n"
           code ++= s"      structWriter.resetRowWriter();\n"
           code ++= s"      // Write key (field 0)\n"
           code ++= s"      ${keyJavaType} key = (${keyJavaType}) entry.getKey();\n"
