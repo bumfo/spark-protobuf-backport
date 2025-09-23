@@ -28,6 +28,12 @@ trait RowWriter {
   def write(ordinal: Int, input: Decimal, precision: Int, scale: Int): Unit
 
   def writeBytes(ordinal: Int, value: Array[Byte]): Unit
+
+  /**
+   * Note: For UTF8 strings from byte arrays, prefer writeBytes(ordinal, bytes) over
+   * writeUTF8String(ordinal, UTF8String.fromBytes(bytes)) to avoid intermediate object creation.
+   */
   def writeUTF8String(ordinal: Int, value: UTF8String): Unit
+
   def writeVariableField(ordinal: Int, previousCursor: Int): Unit
 }
