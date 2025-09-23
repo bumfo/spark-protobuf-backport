@@ -5,12 +5,11 @@ import org.apache.spark.sql.catalyst.expressions.codegen.UnsafeWriter
 import org.apache.spark.sql.types.StructType
 
 abstract class BufferSharingParser(val schema: StructType) extends Parser {
-  protected val instanceWriter = new NullDefaultRowWriter(schema.length)
+  protected val instanceWriter: RowWriter = new NullDefaultRowWriter(schema.length)
 
-  def acquireWriter(parentWriter: UnsafeWriter): RowWriter = {
+  private def acquireWriter(parentWriter: UnsafeWriter): RowWriter = {
     if (parentWriter == null) {
-      instanceWriter.reset()
-      instanceWriter.setAllNullBytes()  // Explicitly set all fields null for reused instance
+      instanceWriter.resetRow()
       instanceWriter
     } else {
       val writer = acquireNestedWriter(parentWriter)
@@ -19,7 +18,7 @@ abstract class BufferSharingParser(val schema: StructType) extends Parser {
     }
   }
 
-  def acquireNestedWriter(parentWriter: UnsafeWriter): RowWriter = new NullDefaultRowWriter(parentWriter, schema.length)
+  private def acquireNestedWriter(parentWriter: UnsafeWriter): RowWriter = new NullDefaultRowWriter(parentWriter, schema.length)
 
   def acquireWriter(parentWriter: RowWriter): RowWriter = acquireWriter(parentWriter.toUnsafeWriter)
 
