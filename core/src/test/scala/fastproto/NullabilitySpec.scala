@@ -5,7 +5,6 @@ import org.apache.spark.sql.types._
 import org.apache.spark.sql.protobuf.backport.DynamicMessageParser
 import org.scalatest.flatspec.AnyFlatSpec
 import org.scalatest.matchers.should.Matchers
-import testutils.InternalRowMatchers
 
 import java.io.ByteArrayOutputStream
 

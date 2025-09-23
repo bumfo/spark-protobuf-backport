@@ -1,7 +1,6 @@
-package testutils
+package fastproto
 
 import org.apache.spark.sql.catalyst.InternalRow
-import org.apache.spark.unsafe.types.UTF8String
 import org.scalatest.matchers.should.Matchers
 import org.scalatest.{Assertion, Assertions}
 
