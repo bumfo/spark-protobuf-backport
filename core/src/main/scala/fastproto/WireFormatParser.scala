@@ -332,8 +332,7 @@ class WireFormatParser(
       case BOOL =>
         writer.write(mapping.rowOrdinal, input.readBool())
       case STRING =>
-        val bytes = input.readByteArray()
-        writer.writeUTF8String(mapping.rowOrdinal, UTF8String.fromBytes(bytes))
+        writer.writeBytes(mapping.rowOrdinal, input.readByteArray())
       case BYTES =>
         writer.writeBytes(mapping.rowOrdinal, input.readByteArray())
       case ENUM =>
