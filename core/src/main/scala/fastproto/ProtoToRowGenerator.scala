@@ -576,9 +576,9 @@ object ProtoToRowGenerator {
         case FieldDescriptor.JavaType.BOOLEAN =>
           code ++= s"    writer.write($idx, msg.${getterName}());\n"
         case FieldDescriptor.JavaType.STRING =>
-          // Optimized singular string: use direct bytes
-          code ++= s"    byte[] bytes${idx} = msg.${getBytesMethodName}().toByteArray();\n"
-          code ++= s"    writer.write($idx, bytes${idx});\n"
+          // Singular string: convert to UTF8String with auto null bit clearing
+          code ++= s"    String str${idx} = msg.${getterName}();\n"
+          code ++= s"    writer.writeUTF8String($idx, UTF8String.fromString(str${idx}));\n"
         case FieldDescriptor.JavaType.BYTE_STRING =>
           // Singular ByteString: already optimized in original code
           code ++= s"    " + classOf[ByteString].getName + s" b${idx} = msg.${getterName}();\n"

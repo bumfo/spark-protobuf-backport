@@ -334,15 +334,15 @@ class WireFormatParser(
         writer.write(mapping.rowOrdinal, input.readBool())
       case STRING =>
         val bytes = input.readByteArray()
-        writer.write(mapping.rowOrdinal, UTF8String.fromBytes(bytes))
+        writer.writeUTF8String(mapping.rowOrdinal, UTF8String.fromBytes(bytes))
       case BYTES =>
-        writer.write(mapping.rowOrdinal, input.readByteArray())
+        writer.writeBytes(mapping.rowOrdinal, input.readByteArray())
       case ENUM =>
         val enumValue = input.readEnum()
         val enumDescriptor = mapping.fieldDescriptor.getEnumType
         val enumValueDescriptor = enumDescriptor.findValueByNumber(enumValue)
         val enumName = if (enumValueDescriptor != null) enumValueDescriptor.getName else enumValue.toString
-        writer.write(mapping.rowOrdinal, UTF8String.fromString(enumName))
+        writer.writeUTF8String(mapping.rowOrdinal, UTF8String.fromString(enumName))
       case SINT32 =>
         writer.write(mapping.rowOrdinal, input.readSInt32())
       case SINT64 =>
