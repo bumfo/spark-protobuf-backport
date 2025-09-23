@@ -12,23 +12,26 @@ import org.apache.spark.unsafe.types.UTF8String
 trait RowWriter {
   self: UnsafeWriter =>
 
-  /** Clear the null bit for a field, marking it as non-null */
-  def clearNullBit(ordinal: Int): Unit
-
-  def setNullAt(ordinal: Int): Unit
-
-  /** Cast this RowWriter to UnsafeWriter for accessing base class methods */
-  def toUnsafeWriter: UnsafeWriter = this
+  // Core State & Lifecycle
+  /** Reset the row writer and set all fields to null */
+  def resetRowWriter(): Unit
 
   /** Get the UnsafeRow result */
   def getRow: UnsafeRow
 
   def cursor: Int
 
-  /** Reset the row writer and set all fields to null */
-  def resetRowWriter(): Unit
+  // Type System Bridge
+  /** Cast this RowWriter to UnsafeWriter for accessing base class methods */
+  def toUnsafeWriter: UnsafeWriter = this
 
-  // Write methods that automatically clear null bits
+  // Null Management
+  def setNullAt(ordinal: Int): Unit
+
+  /** Clear the null bit for a field, marking it as non-null */
+  def clearNullBit(ordinal: Int): Unit
+
+  // Primitive Writers (auto-clear null bits)
   def write(ordinal: Int, value: Boolean): Unit
   def write(ordinal: Int, value: Byte): Unit
   def write(ordinal: Int, value: Short): Unit
@@ -38,6 +41,7 @@ trait RowWriter {
   def write(ordinal: Int, value: Double): Unit
   def write(ordinal: Int, input: Decimal, precision: Int, scale: Int): Unit
 
+  // Variable-Length Writers (auto-clear null bits)
   def writeBytes(ordinal: Int, value: Array[Byte]): Unit
 
   /**
