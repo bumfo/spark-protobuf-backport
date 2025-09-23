@@ -358,7 +358,7 @@ class WireFormatParser(
       val offset = writer.cursor
 
       // Write directly to parent writer like repeated messages - unified approach
-      val nestedWriter = parser.acquireNestedWriter(writer.toUnsafeWriter)
+      val nestedWriter = parser.acquireNestedWriter(writer)
       nestedWriter.resetRowWriter()  // resetRowWriter automatically calls setAllNullBytes()
       parser.parseInto(messageBytes, nestedWriter)
 

@@ -16,6 +16,12 @@ trait RowWriter {
   /** Reset the row writer and set all fields to null */
   def resetRowWriter(): Unit
 
+  def resetRow(): Unit = {
+    reset()
+    setAllNullBytes()
+    // todo also fill all fields to 0
+  }
+
   /** Get the UnsafeRow result */
   def getRow: UnsafeRow
 
@@ -27,6 +33,8 @@ trait RowWriter {
 
   // Null Management
   def setNullAt(ordinal: Int): Unit
+
+  protected def setAllNullBytes(): Unit
 
   /** Clear the null bit for a field, marking it as non-null */
   def clearNullBit(ordinal: Int): Unit

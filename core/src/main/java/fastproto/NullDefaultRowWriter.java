@@ -54,10 +54,6 @@ public final class NullDefaultRowWriter extends AbstractRowWriter implements Row
         super(writer, numFields);
     }
 
-    // public NullDefaultRowWriter(RowWriter writer, int numFields) {
-    //     super(writer.toUnsafeWriter(), numFields);
-    // }
-
     /**
      * Resets the `startingOffset` according to the current cursor of row buffer, and sets all
      * fields to null.  This should be called before we write a new nested struct to the row buffer.
