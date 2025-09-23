@@ -326,6 +326,7 @@ public abstract class StreamWireParser extends BufferSharingParser {
         for (int i = 0; i < size; i++) {
             int elemOffset = arrayWriter.cursor();
             nestedWriter.resetRowWriter();
+            UnsafeRowWriterHelper.setAllFieldsNull(nestedWriter);
             parser.parseInto(messageBytes[i], nestedWriter);
             arrayWriter.setOffsetAndSizeFromPreviousCursor(i, elemOffset);
         }
@@ -344,6 +345,7 @@ public abstract class StreamWireParser extends BufferSharingParser {
         // Use acquireNestedWriter directly for nested message parsing
         UnsafeRowWriter nestedWriter = parser.acquireNestedWriter(writer);
         nestedWriter.resetRowWriter();
+        UnsafeRowWriterHelper.setAllFieldsNull(nestedWriter);
         parser.parseInto(messageBytes, nestedWriter);
         writer.setOffsetAndSizeFromPreviousCursor(ordinal, offset);
     }

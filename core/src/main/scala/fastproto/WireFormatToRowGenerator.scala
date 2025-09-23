@@ -335,7 +335,7 @@ object WireFormatToRowGenerator {
         val compiler = new SimpleCompiler()
         compiler.setParentClassLoader(this.getClass.getClassLoader)
         compiler.cook(sourceCode.toString)
-        val generatedClass = compiler.getClassLoader.loadClass(className).asInstanceOf[Class[_ <: StreamWireParser]]
+        val generatedClass = compiler.getClassLoader.loadClass(s"fastproto.generated.$className").asInstanceOf[Class[_ <: StreamWireParser]]
 
         // Cache the compiled class globally and return
         Option(classCache.putIfAbsent(key, generatedClass)).getOrElse(generatedClass)
@@ -359,6 +359,9 @@ object WireFormatToRowGenerator {
    */
   private def generateSourceCode(className: String, descriptor: Descriptor, schema: StructType): StringBuilder = {
     val code = new StringBuilder
+
+    // Package declaration
+    code ++= "package fastproto.generated;\n\n"
 
     // Imports
     code ++= s"import ${classOf[com.google.protobuf.CodedInputStream].getName};\n"
@@ -684,12 +687,13 @@ object WireFormatToRowGenerator {
             throw new IllegalArgumentException(s"Unsupported enum target type: $other")
         }
       case FieldDescriptor.Type.MESSAGE =>
-        code ++= s"            byte[] messageBytes = input.readByteArray();\n"
+        code ++= s"            byte[] messageBytes${fieldNum} = input.readByteArray();\n"
         code ++= s"            if (nestedConv${fieldNum} != null) {\n"
         code ++= s"              int offset = writer.cursor();\n"
         code ++= s"              UnsafeRowWriter nestedWriter = nestedConv${fieldNum}.acquireNestedWriter(writer);\n"
         code ++= s"              nestedWriter.resetRowWriter();\n"
-        code ++= s"              nestedConv${fieldNum}.parseInto(messageBytes, nestedWriter);\n"
+        code ++= s"              " + classOf[UnsafeRowWriterHelper].getName + ".setAllFieldsNull(nestedWriter);\n"
+        code ++= s"              nestedConv${fieldNum}.parseInto(messageBytes${fieldNum}, nestedWriter);\n"
         code ++= s"              writer.setOffsetAndSizeFromPreviousCursor($ordinal, offset);\n"
         code ++= s"            }\n"
       case _ =>
