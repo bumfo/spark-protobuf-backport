@@ -258,6 +258,9 @@ public final class NullDefaultRowWriter extends UnsafeWriter {
      * This wraps the final write(int, UTF8String) method from parent class with automatic null bit clearing
      * to maintain NullDefaultRowWriter's design principle that all writes mark fields as non-null.
      *
+     * Note: For UTF8 strings from byte arrays, prefer writeBytes(ordinal, bytes) over
+     * writeUTF8String(ordinal, UTF8String.fromBytes(bytes)) to avoid intermediate object creation.
+     *
      * @param ordinal the field ordinal to write
      * @param value the UTF8String to write
      */
