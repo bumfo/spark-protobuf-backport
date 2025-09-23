@@ -15,14 +15,16 @@
  * limitations under the License.
  */
 
-package org.apache.spark.sql.catalyst.expressions.codegen;
+package fastproto;
 
 import org.apache.spark.sql.catalyst.expressions.UnsafeRow;
+import org.apache.spark.sql.catalyst.expressions.codegen.BufferHolderHelper;
+import org.apache.spark.sql.catalyst.expressions.codegen.UnsafeWriter;
 
 /**
  * Abstract base class for custom row writers.
- * This class provides the basic infrastructure for row writing and must be
- * in this package to access the package-private BufferHolder class.
+ * This class provides the basic infrastructure for row writing using BufferHolderHelper
+ * to access package-private BufferHolder across class loaders.
  */
 public abstract class AbstractRowWriter extends UnsafeWriter {
 
@@ -39,19 +41,19 @@ public abstract class AbstractRowWriter extends UnsafeWriter {
     }
 
     public AbstractRowWriter(UnsafeWriter writer, int numFields) {
-        this(null, writer.getBufferHolder(), numFields);
+        this(null, BufferHolderHelper.getBufferHolder(writer), numFields);
     }
 
     private AbstractRowWriter(UnsafeRow row) {
-        this(row, new BufferHolder(row), row.numFields());
+        this(row, BufferHolderHelper.createBufferHolder(row), row.numFields());
     }
 
     private AbstractRowWriter(UnsafeRow row, int initialBufferSize) {
-        this(row, new BufferHolder(row, initialBufferSize), row.numFields());
+        this(row, BufferHolderHelper.createBufferHolder(row, initialBufferSize), row.numFields());
     }
 
-    private AbstractRowWriter(UnsafeRow row, BufferHolder holder, int numFields) {
-        super(holder);
+    private AbstractRowWriter(UnsafeRow row, Object holder, int numFields) {
+        super(BufferHolderHelper.castToBufferHolder(holder));
         this.row = row;
         this.nullBitsSize = UnsafeRow.calculateBitSetWidthInBytes(numFields);
         this.fixedSize = nullBitsSize + 8 * numFields;

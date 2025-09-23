@@ -17,7 +17,6 @@
 
 package fastproto;
 
-import org.apache.spark.sql.catalyst.expressions.codegen.AbstractRowWriter;
 import org.apache.spark.sql.catalyst.expressions.codegen.UnsafeWriter;
 import org.apache.spark.sql.types.Decimal;
 import org.apache.spark.unsafe.Platform;
