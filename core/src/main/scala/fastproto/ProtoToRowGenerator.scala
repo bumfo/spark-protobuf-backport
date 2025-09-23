@@ -256,6 +256,7 @@ object ProtoToRowGenerator {
     code ++= "import org.apache.spark.sql.types.StructType;\n"
     code ++= "import org.apache.spark.unsafe.types.UTF8String;\n"
     code ++= "import fastproto.AbstractMessageParser;\n"
+    code ++= "import fastproto.UnsafeRowWriterHelper;\n"
     code ++= "import java.util.Map;\n"
 
     // Begin class declaration
@@ -305,6 +306,7 @@ object ProtoToRowGenerator {
           code ++= s"      arrayWriter.write(i, bytes);\n"
           code ++= s"    }\n"
           code ++= s"    writer.setOffsetAndSizeFromPreviousCursor($idx, offset);\n"
+          code ++= s"    UnsafeRowWriterHelper.clearNullAt(writer, $idx);\n"
           code ++= s"  }\n\n"
 
         case FieldDescriptor.JavaType.BYTE_STRING if fd.isRepeated =>
@@ -319,6 +321,7 @@ object ProtoToRowGenerator {
           code ++= s"      if (bs == null) { arrayWriter.setNull(i); } else { arrayWriter.write(i, bs.toByteArray()); }\n"
           code ++= s"    }\n"
           code ++= s"    writer.setOffsetAndSizeFromPreviousCursor($idx, offset);\n"
+          code ++= s"    UnsafeRowWriterHelper.clearNullAt(writer, $idx);\n"
           code ++= s"  }\n\n"
 
         case FieldDescriptor.JavaType.INT if fd.isRepeated =>
@@ -332,6 +335,7 @@ object ProtoToRowGenerator {
           code ++= s"      arrayWriter.write(i, msg.${indexGetterName}(i));\n"
           code ++= s"    }\n"
           code ++= s"    writer.setOffsetAndSizeFromPreviousCursor($idx, offset);\n"
+          code ++= s"    UnsafeRowWriterHelper.clearNullAt(writer, $idx);\n"
           code ++= s"  }\n\n"
 
         case FieldDescriptor.JavaType.LONG if fd.isRepeated =>
@@ -345,6 +349,7 @@ object ProtoToRowGenerator {
           code ++= s"      arrayWriter.write(i, msg.${indexGetterName}(i));\n"
           code ++= s"    }\n"
           code ++= s"    writer.setOffsetAndSizeFromPreviousCursor($idx, offset);\n"
+          code ++= s"    UnsafeRowWriterHelper.clearNullAt(writer, $idx);\n"
           code ++= s"  }\n\n"
 
         case FieldDescriptor.JavaType.FLOAT if fd.isRepeated =>
@@ -358,6 +363,7 @@ object ProtoToRowGenerator {
           code ++= s"      arrayWriter.write(i, msg.${indexGetterName}(i));\n"
           code ++= s"    }\n"
           code ++= s"    writer.setOffsetAndSizeFromPreviousCursor($idx, offset);\n"
+          code ++= s"    UnsafeRowWriterHelper.clearNullAt(writer, $idx);\n"
           code ++= s"  }\n\n"
 
         case FieldDescriptor.JavaType.DOUBLE if fd.isRepeated =>
@@ -371,6 +377,7 @@ object ProtoToRowGenerator {
           code ++= s"      arrayWriter.write(i, msg.${indexGetterName}(i));\n"
           code ++= s"    }\n"
           code ++= s"    writer.setOffsetAndSizeFromPreviousCursor($idx, offset);\n"
+          code ++= s"    UnsafeRowWriterHelper.clearNullAt(writer, $idx);\n"
           code ++= s"  }\n\n"
 
         case FieldDescriptor.JavaType.BOOLEAN if fd.isRepeated =>
@@ -384,6 +391,7 @@ object ProtoToRowGenerator {
           code ++= s"      arrayWriter.write(i, msg.${indexGetterName}(i));\n"
           code ++= s"    }\n"
           code ++= s"    writer.setOffsetAndSizeFromPreviousCursor($idx, offset);\n"
+          code ++= s"    UnsafeRowWriterHelper.clearNullAt(writer, $idx);\n"
           code ++= s"  }\n\n"
 
         case FieldDescriptor.JavaType.ENUM if fd.isRepeated =>
@@ -398,6 +406,7 @@ object ProtoToRowGenerator {
           code ++= s"      if (e == null) { arrayWriter.setNull(i); } else { arrayWriter.write(i, UTF8String.fromString(e.toString())); }\n"
           code ++= s"    }\n"
           code ++= s"    writer.setOffsetAndSizeFromPreviousCursor($idx, offset);\n"
+          code ++= s"    UnsafeRowWriterHelper.clearNullAt(writer, $idx);\n"
           code ++= s"  }\n\n"
 
         case FieldDescriptor.JavaType.MESSAGE if fd.isRepeated && fd.getMessageType.getOptions.hasMapEntry =>
@@ -419,6 +428,7 @@ object ProtoToRowGenerator {
           code ++= s"      int elemOffset = arrayWriter.cursor();\n"
           code ++= s"      UnsafeRowWriter structWriter = new UnsafeRowWriter(arrayWriter, 2);\n"
           code ++= s"      structWriter.resetRowWriter();\n"
+          code ++= s"      " + classOf[UnsafeRowWriterHelper].getName + ".setAllFieldsNull(structWriter);\n"
           code ++= s"      // Write key (field 0)\n"
           code ++= s"      ${keyJavaType} key = (${keyJavaType}) entry.getKey();\n"
           code ++= s"      ${generateFieldWriteCode(keyField, "key", "structWriter", 0)}\n"
@@ -429,6 +439,7 @@ object ProtoToRowGenerator {
           code ++= s"      entryIndex++;\n"
           code ++= s"    }\n"
           code ++= s"    writer.setOffsetAndSizeFromPreviousCursor($idx, offset);\n"
+          code ++= s"    UnsafeRowWriterHelper.clearNullAt(writer, $idx);\n"
           code ++= s"  }\n\n"
 
         case FieldDescriptor.JavaType.MESSAGE if fd.isRepeated =>
@@ -452,11 +463,13 @@ object ProtoToRowGenerator {
           code ++= s"      } else {\n"
           code ++= s"        int elemOffset = arrayWriter.cursor();\n"
           code ++= s"        nestedWriter.resetRowWriter();\n"
+          code ++= s"        " + classOf[UnsafeRowWriterHelper].getName + ".setAllFieldsNull(nestedWriter);\n"
           code ++= s"        ${nestedParserName}.parseInto(element, nestedWriter);\n"
           code ++= s"        arrayWriter.setOffsetAndSizeFromPreviousCursor(i, elemOffset);\n"
           code ++= s"      }\n"
           code ++= s"    }\n"
           code ++= s"    writer.setOffsetAndSizeFromPreviousCursor($idx, offset);\n"
+          code ++= s"    UnsafeRowWriterHelper.clearNullAt(writer, $idx);\n"
           code ++= s"  }\n\n"
 
         case FieldDescriptor.JavaType.MESSAGE if !fd.isRepeated =>
@@ -484,6 +497,7 @@ object ProtoToRowGenerator {
               code ++= s"        UnsafeRowWriter nestedWriter = ${nestedParserName}.acquireWriter(writer);\n"
               code ++= s"        ${nestedParserName}.parseInto(v, nestedWriter);\n"
               code ++= s"        writer.setOffsetAndSizeFromPreviousCursor($idx, offset);\n"
+              code ++= s"        UnsafeRowWriterHelper.clearNullAt(writer, $idx);\n"
               code ++= s"      }\n"
               code ++= s"    }\n"
             case None =>
@@ -496,6 +510,7 @@ object ProtoToRowGenerator {
               code ++= s"      UnsafeRowWriter nestedWriter = ${nestedParserName}.acquireWriter(writer);\n"
               code ++= s"      ${nestedParserName}.parseInto(v, nestedWriter);\n"
               code ++= s"      writer.setOffsetAndSizeFromPreviousCursor($idx, offset);\n"
+              code ++= s"      UnsafeRowWriterHelper.clearNullAt(writer, $idx);\n"
               code ++= s"    }\n"
           }
           code ++= s"  }\n\n"
@@ -560,18 +575,24 @@ object ProtoToRowGenerator {
         // For simple singular fields, keep inline with optimized string handling
         case FieldDescriptor.JavaType.INT =>
           code ++= s"    writer.write($idx, msg.${getterName}());\n"
+          code ++= s"    UnsafeRowWriterHelper.clearNullAt(writer, $idx);\n"
         case FieldDescriptor.JavaType.LONG =>
           code ++= s"    writer.write($idx, msg.${getterName}());\n"
+          code ++= s"    UnsafeRowWriterHelper.clearNullAt(writer, $idx);\n"
         case FieldDescriptor.JavaType.FLOAT =>
           code ++= s"    writer.write($idx, msg.${getterName}());\n"
+          code ++= s"    UnsafeRowWriterHelper.clearNullAt(writer, $idx);\n"
         case FieldDescriptor.JavaType.DOUBLE =>
           code ++= s"    writer.write($idx, msg.${getterName}());\n"
+          code ++= s"    UnsafeRowWriterHelper.clearNullAt(writer, $idx);\n"
         case FieldDescriptor.JavaType.BOOLEAN =>
           code ++= s"    writer.write($idx, msg.${getterName}());\n"
+          code ++= s"    UnsafeRowWriterHelper.clearNullAt(writer, $idx);\n"
         case FieldDescriptor.JavaType.STRING =>
           // Optimized singular string: use direct bytes
           code ++= s"    byte[] bytes${idx} = msg.${getBytesMethodName}().toByteArray();\n"
           code ++= s"    writer.write($idx, bytes${idx});\n"
+          code ++= s"    UnsafeRowWriterHelper.clearNullAt(writer, $idx);\n"
         case FieldDescriptor.JavaType.BYTE_STRING =>
           // Singular ByteString: already optimized in original code
           code ++= s"    " + classOf[ByteString].getName + s" b${idx} = msg.${getterName}();\n"
@@ -579,6 +600,7 @@ object ProtoToRowGenerator {
           code ++= s"      writer.setNullAt($idx);\n"
           code ++= s"    } else {\n"
           code ++= s"      writer.write($idx, b${idx}.toByteArray());\n"
+          code ++= s"      UnsafeRowWriterHelper.clearNullAt(writer, $idx);\n"
           code ++= s"    }\n"
         case FieldDescriptor.JavaType.ENUM =>
           // Singular enum: convert to string (keep UTF8String for now, could be optimized later)
@@ -587,6 +609,7 @@ object ProtoToRowGenerator {
           code ++= s"      writer.setNullAt($idx);\n"
           code ++= s"    } else {\n"
           code ++= s"      writer.write($idx, UTF8String.fromString(e${idx}.toString()));\n"
+          code ++= s"      UnsafeRowWriterHelper.clearNullAt(writer, $idx);\n"
           code ++= s"    }\n"
       }
     }

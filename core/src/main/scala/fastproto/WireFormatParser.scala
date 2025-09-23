@@ -320,33 +320,45 @@ class WireFormatParser(
     mapping.fieldDescriptor.getType match {
       case DOUBLE =>
         writer.write(mapping.rowOrdinal, input.readDouble())
+        UnsafeRowWriterHelper.clearNullAt(writer, mapping.rowOrdinal)
       case FLOAT =>
         writer.write(mapping.rowOrdinal, input.readFloat())
+        UnsafeRowWriterHelper.clearNullAt(writer, mapping.rowOrdinal)
       case INT64 | UINT64 =>
         writer.write(mapping.rowOrdinal, input.readRawVarint64())
+        UnsafeRowWriterHelper.clearNullAt(writer, mapping.rowOrdinal)
       case INT32 | UINT32 =>
         writer.write(mapping.rowOrdinal, input.readRawVarint32())
+        UnsafeRowWriterHelper.clearNullAt(writer, mapping.rowOrdinal)
       case FIXED64 | SFIXED64 =>
         writer.write(mapping.rowOrdinal, input.readRawLittleEndian64())
+        UnsafeRowWriterHelper.clearNullAt(writer, mapping.rowOrdinal)
       case FIXED32 | SFIXED32 =>
         writer.write(mapping.rowOrdinal, input.readRawLittleEndian32())
+        UnsafeRowWriterHelper.clearNullAt(writer, mapping.rowOrdinal)
       case BOOL =>
         writer.write(mapping.rowOrdinal, input.readBool())
+        UnsafeRowWriterHelper.clearNullAt(writer, mapping.rowOrdinal)
       case STRING =>
         val bytes = input.readByteArray()
         writer.write(mapping.rowOrdinal, UTF8String.fromBytes(bytes))
+        UnsafeRowWriterHelper.clearNullAt(writer, mapping.rowOrdinal)
       case BYTES =>
         writer.write(mapping.rowOrdinal, input.readByteArray())
+        UnsafeRowWriterHelper.clearNullAt(writer, mapping.rowOrdinal)
       case ENUM =>
         val enumValue = input.readEnum()
         val enumDescriptor = mapping.fieldDescriptor.getEnumType
         val enumValueDescriptor = enumDescriptor.findValueByNumber(enumValue)
         val enumName = if (enumValueDescriptor != null) enumValueDescriptor.getName else enumValue.toString
         writer.write(mapping.rowOrdinal, UTF8String.fromString(enumName))
+        UnsafeRowWriterHelper.clearNullAt(writer, mapping.rowOrdinal)
       case SINT32 =>
         writer.write(mapping.rowOrdinal, input.readSInt32())
+        UnsafeRowWriterHelper.clearNullAt(writer, mapping.rowOrdinal)
       case SINT64 =>
         writer.write(mapping.rowOrdinal, input.readSInt64())
+        UnsafeRowWriterHelper.clearNullAt(writer, mapping.rowOrdinal)
       case MESSAGE =>
         parseNestedMessage(input, mapping, writer)
       case GROUP =>
@@ -368,9 +380,11 @@ class WireFormatParser(
       // Write directly to parent writer like repeated messages - unified approach
       val nestedWriter = parser.acquireNestedWriter(writer)
       nestedWriter.resetRowWriter()
+      UnsafeRowWriterHelper.setAllFieldsNull(nestedWriter)
       parser.parseInto(messageBytes, nestedWriter)
 
       writer.setOffsetAndSizeFromPreviousCursor(mapping.rowOrdinal, offset)
+      UnsafeRowWriterHelper.clearNullAt(writer, mapping.rowOrdinal)
     } else {
       throw new IllegalStateException(s"No nested parser found for field ${mapping.fieldDescriptor.getName}")
     }
@@ -389,18 +403,23 @@ class WireFormatParser(
             } else {
               writeIntArray(list.array, list.count, mapping.rowOrdinal, writer)
             }
+            UnsafeRowWriterHelper.clearNullAt(writer, mapping.rowOrdinal)
 
           case list: LongList if list.count > 0 =>
             writeLongArray(list.array, list.count, mapping.rowOrdinal, writer)
+            UnsafeRowWriterHelper.clearNullAt(writer, mapping.rowOrdinal)
 
           case list: FloatList if list.count > 0 =>
             writeFloatArray(list.array, list.count, mapping.rowOrdinal, writer)
+            UnsafeRowWriterHelper.clearNullAt(writer, mapping.rowOrdinal)
 
           case list: DoubleList if list.count > 0 =>
             writeDoubleArray(list.array, list.count, mapping.rowOrdinal, writer)
+            UnsafeRowWriterHelper.clearNullAt(writer, mapping.rowOrdinal)
 
           case list: BooleanList if list.count > 0 =>
             writeBooleanArray(list.array, list.count, mapping.rowOrdinal, writer)
+            UnsafeRowWriterHelper.clearNullAt(writer, mapping.rowOrdinal)
 
           case list: ByteArrayList if list.count > 0 =>
             mapping.fieldDescriptor.getType match {
@@ -414,6 +433,7 @@ class WireFormatParser(
               case _ =>
                 throw new IllegalStateException(s"Unexpected field type ${mapping.fieldDescriptor.getType} for ByteArrayList")
             }
+            UnsafeRowWriterHelper.clearNullAt(writer, mapping.rowOrdinal)
 
           case _ => // Empty lists or null - skip
         }
@@ -437,6 +457,7 @@ class WireFormatParser(
     }
 
     writeStringArray(stringBytes, list.count, mapping.rowOrdinal, writer)
+    UnsafeRowWriterHelper.clearNullAt(writer, mapping.rowOrdinal)
   }
 
   /**
