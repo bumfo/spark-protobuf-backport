@@ -580,7 +580,7 @@ object ProtoToRowGenerator {
           code ++= s"    if (b${idx} == null) {\n"
           code ++= s"      writer.setNullAt($idx);\n"
           code ++= s"    } else {\n"
-          code ++= s"      writer.write($idx, b${idx}.toByteArray());\n"
+          code ++= s"      writer.writeBytes($idx, b${idx}.toByteArray());\n"
           code ++= s"    }\n"
         case FieldDescriptor.JavaType.ENUM =>
           // Singular enum: convert to string (keep UTF8String for now, could be optimized later)
@@ -588,7 +588,7 @@ object ProtoToRowGenerator {
           code ++= s"    if (e${idx} == null) {\n"
           code ++= s"      writer.setNullAt($idx);\n"
           code ++= s"    } else {\n"
-          code ++= s"      writer.write($idx, UTF8String.fromString(e${idx}.toString()));\n"
+          code ++= s"      writer.writeUTF8String($idx, UTF8String.fromString(e${idx}.toString()));\n"
           code ++= s"    }\n"
       }
     }
@@ -670,11 +670,11 @@ object ProtoToRowGenerator {
       case FieldDescriptor.JavaType.BOOLEAN =>
         s"if ($varName == null) { $writerName.setNullAt($fieldIndex); } else { $writerName.write($fieldIndex, $varName.booleanValue()); }"
       case FieldDescriptor.JavaType.STRING =>
-        s"if ($varName == null) { $writerName.setNullAt($fieldIndex); } else { $writerName.write($fieldIndex, UTF8String.fromString($varName)); }"
+        s"if ($varName == null) { $writerName.setNullAt($fieldIndex); } else { $writerName.writeUTF8String($fieldIndex, UTF8String.fromString($varName)); }"
       case FieldDescriptor.JavaType.BYTE_STRING =>
-        s"if ($varName == null) { $writerName.setNullAt($fieldIndex); } else { $writerName.write($fieldIndex, $varName.toByteArray()); }"
+        s"if ($varName == null) { $writerName.setNullAt($fieldIndex); } else { $writerName.writeBytes($fieldIndex, $varName.toByteArray()); }"
       case FieldDescriptor.JavaType.ENUM =>
-        s"if ($varName == null) { $writerName.setNullAt($fieldIndex); } else { $writerName.write($fieldIndex, UTF8String.fromString($varName.toString())); }"
+        s"if ($varName == null) { $writerName.setNullAt($fieldIndex); } else { $writerName.writeUTF8String($fieldIndex, UTF8String.fromString($varName.toString())); }"
       case FieldDescriptor.JavaType.MESSAGE =>
         // For map nested messages, this shouldn't be called, but provide a fallback
         s"$writerName.setNullAt($fieldIndex); // Nested message not supported in map values"
