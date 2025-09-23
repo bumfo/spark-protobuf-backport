@@ -491,4 +491,114 @@ class WireFormatGeneratorSpec extends AnyFlatSpec with Matchers {
       parser should not be null
     }
   }
+
+  it should "produce equivalent results when using binary descriptor sets vs generated WireFormatParser" in {
+    // Create a complex message with nested structures and repeated fields
+    val nestedField1 = Field.newBuilder()
+      .setName("nested_field1")
+      .setNumber(1)
+      .setKind(Field.Kind.TYPE_STRING)
+      .setCardinality(Field.Cardinality.CARDINALITY_OPTIONAL)
+      .build()
+
+    val nestedField2 = Field.newBuilder()
+      .setName("nested_field2")
+      .setNumber(2)
+      .setKind(Field.Kind.TYPE_INT32)
+      .setCardinality(Field.Cardinality.CARDINALITY_REPEATED)
+      .build()
+
+    val sourceContext = SourceContext.newBuilder()
+      .setFileName("test.proto")
+      .build()
+
+    val complexType = Type.newBuilder()
+      .setName("complex_comparison_test")
+      .addFields(nestedField1)
+      .addFields(nestedField2)
+      .setSourceContext(sourceContext)
+      .setSyntax(Syntax.SYNTAX_PROTO3)
+      .build()
+
+    val binary = complexType.toByteArray
+    val descriptor = complexType.getDescriptorForType
+
+    // Create comprehensive Spark schema matching all fields
+    val sparkSchema = StructType(Seq(
+      StructField("name", StringType, nullable = true),
+      StructField("fields", ArrayType(StructType(Seq(
+        StructField("kind", StringType, nullable = true),
+        StructField("cardinality", StringType, nullable = true),
+        StructField("number", IntegerType, nullable = true),
+        StructField("name", StringType, nullable = true),
+        StructField("type_url", StringType, nullable = true),
+        StructField("oneof_index", IntegerType, nullable = true),
+        StructField("packed", BooleanType, nullable = true),
+        StructField("options", ArrayType(StructType(Seq(
+          StructField("name", StringType, nullable = true),
+          StructField("value", StructType(Seq(
+            StructField("type_url", StringType, nullable = true),
+            StructField("value", BinaryType, nullable = true)
+          )), nullable = true)
+        ))), nullable = true),
+        StructField("json_name", StringType, nullable = true),
+        StructField("default_value", StringType, nullable = true)
+      ))), nullable = true),
+      StructField("oneofs", ArrayType(StringType), nullable = true),
+      StructField("options", ArrayType(StructType(Seq(
+        StructField("name", StringType, nullable = true),
+        StructField("value", StructType(Seq(
+          StructField("type_url", StringType, nullable = true),
+          StructField("value", BinaryType, nullable = true)
+        )), nullable = true)
+      ))), nullable = true),
+      StructField("source_context", StructType(Seq(
+        StructField("file_name", StringType, nullable = true)
+      )), nullable = true),
+      StructField("syntax", StringType, nullable = true)
+    ))
+
+    // Method 1: Generated WireFormatToRowGenerator parser
+    val generatedParser = WireFormatToRowGenerator.generateParser(descriptor, sparkSchema)
+    val generatedResult = generatedParser.parse(binary)
+
+    // Method 2: Binary descriptor set through from_protobuf function (should use WireFormatParser internally)
+    val descSet = DescriptorProtos.FileDescriptorSet.newBuilder()
+      .addFile(descriptor.getFile.toProto)
+      .addFile(AnyProto.getDescriptor.getFile.toProto)
+      .addFile(SourceContextProto.getDescriptor.getFile.toProto)
+      .addFile(ApiProto.getDescriptor.getFile.toProto)
+      .build()
+
+    // Create a temporary SparkSession for the from_protobuf test
+    val spark = org.apache.spark.sql.SparkSession.builder()
+      .appName("wireformat-correctness-test")
+      .master("local[1]")
+      .config("spark.ui.enabled", "false")
+      .config("spark.sql.adaptive.enabled", "false")
+      .config("spark.sql.codegen.wholeStage", "true")
+      .config("spark.sql.codegen.maxFields", "1000")
+      .config("spark.serializer", "org.apache.spark.serializer.KryoSerializer")
+      .getOrCreate()
+
+    spark.sparkContext.setLogLevel("ERROR")
+
+    try {
+      val sparkImplicits = spark.implicits
+      import sparkImplicits._
+
+      val df = Seq(binary).toDF("data")
+      val binaryDescResult = df.select(
+        functions.from_protobuf($"data", descriptor.getFullName, descSet.toByteArray).as("result")
+      ).head().getAs[org.apache.spark.sql.Row]("result")
+
+      // Compare all fields recursively
+      InternalRowToSqlRowComparator.compareRows(generatedResult, binaryDescResult, sparkSchema, "root")
+
+      println("✓ Generated WireFormatToRowGenerator and binary descriptor set produce identical results")
+
+    } finally {
+      spark.stop()
+    }
+  }
 }
