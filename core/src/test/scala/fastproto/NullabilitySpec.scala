@@ -5,6 +5,7 @@ import org.apache.spark.sql.types._
 import org.apache.spark.sql.protobuf.backport.DynamicMessageParser
 import org.scalatest.flatspec.AnyFlatSpec
 import org.scalatest.matchers.should.Matchers
+import testutils.InternalRowMatchers
 
 import java.io.ByteArrayOutputStream
 
@@ -14,7 +15,7 @@ import java.io.ByteArrayOutputStream
  * This test verifies that absent protobuf fields are correctly marked as null in Spark rows,
  * and that the null bit logic has been fixed to prevent unsafe memory access errors.
  */
-class NullabilitySpec extends AnyFlatSpec with Matchers {
+class NullabilitySpec extends AnyFlatSpec with Matchers with InternalRowMatchers {
 
   // Create a test message with some fields present and others absent
   private def createPartialMessage(): Array[Byte] = {
@@ -155,8 +156,7 @@ class NullabilitySpec extends AnyFlatSpec with Matchers {
     row.numFields should equal(6)
 
     // Field 1: present string field
-    row.isNullAt(0) should be(false)
-    row.getUTF8String(0).toString should equal("present_string")
+    row.field(0, "string_field") shouldEqual "present_string"
 
     // Field 2: absent int field - should be null
     row.isNullAt(1) should be(true)
@@ -173,8 +173,7 @@ class NullabilitySpec extends AnyFlatSpec with Matchers {
     val nestedRow = row.getStruct(4, 2)
 
     // Nested field 1: present
-    nestedRow.isNullAt(0) should be(false)
-    nestedRow.getUTF8String(0).toString should equal("nested_value")
+    nestedRow.field(0, "nested_field1") shouldEqual "nested_value"
 
     // Nested field 2: absent - should be null
     nestedRow.isNullAt(1) should be(true)
@@ -261,8 +260,7 @@ class NullabilitySpec extends AnyFlatSpec with Matchers {
     row.numFields should equal(4)
 
     // Field 0: name - present
-    row.isNullAt(0) should be(false)
-    row.getUTF8String(0).toString should equal("test_type")
+    row.field(0, "name") shouldEqual "test_type"
 
     // Field 1: fields - absent, should be null (empty array would be non-null)
     row.isNullAt(1) should be(true)
@@ -320,8 +318,7 @@ class NullabilitySpec extends AnyFlatSpec with Matchers {
     row.numFields should equal(3)
 
     // Field 1: present
-    row.isNullAt(0) should be(false)
-    row.getUTF8String(0).toString should equal("present_string")
+    row.field(0, "string_field") shouldEqual "present_string"
 
     // Field 2: absent - should be null
     row.isNullAt(1) should be(true)
