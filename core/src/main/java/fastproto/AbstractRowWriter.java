@@ -18,7 +18,7 @@
 package fastproto;
 
 import org.apache.spark.sql.catalyst.expressions.UnsafeRow;
-import org.apache.spark.sql.catalyst.expressions.codegen.BufferHolderHelper;
+import org.apache.spark.sql.catalyst.expressions.codegen.UnsafeRowWriter;
 import org.apache.spark.sql.catalyst.expressions.codegen.UnsafeWriter;
 
 /**
@@ -26,38 +26,18 @@ import org.apache.spark.sql.catalyst.expressions.codegen.UnsafeWriter;
  * This class provides the basic infrastructure for row writing using BufferHolderHelper
  * to access package-private BufferHolder across class loaders.
  */
-public abstract class AbstractRowWriter extends UnsafeWriter {
-
-    protected final UnsafeRow row;
-    protected final int nullBitsSize;
-    protected final int fixedSize;
+public abstract class AbstractRowWriter extends BaseWriter {
 
     public AbstractRowWriter(int numFields) {
-        this(new UnsafeRow(numFields));
+        super(new UnsafeRowWriter(numFields), numFields);
     }
 
     public AbstractRowWriter(int numFields, int initialBufferSize) {
-        this(new UnsafeRow(numFields), initialBufferSize);
+        super(new UnsafeRowWriter(numFields, initialBufferSize), numFields);
     }
 
     public AbstractRowWriter(UnsafeWriter writer, int numFields) {
-        this(null, BufferHolderHelper.getBufferHolder(writer), numFields);
-    }
-
-    private AbstractRowWriter(UnsafeRow row) {
-        this(row, BufferHolderHelper.createBufferHolder(row), row.numFields());
-    }
-
-    private AbstractRowWriter(UnsafeRow row, int initialBufferSize) {
-        this(row, BufferHolderHelper.createBufferHolder(row, initialBufferSize), row.numFields());
-    }
-
-    private AbstractRowWriter(UnsafeRow row, Object holder, int numFields) {
-        super(BufferHolderHelper.castToBufferHolder(holder));
-        this.row = row;
-        this.nullBitsSize = UnsafeRow.calculateBitSetWidthInBytes(numFields);
-        this.fixedSize = nullBitsSize + 8 * numFields;
-        this.startingOffset = cursor();
+        super(null, writer, numFields);
     }
 
     /**
