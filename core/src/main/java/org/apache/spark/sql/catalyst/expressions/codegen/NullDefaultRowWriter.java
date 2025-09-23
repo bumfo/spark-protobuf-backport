@@ -23,46 +23,49 @@ import org.apache.spark.unsafe.Platform;
 import org.apache.spark.unsafe.bitset.BitSetMethods;
 
 /**
- * A helper class to write data into global row buffer using `UnsafeRow` format.
+ * A row writer that defaults all fields to null, optimized for sparse data like protobuf messages.
  * <p>
- * It will remember the offset of row buffer which it starts to write, and move the cursor of row
- * buffer while writing.  If new data(can be the input record if this is the outermost writer, or
- * nested struct if this is an inner writer) comes, the starting cursor of row buffer may be
- * changed, so we need to call `MyUnsafeRowWriter.resetRowWriter` before writing, to update the
- * `startingOffset` and clear out null bits.
+ * Unlike the standard UnsafeRowWriter which defaults fields to non-null, this writer:
+ * - Initializes all fields as null via setAllNullBytes()
+ * - Automatically clears the null bit when writing field data
+ * - Eliminates the need for explicit clearNullAt() calls
  * <p>
- * Note that if this is the outermost writer, which means we will always write from the very
- * beginning of the global row buffer, we don't need to update `startingOffset` and can just call
- * `zeroOutNullBytes` before writing new data.
+ * This design is safer for protobuf parsing where most fields may be absent, ensuring
+ * unwritten fields remain properly null rather than containing uninitialized data.
+ * <p>
+ * Usage:
+ * 1. Call resetRowWriter() to initialize all fields as null
+ * 2. Write field data - null bits are automatically cleared
+ * 3. No need for explicit null bit management
  */
-public final class MyUnsafeRowWriter extends UnsafeWriter {
+public final class NullDefaultRowWriter extends UnsafeWriter {
 
     private final UnsafeRow row;
 
     private final int nullBitsSize;
     private final int fixedSize;
 
-    public MyUnsafeRowWriter(int numFields) {
+    public NullDefaultRowWriter(int numFields) {
         this(new UnsafeRow(numFields));
     }
 
-    public MyUnsafeRowWriter(int numFields, int initialBufferSize) {
+    public NullDefaultRowWriter(int numFields, int initialBufferSize) {
         this(new UnsafeRow(numFields), initialBufferSize);
     }
 
-    public MyUnsafeRowWriter(UnsafeWriter writer, int numFields) {
+    public NullDefaultRowWriter(UnsafeWriter writer, int numFields) {
         this(null, writer.getBufferHolder(), numFields);
     }
 
-    private MyUnsafeRowWriter(UnsafeRow row) {
+    private NullDefaultRowWriter(UnsafeRow row) {
         this(row, new BufferHolder(row), row.numFields());
     }
 
-    private MyUnsafeRowWriter(UnsafeRow row, int initialBufferSize) {
+    private NullDefaultRowWriter(UnsafeRow row, int initialBufferSize) {
         this(row, new BufferHolder(row, initialBufferSize), row.numFields());
     }
 
-    private MyUnsafeRowWriter(UnsafeRow row, BufferHolder holder, int numFields) {
+    private NullDefaultRowWriter(UnsafeRow row, BufferHolder holder, int numFields) {
         super(holder);
         this.row = row;
         this.nullBitsSize = UnsafeRow.calculateBitSetWidthInBytes(numFields);
