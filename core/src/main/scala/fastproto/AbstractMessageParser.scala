@@ -1,7 +1,7 @@
 package fastproto
 
 import org.apache.spark.sql.catalyst.InternalRow
-import org.apache.spark.sql.catalyst.expressions.codegen.{NullDefaultRowWriter, UnsafeRowWriter, UnsafeWriter}
+import org.apache.spark.sql.catalyst.expressions.codegen.{UnsafeRowWriter, UnsafeWriter}
 import org.apache.spark.sql.types.StructType
 
 abstract class AbstractMessageParser[T](schema: StructType)

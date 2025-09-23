@@ -245,8 +245,7 @@ object ProtoToRowGenerator {
     val code = new StringBuilder
     // Imports required by the generated Java source
     code ++= "import org.apache.spark.sql.catalyst.expressions.UnsafeRow;\n"
-    code ++= "import org.apache.spark.sql.catalyst.expressions.codegen.NullDefaultRowWriter;\n"
-    code ++= "import org.apache.spark.sql.catalyst.expressions.codegen.NullDefaultRowWriter;\n"
+    code ++= "import fastproto.NullDefaultRowWriter;\n"
     code ++= "import org.apache.spark.sql.catalyst.expressions.codegen.UnsafeWriter;\n"
     code ++= "import org.apache.spark.sql.catalyst.expressions.codegen.UnsafeArrayWriter;\n"
     code ++= "import org.apache.spark.sql.catalyst.InternalRow;\n"

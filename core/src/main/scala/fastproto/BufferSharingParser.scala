@@ -1,7 +1,7 @@
 package fastproto
 
 import org.apache.spark.sql.catalyst.InternalRow
-import org.apache.spark.sql.catalyst.expressions.codegen.{NullDefaultRowWriter, UnsafeRowWriter, UnsafeWriter}
+import org.apache.spark.sql.catalyst.expressions.codegen.UnsafeWriter
 import org.apache.spark.sql.types.StructType
 
 abstract class BufferSharingParser(val schema: StructType) extends Parser {

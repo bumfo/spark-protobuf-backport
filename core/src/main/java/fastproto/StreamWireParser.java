@@ -1,7 +1,7 @@
 package fastproto;
 
 import com.google.protobuf.CodedInputStream;
-import org.apache.spark.sql.catalyst.expressions.codegen.NullDefaultRowWriter;
+import fastproto.NullDefaultRowWriter;
 import org.apache.spark.sql.catalyst.expressions.codegen.UnsafeArrayWriter;
 import org.apache.spark.sql.catalyst.expressions.codegen.UnsafeRowWriter;
 import org.apache.spark.sql.types.StructType;

@@ -366,7 +366,7 @@ object WireFormatToRowGenerator {
     // Imports
     code ++= s"import ${classOf[com.google.protobuf.CodedInputStream].getName};\n"
     code ++= s"import ${classOf[WireFormat].getName};\n"
-    code ++= "import org.apache.spark.sql.catalyst.expressions.codegen.NullDefaultRowWriter;\n"
+    code ++= "import fastproto.NullDefaultRowWriter;\n"
     code ++= "import org.apache.spark.sql.types.StructType;\n"
     code ++= "import org.apache.spark.unsafe.types.UTF8String;\n"
     code ++= "import fastproto.StreamWireParser;\n"

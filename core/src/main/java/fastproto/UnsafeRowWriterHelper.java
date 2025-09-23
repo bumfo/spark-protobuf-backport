@@ -3,7 +3,7 @@ package fastproto;
 import java.lang.invoke.MethodHandle;
 import java.lang.invoke.MethodHandles;
 import java.lang.reflect.Field;
-import org.apache.spark.sql.catalyst.expressions.codegen.NullDefaultRowWriter;
+import fastproto.NullDefaultRowWriter;
 import org.apache.spark.sql.catalyst.expressions.codegen.UnsafeRowWriter;
 import org.apache.spark.sql.catalyst.expressions.codegen.UnsafeWriter;
 import org.apache.spark.unsafe.Platform;

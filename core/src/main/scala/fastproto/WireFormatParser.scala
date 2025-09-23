@@ -3,7 +3,6 @@ package fastproto
 import com.google.protobuf.Descriptors.{Descriptor, FieldDescriptor}
 import com.google.protobuf.{CodedInputStream, WireFormat}
 import fastproto.StreamWireParser._
-import org.apache.spark.sql.catalyst.expressions.codegen.NullDefaultRowWriter
 import org.apache.spark.sql.types.{ArrayType, StructType}
 import org.apache.spark.unsafe.types.UTF8String
 
