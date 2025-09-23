@@ -22,6 +22,7 @@ import org.apache.spark.sql.types.Decimal;
 import org.apache.spark.unsafe.Platform;
 import org.apache.spark.unsafe.bitset.BitSetMethods;
 import org.apache.spark.unsafe.types.UTF8String;
+import fastproto.RowWriter;
 
 /**
  * A row writer that defaults all fields to null, optimized for sparse data like protobuf messages.
@@ -39,7 +40,7 @@ import org.apache.spark.unsafe.types.UTF8String;
  * 2. Write field data - null bits are automatically cleared
  * 3. No need for explicit null bit management
  */
-public final class NullDefaultRowWriter extends UnsafeWriter {
+public final class NullDefaultRowWriter extends UnsafeWriter implements RowWriter {
 
     private final UnsafeRow row;
 
@@ -140,13 +141,23 @@ public final class NullDefaultRowWriter extends UnsafeWriter {
         return startingOffset + nullBitsSize + 8L * ordinal;
     }
 
+    /**
+     * Clear the null bit for a field, marking it as non-null.
+     * This implements the RowWriter interface method for centralized null bit management.
+     *
+     * @param ordinal the field ordinal to mark as non-null
+     */
+    public void clearNullBit(int ordinal) {
+        BitSetMethods.unset(getBuffer(), startingOffset, ordinal);
+    }
+
     @Override
     public void write(int ordinal, boolean value) {
         final long offset = getFieldOffset(ordinal);
         writeLong(offset, 0L);
         writeBoolean(offset, value);
         // Automatically clear null bit when writing data
-        BitSetMethods.unset(getBuffer(), startingOffset, ordinal);
+        clearNullBit(ordinal);
     }
 
     @Override
@@ -155,7 +166,7 @@ public final class NullDefaultRowWriter extends UnsafeWriter {
         writeLong(offset, 0L);
         writeByte(offset, value);
         // Automatically clear null bit when writing data
-        BitSetMethods.unset(getBuffer(), startingOffset, ordinal);
+        clearNullBit(ordinal);
     }
 
     @Override
@@ -164,7 +175,7 @@ public final class NullDefaultRowWriter extends UnsafeWriter {
         writeLong(offset, 0L);
         writeShort(offset, value);
         // Automatically clear null bit when writing data
-        BitSetMethods.unset(getBuffer(), startingOffset, ordinal);
+        clearNullBit(ordinal);
     }
 
     @Override
@@ -173,14 +184,14 @@ public final class NullDefaultRowWriter extends UnsafeWriter {
         writeLong(offset, 0L);
         writeInt(offset, value);
         // Automatically clear null bit when writing data
-        BitSetMethods.unset(getBuffer(), startingOffset, ordinal);
+        clearNullBit(ordinal);
     }
 
     @Override
     public void write(int ordinal, long value) {
         writeLong(getFieldOffset(ordinal), value);
         // Automatically clear null bit when writing data
-        BitSetMethods.unset(getBuffer(), startingOffset, ordinal);
+        clearNullBit(ordinal);
     }
 
     @Override
@@ -189,14 +200,14 @@ public final class NullDefaultRowWriter extends UnsafeWriter {
         writeLong(offset, 0);
         writeFloat(offset, value);
         // Automatically clear null bit when writing data
-        BitSetMethods.unset(getBuffer(), startingOffset, ordinal);
+        clearNullBit(ordinal);
     }
 
     @Override
     public void write(int ordinal, double value) {
         writeDouble(getFieldOffset(ordinal), value);
         // Automatically clear null bit when writing data
-        BitSetMethods.unset(getBuffer(), startingOffset, ordinal);
+        clearNullBit(ordinal);
     }
 
     @Override
@@ -232,7 +243,7 @@ public final class NullDefaultRowWriter extends UnsafeWriter {
                         bytes, Platform.BYTE_ARRAY_OFFSET, getBuffer(), cursor(), numBytes);
                 setOffsetAndSize(ordinal, bytes.length);
                 // Automatically clear null bit when writing valid decimal data
-                BitSetMethods.unset(getBuffer(), startingOffset, ordinal);
+                clearNullBit(ordinal);
             }
 
             // move the cursor forward.
@@ -250,7 +261,7 @@ public final class NullDefaultRowWriter extends UnsafeWriter {
      */
     public void writeBytes(int ordinal, byte[] value) {
         write(ordinal, value);  // Call parent's final method
-        BitSetMethods.unset(getBuffer(), startingOffset, ordinal);
+        clearNullBit(ordinal);
     }
 
     /**
@@ -266,7 +277,7 @@ public final class NullDefaultRowWriter extends UnsafeWriter {
      */
     public void writeUTF8String(int ordinal, UTF8String value) {
         write(ordinal, value);  // Call parent's final method
-        BitSetMethods.unset(getBuffer(), startingOffset, ordinal);
+        clearNullBit(ordinal);
     }
 
     /**
@@ -279,6 +290,6 @@ public final class NullDefaultRowWriter extends UnsafeWriter {
      */
     public void writeVariableField(int ordinal, int previousCursor) {
         setOffsetAndSizeFromPreviousCursor(ordinal, previousCursor);
-        BitSetMethods.unset(getBuffer(), startingOffset, ordinal);
+        clearNullBit(ordinal);
     }
 }
