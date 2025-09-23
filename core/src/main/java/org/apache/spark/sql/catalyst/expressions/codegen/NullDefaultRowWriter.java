@@ -83,8 +83,8 @@ public final class NullDefaultRowWriter extends UnsafeWriter {
     }
 
     /**
-     * Resets the `startingOffset` according to the current cursor of row buffer, and clear out null
-     * bits.  This should be called before we write a new nested struct to the row buffer.
+     * Resets the `startingOffset` according to the current cursor of row buffer, and sets all
+     * fields to null.  This should be called before we write a new nested struct to the row buffer.
      */
     public void resetRowWriter() {
         this.startingOffset = cursor();
@@ -93,15 +93,16 @@ public final class NullDefaultRowWriter extends UnsafeWriter {
         grow(fixedSize);
         increaseCursor(fixedSize);
 
-        zeroOutNullBytes();
+        setAllNullBytes();
     }
 
     /**
-     * Clears out null bits.  This should be called before we write a new row to row buffer.
+     * Sets all fields to null (all null bits = 1). This should be called before writing
+     * a new row to initialize all fields as null by default.
      */
-    public void zeroOutNullBytes() {
+    public void setAllNullBytes() {
         for (int i = 0; i < nullBitsSize; i += 8) {
-            Platform.putLong(getBuffer(), startingOffset + i, 0L);
+            Platform.putLong(getBuffer(), startingOffset + i, -1L);  // All 1s = all null
         }
     }
 
@@ -143,6 +144,8 @@ public final class NullDefaultRowWriter extends UnsafeWriter {
         final long offset = getFieldOffset(ordinal);
         writeLong(offset, 0L);
         writeBoolean(offset, value);
+        // Automatically clear null bit when writing data
+        BitSetMethods.unset(getBuffer(), startingOffset, ordinal);
     }
 
     @Override
@@ -150,6 +153,8 @@ public final class NullDefaultRowWriter extends UnsafeWriter {
         final long offset = getFieldOffset(ordinal);
         writeLong(offset, 0L);
         writeByte(offset, value);
+        // Automatically clear null bit when writing data
+        BitSetMethods.unset(getBuffer(), startingOffset, ordinal);
     }
 
     @Override
@@ -157,6 +162,8 @@ public final class NullDefaultRowWriter extends UnsafeWriter {
         final long offset = getFieldOffset(ordinal);
         writeLong(offset, 0L);
         writeShort(offset, value);
+        // Automatically clear null bit when writing data
+        BitSetMethods.unset(getBuffer(), startingOffset, ordinal);
     }
 
     @Override
@@ -164,11 +171,15 @@ public final class NullDefaultRowWriter extends UnsafeWriter {
         final long offset = getFieldOffset(ordinal);
         writeLong(offset, 0L);
         writeInt(offset, value);
+        // Automatically clear null bit when writing data
+        BitSetMethods.unset(getBuffer(), startingOffset, ordinal);
     }
 
     @Override
     public void write(int ordinal, long value) {
         writeLong(getFieldOffset(ordinal), value);
+        // Automatically clear null bit when writing data
+        BitSetMethods.unset(getBuffer(), startingOffset, ordinal);
     }
 
     @Override
@@ -176,11 +187,15 @@ public final class NullDefaultRowWriter extends UnsafeWriter {
         final long offset = getFieldOffset(ordinal);
         writeLong(offset, 0);
         writeFloat(offset, value);
+        // Automatically clear null bit when writing data
+        BitSetMethods.unset(getBuffer(), startingOffset, ordinal);
     }
 
     @Override
     public void write(int ordinal, double value) {
         writeDouble(getFieldOffset(ordinal), value);
+        // Automatically clear null bit when writing data
+        BitSetMethods.unset(getBuffer(), startingOffset, ordinal);
     }
 
     @Override
@@ -215,10 +230,25 @@ public final class NullDefaultRowWriter extends UnsafeWriter {
                 Platform.copyMemory(
                         bytes, Platform.BYTE_ARRAY_OFFSET, getBuffer(), cursor(), numBytes);
                 setOffsetAndSize(ordinal, bytes.length);
+                // Automatically clear null bit when writing valid decimal data
+                BitSetMethods.unset(getBuffer(), startingOffset, ordinal);
             }
 
             // move the cursor forward.
             increaseCursor(16);
         }
+    }
+
+    /**
+     * Writes offset and size for a variable-length field (arrays, nested messages, etc.)
+     * and automatically clears the null bit to mark the field as non-null.
+     * This method combines setOffsetAndSizeFromPreviousCursor with automatic null bit clearing.
+     *
+     * @param ordinal the field ordinal to write
+     * @param previousCursor the previous cursor position before the variable-length data was written
+     */
+    public void writeVariableField(int ordinal, int previousCursor) {
+        setOffsetAndSizeFromPreviousCursor(ordinal, previousCursor);
+        BitSetMethods.unset(getBuffer(), startingOffset, ordinal);
     }
 }

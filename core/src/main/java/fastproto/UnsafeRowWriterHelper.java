@@ -3,6 +3,7 @@ package fastproto;
 import java.lang.invoke.MethodHandle;
 import java.lang.invoke.MethodHandles;
 import java.lang.reflect.Field;
+import org.apache.spark.sql.catalyst.expressions.codegen.NullDefaultRowWriter;
 import org.apache.spark.sql.catalyst.expressions.codegen.UnsafeRowWriter;
 import org.apache.spark.sql.catalyst.expressions.codegen.UnsafeWriter;
 import org.apache.spark.unsafe.Platform;
@@ -39,11 +40,20 @@ public class UnsafeRowWriterHelper {
      * This correctly initializes the null bit vector so that absent protobuf fields
      * are properly marked as null instead of appearing as non-null with uninitialized data.
      *
-     * @param writer the UnsafeRowWriter to initialize
+     * For NullDefaultRowWriter instances, this is a no-op since resetRowWriter() already
+     * calls setAllNullBytes() automatically.
+     *
+     * @param writer the UnsafeWriter to initialize
      */
-    public static void setAllFieldsNull(UnsafeRowWriter writer) {
+    public static void setAllFieldsNull(UnsafeWriter writer) {
+        // NullDefaultRowWriter already sets all fields to null in resetRowWriter()
+        if (writer instanceof NullDefaultRowWriter) {
+            return; // No-op - already handled by resetRowWriter()
+        }
+
+        // Handle UnsafeRowWriter instances
         try {
-            int startingOffset = (int) startingOffsetGetter.invokeExact((UnsafeWriter) writer);
+            int startingOffset = (int) startingOffsetGetter.invokeExact(writer);
             int nullBitsSize = (int) nullBitsSizeGetter.invokeExact(writer);
 
             // Set all bits to 1 (null state) - opposite of zeroOutNullBytes which sets to 0
@@ -89,9 +99,9 @@ public class UnsafeRowWriterHelper {
      * @param writer the UnsafeRowWriter
      * @return the starting offset
      */
-    public static int getStartingOffset(UnsafeRowWriter writer) {
+    public static int getStartingOffset(UnsafeWriter writer) {
         try {
-            return (int) startingOffsetGetter.invokeExact((UnsafeWriter) writer);
+            return (int) startingOffsetGetter.invokeExact(writer);
         } catch (Throwable e) {
             throw new RuntimeException("Failed to get starting offset", e);
         }

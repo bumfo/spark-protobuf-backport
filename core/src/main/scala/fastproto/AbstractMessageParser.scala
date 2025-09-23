@@ -1,21 +1,21 @@
 package fastproto
 
 import org.apache.spark.sql.catalyst.InternalRow
-import org.apache.spark.sql.catalyst.expressions.codegen.{UnsafeRowWriter, UnsafeWriter}
+import org.apache.spark.sql.catalyst.expressions.codegen.{NullDefaultRowWriter, UnsafeRowWriter, UnsafeWriter}
 import org.apache.spark.sql.types.StructType
 
 abstract class AbstractMessageParser[T](schema: StructType)
   extends BufferSharingParser(schema) with MessageParser[T] {
 
-  def parseInto(message: T, writer: UnsafeRowWriter): Unit
+  def parseInto(message: T, writer: NullDefaultRowWriter): Unit
 
   /**
    * Default implementation for partial byte array parsing.
    * Since AbstractMessageParser works with compiled message objects,
    * this method creates a slice of the byte array and delegates to
-   * the existing parseInto(Array[Byte], UnsafeRowWriter) method.
+   * the existing parseInto(Array[Byte], NullDefaultRowWriter) method.
    */
-  override def parseInto(binary: Array[Byte], offset: Int, length: Int, writer: UnsafeRowWriter): Unit = {
+  override def parseInto(binary: Array[Byte], offset: Int, length: Int, writer: NullDefaultRowWriter): Unit = {
     // Create a slice of the array for this implementation
     // Note: This involves array copying, but AbstractMessageParser subclasses
     // typically work with pre-parsed messages rather than raw bytes

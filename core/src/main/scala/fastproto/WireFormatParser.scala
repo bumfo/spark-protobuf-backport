@@ -3,7 +3,7 @@ package fastproto
 import com.google.protobuf.Descriptors.{Descriptor, FieldDescriptor}
 import com.google.protobuf.{CodedInputStream, WireFormat}
 import StreamWireParser._
-import org.apache.spark.sql.catalyst.expressions.codegen.UnsafeRowWriter
+import org.apache.spark.sql.catalyst.expressions.codegen.{NullDefaultRowWriter, UnsafeRowWriter}
 import org.apache.spark.sql.types.{ArrayType, StructType}
 import org.apache.spark.unsafe.types.UTF8String
 
@@ -38,9 +38,7 @@ class WireFormatParser(
   private val nestedParsersArray: Array[WireFormatParser] = buildNestedParsersArray()
 
 
-  override protected def parseInto(input: CodedInputStream, writer: UnsafeRowWriter): Unit = {
-    // Cache startingOffset to optimize clearNullAt calls
-    val startingOffset = UnsafeRowWriterHelper.getStartingOffset(writer)
+  override protected def parseInto(input: CodedInputStream, writer: NullDefaultRowWriter): Unit = {
 
     // Reset all field accumulators for this conversion
     resetAccumulators()
@@ -178,7 +176,7 @@ class WireFormatParser(
       tag: Int,
       wireType: Int,
       mapping: FieldMapping,
-      writer: UnsafeRowWriter): Unit = {
+      writer: NullDefaultRowWriter): Unit = {
     import FieldDescriptor.Type._
 
     // Validate wire type matches expected type for this field
@@ -315,52 +313,40 @@ class WireFormatParser(
   private def parseSingleField(
       input: CodedInputStream,
       mapping: FieldMapping,
-      writer: UnsafeRowWriter): Unit = {
+      writer: NullDefaultRowWriter): Unit = {
     import FieldDescriptor.Type._
 
     // Single field - write directly to the row
     mapping.fieldDescriptor.getType match {
       case DOUBLE =>
         writer.write(mapping.rowOrdinal, input.readDouble())
-        UnsafeRowWriterHelper.clearNullAt(writer, mapping.rowOrdinal)
       case FLOAT =>
         writer.write(mapping.rowOrdinal, input.readFloat())
-        UnsafeRowWriterHelper.clearNullAt(writer, mapping.rowOrdinal)
       case INT64 | UINT64 =>
         writer.write(mapping.rowOrdinal, input.readRawVarint64())
-        UnsafeRowWriterHelper.clearNullAt(writer, mapping.rowOrdinal)
       case INT32 | UINT32 =>
         writer.write(mapping.rowOrdinal, input.readRawVarint32())
-        UnsafeRowWriterHelper.clearNullAt(writer, mapping.rowOrdinal)
       case FIXED64 | SFIXED64 =>
         writer.write(mapping.rowOrdinal, input.readRawLittleEndian64())
-        UnsafeRowWriterHelper.clearNullAt(writer, mapping.rowOrdinal)
       case FIXED32 | SFIXED32 =>
         writer.write(mapping.rowOrdinal, input.readRawLittleEndian32())
-        UnsafeRowWriterHelper.clearNullAt(writer, mapping.rowOrdinal)
       case BOOL =>
         writer.write(mapping.rowOrdinal, input.readBool())
-        UnsafeRowWriterHelper.clearNullAt(writer, mapping.rowOrdinal)
       case STRING =>
         val bytes = input.readByteArray()
         writer.write(mapping.rowOrdinal, UTF8String.fromBytes(bytes))
-        UnsafeRowWriterHelper.clearNullAt(writer, mapping.rowOrdinal)
       case BYTES =>
         writer.write(mapping.rowOrdinal, input.readByteArray())
-        UnsafeRowWriterHelper.clearNullAt(writer, mapping.rowOrdinal)
       case ENUM =>
         val enumValue = input.readEnum()
         val enumDescriptor = mapping.fieldDescriptor.getEnumType
         val enumValueDescriptor = enumDescriptor.findValueByNumber(enumValue)
         val enumName = if (enumValueDescriptor != null) enumValueDescriptor.getName else enumValue.toString
         writer.write(mapping.rowOrdinal, UTF8String.fromString(enumName))
-        UnsafeRowWriterHelper.clearNullAt(writer, mapping.rowOrdinal)
       case SINT32 =>
         writer.write(mapping.rowOrdinal, input.readSInt32())
-        UnsafeRowWriterHelper.clearNullAt(writer, mapping.rowOrdinal)
       case SINT64 =>
         writer.write(mapping.rowOrdinal, input.readSInt64())
-        UnsafeRowWriterHelper.clearNullAt(writer, mapping.rowOrdinal)
       case MESSAGE =>
         parseNestedMessage(input, mapping, writer)
       case GROUP =>
@@ -371,7 +357,7 @@ class WireFormatParser(
   private def parseNestedMessage(
       input: CodedInputStream,
       mapping: FieldMapping,
-      writer: UnsafeRowWriter): Unit = {
+      writer: NullDefaultRowWriter): Unit = {
     val messageBytes = input.readByteArray()
     val fieldNumber = mapping.fieldDescriptor.getNumber
     val parser = nestedParsersArray(fieldNumber)
@@ -381,18 +367,16 @@ class WireFormatParser(
 
       // Write directly to parent writer like repeated messages - unified approach
       val nestedWriter = parser.acquireNestedWriter(writer)
-      nestedWriter.resetRowWriter()
-      UnsafeRowWriterHelper.setAllFieldsNull(nestedWriter)
+      nestedWriter.resetRowWriter()  // resetRowWriter automatically calls setAllNullBytes()
       parser.parseInto(messageBytes, nestedWriter)
 
-      writer.setOffsetAndSizeFromPreviousCursor(mapping.rowOrdinal, offset)
-      UnsafeRowWriterHelper.clearNullAt(writer, mapping.rowOrdinal)
+      writer.writeVariableField(mapping.rowOrdinal, offset)
     } else {
       throw new IllegalStateException(s"No nested parser found for field ${mapping.fieldDescriptor.getName}")
     }
   }
 
-  private def writeAccumulatedRepeatedFields(writer: UnsafeRowWriter): Unit = {
+  private def writeAccumulatedRepeatedFields(writer: NullDefaultRowWriter): Unit = {
     var fieldNumber = 0
     while (fieldNumber < fieldMappingArray.length) {
       val mapping = fieldMappingArray(fieldNumber)
@@ -405,24 +389,19 @@ class WireFormatParser(
             } else {
               writeIntArray(list.array, list.count, mapping.rowOrdinal, writer)
             }
-            UnsafeRowWriterHelper.clearNullAt(writer, mapping.rowOrdinal)
-
+    
           case list: LongList if list.count > 0 =>
             writeLongArray(list.array, list.count, mapping.rowOrdinal, writer)
-            UnsafeRowWriterHelper.clearNullAt(writer, mapping.rowOrdinal)
-
+    
           case list: FloatList if list.count > 0 =>
             writeFloatArray(list.array, list.count, mapping.rowOrdinal, writer)
-            UnsafeRowWriterHelper.clearNullAt(writer, mapping.rowOrdinal)
-
+    
           case list: DoubleList if list.count > 0 =>
             writeDoubleArray(list.array, list.count, mapping.rowOrdinal, writer)
-            UnsafeRowWriterHelper.clearNullAt(writer, mapping.rowOrdinal)
-
+    
           case list: BooleanList if list.count > 0 =>
             writeBooleanArray(list.array, list.count, mapping.rowOrdinal, writer)
-            UnsafeRowWriterHelper.clearNullAt(writer, mapping.rowOrdinal)
-
+    
           case list: ByteArrayList if list.count > 0 =>
             mapping.fieldDescriptor.getType match {
               case FieldDescriptor.Type.MESSAGE =>
@@ -435,8 +414,7 @@ class WireFormatParser(
               case _ =>
                 throw new IllegalStateException(s"Unexpected field type ${mapping.fieldDescriptor.getType} for ByteArrayList")
             }
-            UnsafeRowWriterHelper.clearNullAt(writer, mapping.rowOrdinal)
-
+    
           case _ => // Empty lists or null - skip
         }
       }
@@ -444,7 +422,7 @@ class WireFormatParser(
     }
   }
 
-  private def writeEnumArray(list: IntList, mapping: FieldMapping, writer: UnsafeRowWriter): Unit = {
+  private def writeEnumArray(list: IntList, mapping: FieldMapping, writer: NullDefaultRowWriter): Unit = {
     // Convert enum values to string array
     val enumDescriptor = mapping.fieldDescriptor.getEnumType
     val stringBytes = new Array[Array[Byte]](list.count)
@@ -459,7 +437,6 @@ class WireFormatParser(
     }
 
     writeStringArray(stringBytes, list.count, mapping.rowOrdinal, writer)
-    UnsafeRowWriterHelper.clearNullAt(writer, mapping.rowOrdinal)
   }
 
   /**
