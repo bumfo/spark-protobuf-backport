@@ -39,6 +39,8 @@ class WireFormatParser(
 
 
   override protected def parseInto(input: CodedInputStream, writer: UnsafeRowWriter): Unit = {
+    // Cache startingOffset to optimize clearNullAt calls
+    val startingOffset = UnsafeRowWriterHelper.getStartingOffset(writer)
 
     // Reset all field accumulators for this conversion
     resetAccumulators()
