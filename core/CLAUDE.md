@@ -147,6 +147,17 @@ sbt "testOnly *ProtobufConversionBenchmark*"
 - **`parseWithSharedBuffer()`**: Manages writer lifecycle and buffer sharing for nested structures
 - **Memory efficiency**: Shared buffers reduce allocations in nested message conversions
 
+### NullDefaultRowWriter Optimization
+
+**`NullDefaultRowWriter`** - Specialized UnsafeRowWriter for sparse protobuf data:
+- **Default-null semantics**: All fields initialize as null via `setAllNullBytes()` (vs standard UnsafeRowWriter's default-nonnull)
+- **Automatic null bit management**: Write methods automatically clear null bits, eliminating manual `clearNullAt()` calls
+- **Safer for protobuf**: Unwritten fields remain properly null instead of containing uninitialized data
+- **Performance optimizations**:
+  - `writeBytes()` for UTF8 strings avoids `UTF8String.fromBytes()` intermediate objects
+  - `writeVariableField()` combines offset/size writing with null bit clearing
+- **Usage pattern**: Call `resetRowWriter()` → write field data → null bits handled automatically
+
 ### Wire Format Optimization Tips
 
 **Raw method usage**: Replace wrapper methods with direct raw methods to avoid indirection:
