@@ -1,8 +1,8 @@
 package fastproto
 
 import com.google.protobuf._
-import org.apache.spark.sql.protobuf.backport.DynamicMessageParser
 import org.apache.spark.sql.types._
+import org.apache.spark.sql.protobuf.backport.DynamicMessageParser
 import org.scalatest.flatspec.AnyFlatSpec
 import org.scalatest.matchers.should.Matchers
 
@@ -69,7 +69,7 @@ class NullabilitySpec extends AnyFlatSpec with Matchers with InternalRowMatchers
     baos.toByteArray
   }
 
-  ignore should "WireFormatParser correctly handle null values for absent fields" in {
+  "WireFormatParser" should "correctly handle null values for absent fields" in {
     val binary = createPartialMessage()
 
     // Define schema matching our test message structure
@@ -181,7 +181,7 @@ class NullabilitySpec extends AnyFlatSpec with Matchers with InternalRowMatchers
     row.isNullAt(5) should be(true)
   }
 
-  ignore should "WireFormatParser handle completely empty messages without crashing" in {
+  "WireFormatParser" should "handle completely empty messages without crashing" in {
     val binary = createEmptyMessage()
 
     val schema = StructType(Seq(
