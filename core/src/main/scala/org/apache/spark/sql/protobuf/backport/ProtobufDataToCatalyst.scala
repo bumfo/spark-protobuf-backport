@@ -73,9 +73,12 @@ private[backport] case class ProtobufDataToCatalyst(
       compiledClassName: Option[String])
 
   private sealed trait ParserKind
+
   private object ParserKind {
     case object Generated extends ParserKind
+
     case object WireFormat extends ParserKind
+
     case object Dynamic extends ParserKind
   }
 
@@ -105,21 +108,16 @@ private[backport] case class ProtobufDataToCatalyst(
       new NullDefaultRowWriter(plan.schema.length)
   }
 
-  private[backport] def parser(): Parser = parserLocal.get()
+  def parser: Parser = parserLocal.get()
 
-  private[backport] def writer(): NullDefaultRowWriter = writerLocal.get()
+  def writer: NullDefaultRowWriter = writerLocal.get()
 
-  private[backport] def newWriter(): NullDefaultRowWriter = new NullDefaultRowWriter(plan.schema.length)
-
-  private[backport] def closeThreadLocals(): Unit = {
-    parserLocal.remove()
-    writerLocal.remove()
-  }
+  def newWriter: NullDefaultRowWriter = new NullDefaultRowWriter(plan.schema.length)
 
   override def nullSafeEval(input: Any): Any = {
     val binary = input.asInstanceOf[Array[Byte]]
     try {
-      parser().parse(binary)
+      parser.parse(binary)
     } catch {
       case NonFatal(e) => handleException(e)
     }
@@ -153,13 +151,6 @@ private[backport] case class ProtobufDataToCatalyst(
   private def buildPlan(): Plan = {
     val desc = descriptor()
 
-    val schema: StructType = binaryDescriptorSet match {
-      case Some(_) =>
-        RecursiveSchemaConverters.toSqlTypeWithTrueRecursion(desc, enumAsInt = true)
-      case None =>
-        SchemaConverters.toSqlType(desc, protobufOptions).dataType.asInstanceOf[StructType]
-    }
-
     val compiledClassName = (descFilePath, binaryDescriptorSet) match {
       case (None, None) =>
         try {
@@ -174,6 +165,13 @@ private[backport] case class ProtobufDataToCatalyst(
       if (compiledClassName.isDefined) ParserKind.Generated
       else if (binaryDescriptorSet.isDefined) ParserKind.WireFormat
       else ParserKind.Dynamic
+
+    val schema: StructType = parserKind match {
+      case ParserKind.Dynamic =>
+        RecursiveSchemaConverters.toSqlTypeWithTrueRecursion(desc, enumAsInt = true)
+      case _ =>
+        SchemaConverters.toSqlType(desc, protobufOptions).dataType
+    }
 
     Plan(schema, parserKind, compiledClassName)
   }
