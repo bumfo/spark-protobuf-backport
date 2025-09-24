@@ -1,8 +1,8 @@
 package fastproto
 
 import com.google.protobuf._
-import org.apache.spark.sql.types._
 import org.apache.spark.sql.protobuf.backport.DynamicMessageParser
+import org.apache.spark.sql.types._
 import org.scalatest.flatspec.AnyFlatSpec
 import org.scalatest.matchers.should.Matchers
 

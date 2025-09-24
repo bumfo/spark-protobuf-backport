@@ -1,7 +1,7 @@
 package benchmark
 
 import benchmark.DomBenchmarkProtos.{DomDocument, DomNode}
-import com.google.protobuf.ByteString
+
 import scala.collection.JavaConverters._
 
 /**

@@ -2,7 +2,6 @@ package org.apache.spark.sql.protobuf.backport
 
 import com.google.protobuf.{Field, Type}
 import org.apache.spark.sql.catalyst.InternalRow
-import org.apache.spark.sql.catalyst.expressions.codegen.UnsafeWriter
 import org.apache.spark.sql.protobuf.backport.utils.SchemaConverters
 import org.apache.spark.sql.types.{StringType, StructType}
 import org.apache.spark.unsafe.types.UTF8String

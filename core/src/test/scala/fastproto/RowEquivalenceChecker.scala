@@ -6,8 +6,6 @@ import org.apache.spark.sql.catalyst.util.ArrayData
 import org.apache.spark.sql.types.{ArrayType, DataType, MapType, StructType}
 import org.scalatest.matchers.should.Matchers._
 
-import scala.util.control.NonFatal
-
 /**
  * Configuration options for row equivalence checking.
  */

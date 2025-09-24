@@ -1,9 +1,10 @@
 package fastproto
 
-import com.google.protobuf.{Type, CodedOutputStream}
+import com.google.protobuf.{CodedOutputStream, Type}
 import org.apache.spark.sql.types._
 import org.scalatest.flatspec.AnyFlatSpec
 import org.scalatest.matchers.should.Matchers
+
 import java.io.ByteArrayOutputStream
 
 class WireFormatIssueTest extends AnyFlatSpec with Matchers {
