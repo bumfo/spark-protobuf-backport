@@ -32,18 +32,41 @@ import org.apache.spark.sql.catalyst.expressions.codegen.UnsafeWriter;
  * <p>
  * Subclasses should implement specific null bit management strategies and field writing logic.
  */
-public abstract class AbstractRowWriter extends BaseWriter {
+public abstract class AbstractRowWriter extends UnsafeWriter {
+    protected final UnsafeRow row;
+    protected final int nullBitsSize;
+    protected final int fixedSize;
 
     public AbstractRowWriter(int numFields) {
-        super(new UnsafeRowWriter(numFields), numFields);
+        this(new UnsafeRowWriter(numFields), numFields);
     }
 
     public AbstractRowWriter(int numFields, int initialBufferSize) {
-        super(new UnsafeRowWriter(numFields, initialBufferSize), numFields);
+        this(new UnsafeRowWriter(numFields, initialBufferSize), numFields);
     }
 
     public AbstractRowWriter(UnsafeWriter writer, int numFields) {
-        super(null, writer, numFields);
+        this(null, writer, numFields);
+    }
+
+    /**
+     * Create AbstractRowWriter wrapping an UnsafeRowWriter.
+     * Uses the writer's existing row and BufferHolder for optimal compatibility.
+     */
+    protected AbstractRowWriter(UnsafeRowWriter writer, int numFields) {
+        this(writer.getRow(), writer, numFields);
+    }
+
+    /**
+     * Create AbstractRowWriter using an existing UnsafeWriter's BufferHolder.
+     * Avoids class loader issues by using the public getBufferHolder() method.
+     */
+    protected AbstractRowWriter(UnsafeRow row, UnsafeWriter writer, int numFields) {
+        super(writer.getBufferHolder());
+        this.row = row;
+        this.nullBitsSize = UnsafeRow.calculateBitSetWidthInBytes(numFields);
+        this.fixedSize = nullBitsSize + 8 * numFields;
+        this.startingOffset = cursor();
     }
 
     public boolean hasRow() {
