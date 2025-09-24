@@ -21,19 +21,19 @@ trait RowWriter {
    * @throws IllegalStateException if called on a top-level writer that owns a row
    */
   def resetRowWriter(): Unit = {
-    if (hasRow) throw new IllegalStateException("resetRowWriter() should not be called on top-level writers - use resetRow() instead")
+    if (hasRow) throw new IllegalStateException("resetRowWriter() should not be called on top-level writers - use initRow() instead")
     reserveRowSpace()
     setAllNullBytes()
   }
 
   /**
-   * Reset the row writer for top-level writers that own their UnsafeRow.
-   * This method resets the buffer and sets all fields to null by default.
+   * Initialize the row for writing by resetting the buffer and setting all fields to null.
+   * This method is required for both new writer instances and when reusing writers for new rows.
    *
    * @throws IllegalStateException if called on a nested writer that doesn't own a row
    */
-  def resetRow(): Unit = {
-    if (!hasRow) throw new IllegalStateException("resetRow() should only be called on top-level writers that own a row")
+  def initRow(): Unit = {
+    if (!hasRow) throw new IllegalStateException("initRow() should only be called on top-level writers that own a row")
     reset() // TODO: also clear buffer to zeros for security
     setAllNullBytes()
   }
