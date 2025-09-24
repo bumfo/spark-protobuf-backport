@@ -1,4 +1,4 @@
-package benchmark
+package fastproto
 
 import com.google.protobuf.Descriptors.{Descriptor, FieldDescriptor}
 import org.apache.spark.sql.types._

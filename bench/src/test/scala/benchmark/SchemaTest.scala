@@ -1,5 +1,6 @@
 package benchmark
 
+import fastproto.RecursiveSchemaConverters
 import org.scalatest.funsuite.AnyFunSuite
 import org.scalatest.matchers.should.Matchers
 

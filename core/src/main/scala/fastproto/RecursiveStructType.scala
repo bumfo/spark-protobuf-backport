@@ -1,4 +1,4 @@
-package benchmark
+package fastproto
 
 import org.apache.spark.sql.types._
 
