@@ -1,7 +1,7 @@
 package benchmark
 
 import benchmark.DomBenchmarkProtos.DomNode
-import fastproto._
+import fastproto.{EquivalenceOptions, ProtoToRowGenerator, RowEquivalenceChecker, WireFormatToRowGenerator}
 import org.scalatest.funsuite.AnyFunSuite
 import org.scalatest.matchers.should.Matchers
 
