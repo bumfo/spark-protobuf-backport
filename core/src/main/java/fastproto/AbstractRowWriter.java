@@ -15,9 +15,11 @@
  * limitations under the License.
  */
 
-package org.apache.spark.sql.catalyst.expressions.codegen;
+package fastproto;
 
 import org.apache.spark.sql.catalyst.expressions.UnsafeRow;
+import org.apache.spark.sql.catalyst.expressions.codegen.UnsafeRowWriter;
+import org.apache.spark.sql.catalyst.expressions.codegen.UnsafeWriter;
 
 /**
  * Abstract base class for custom UnsafeRow writers.
@@ -31,33 +33,36 @@ import org.apache.spark.sql.catalyst.expressions.UnsafeRow;
  * Subclasses should implement specific null bit management strategies and field writing logic.
  */
 public abstract class AbstractRowWriter extends UnsafeWriter {
-
     protected final UnsafeRow row;
     protected final int nullBitsSize;
     protected final int fixedSize;
 
     public AbstractRowWriter(int numFields) {
-        this(new UnsafeRow(numFields));
+        this(new UnsafeRowWriter(numFields), numFields);
     }
 
     public AbstractRowWriter(int numFields, int initialBufferSize) {
-        this(new UnsafeRow(numFields), initialBufferSize);
+        this(new UnsafeRowWriter(numFields, initialBufferSize), numFields);
     }
 
     public AbstractRowWriter(UnsafeWriter writer, int numFields) {
-        this(null, writer.getBufferHolder(), numFields);
+        this(null, writer, numFields);
     }
 
-    private AbstractRowWriter(UnsafeRow row) {
-        this(row, new BufferHolder(row), row.numFields());
+    /**
+     * Create AbstractRowWriter wrapping an UnsafeRowWriter.
+     * Uses the writer's existing row and BufferHolder for optimal compatibility.
+     */
+    protected AbstractRowWriter(UnsafeRowWriter writer, int numFields) {
+        this(writer.getRow(), writer, numFields);
     }
 
-    private AbstractRowWriter(UnsafeRow row, int initialBufferSize) {
-        this(row, new BufferHolder(row, initialBufferSize), row.numFields());
-    }
-
-    private AbstractRowWriter(UnsafeRow row, BufferHolder holder, int numFields) {
-        super(holder);
+    /**
+     * Create AbstractRowWriter using an existing UnsafeWriter's BufferHolder.
+     * Avoids class loader issues by using the public getBufferHolder() method.
+     */
+    protected AbstractRowWriter(UnsafeRow row, UnsafeWriter writer, int numFields) {
+        super(writer.getBufferHolder());
         this.row = row;
         this.nullBitsSize = UnsafeRow.calculateBitSetWidthInBytes(numFields);
         this.fixedSize = nullBitsSize + 8 * numFields;
