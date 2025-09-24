@@ -23,8 +23,8 @@ import org.apache.spark.sql.catalyst.expressions.codegen.UnsafeWriter;
 
 /**
  * Abstract base class for custom row writers.
- * This class provides the basic infrastructure for row writing using BufferHolderHelper
- * to access package-private BufferHolder across class loaders.
+ * Extends BaseWriter to provide row writing infrastructure using public UnsafeRowWriter
+ * instead of directly accessing package-private BufferHolder.
  */
 public abstract class AbstractRowWriter extends BaseWriter {
 
