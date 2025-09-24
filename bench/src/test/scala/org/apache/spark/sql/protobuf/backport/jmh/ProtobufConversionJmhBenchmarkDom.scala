@@ -1,9 +1,9 @@
 package org.apache.spark.sql.protobuf.backport.jmh
 
 import benchmark.DomBenchmarkProtos.DomDocument
-import benchmark.{DomTestDataGenerator, RecursiveSchemaConverters}
+import benchmark.DomTestDataGenerator
 import com.google.protobuf.{DescriptorProtos, Descriptors}
-import fastproto.{Parser, ProtoToRowGenerator, StreamWireParser, WireFormatToRowGenerator}
+import fastproto.{Parser, ProtoToRowGenerator, RecursiveSchemaConverters, StreamWireParser, WireFormatToRowGenerator}
 import org.apache.spark.sql.types._
 import org.openjdk.jmh.annotations._
 import org.openjdk.jmh.infra.Blackhole
