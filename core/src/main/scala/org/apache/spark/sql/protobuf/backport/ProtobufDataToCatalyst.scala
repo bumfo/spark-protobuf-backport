@@ -15,7 +15,7 @@
 
 package org.apache.spark.sql.protobuf.backport
 
-import com.google.protobuf.{Message => PbMessage}
+import com.google.protobuf.{Descriptors, Message => PbMessage}
 import fastproto._
 import org.apache.spark.internal.Logging
 import org.apache.spark.sql.catalyst.expressions.codegen.{CodeGenerator, CodegenContext, ExprCode}
@@ -24,6 +24,7 @@ import org.apache.spark.sql.catalyst.util.{FailFastMode, ParseMode, PermissiveMo
 import org.apache.spark.sql.protobuf.backport.shims.{QueryCompilationErrors, QueryExecutionErrors}
 import org.apache.spark.sql.protobuf.backport.utils.{ProtobufOptions, ProtobufUtils, SchemaConverters}
 import org.apache.spark.sql.types.{AbstractDataType, BinaryType, StructType}
+import org.apache.spark.util.Utils
 
 import scala.util.control.NonFatal
 
@@ -64,28 +65,28 @@ private[backport] case class ProtobufDataToCatalyst(
 
   override def inputTypes: Seq[AbstractDataType] = Seq(BinaryType)
 
-  override lazy val dataType: StructType = {
-    binaryDescriptorSet match {
-      // TODO always prefer wireFormatParser
-      case Some(_) =>
-        RecursiveSchemaConverters.toSqlTypeWithTrueRecursion(messageDescriptor, enumAsInt = true)
-      case None =>
-        SchemaConverters.toSqlType(messageDescriptor, protobufOptions).dataType
-    }
+  private lazy val protobufOptions: ProtobufOptions = ProtobufOptions(options)
+
+  private case class Plan(
+      schema: StructType,
+      parserKind: ParserKind,
+      compiledClassName: Option[String])
+
+  private sealed trait ParserKind
+  private object ParserKind {
+    case object Generated extends ParserKind
+    case object WireFormat extends ParserKind
+    case object Dynamic extends ParserKind
   }
+
+  private lazy val plan: Plan = buildPlan()
+
+  override lazy val dataType: StructType = plan.schema
 
   override def nullable: Boolean = true
 
-  private lazy val protobufOptions = ProtobufOptions(options)
-
-  @transient private lazy val messageDescriptor: com.google.protobuf.Descriptors.Descriptor =
-    binaryDescriptorSet match {
-      case Some(bytes) => ProtobufUtils.buildDescriptorFromBytes(bytes, messageName)
-      case None => ProtobufUtils.buildDescriptor(messageName, descFilePath)
-    }
-
   // Determine parse mode once up front.
-  @transient private lazy val parseMode: ParseMode = {
+  private lazy val parseMode: ParseMode = {
     val mode = protobufOptions.parseMode
     if (mode != PermissiveMode && mode != FailFastMode) {
       throw QueryCompilationErrors.parseModeUnsupportedError(prettyName, mode)
@@ -93,76 +94,121 @@ private[backport] case class ProtobufDataToCatalyst(
     mode
   }
 
-  /**
-   * Lazily attempt to load the compiled Protobuf class if the messageName
-   * refers to a Java class.  Only do this when no descriptor file or binary
-   * descriptor set is provided, otherwise messageName refers to a descriptor
-   * symbol rather than a class.  Any errors during class loading are
-   * swallowed and result in [[None]], causing the DynamicMessage path to be
-   * used instead.
-   */
-  @transient private lazy val messageClassOpt: Option[Class[PbMessage]] = {
-    (descFilePath, binaryDescriptorSet) match {
+  @transient private var descriptorCache: Descriptors.Descriptor = _
+
+  @transient private lazy val parserLocal = new ThreadLocal[Parser] {
+    override protected def initialValue(): Parser = createParser(plan)
+  }
+
+  @transient private lazy val writerLocal = new ThreadLocal[NullDefaultRowWriter] {
+    override protected def initialValue(): NullDefaultRowWriter =
+      new NullDefaultRowWriter(plan.schema.length)
+  }
+
+  private[backport] def parser(): Parser = parserLocal.get()
+
+  private[backport] def writer(): NullDefaultRowWriter = writerLocal.get()
+
+  private[backport] def newWriter(): NullDefaultRowWriter = new NullDefaultRowWriter(plan.schema.length)
+
+  private[backport] def closeThreadLocals(): Unit = {
+    parserLocal.remove()
+    writerLocal.remove()
+  }
+
+  override def nullSafeEval(input: Any): Any = {
+    val binary = input.asInstanceOf[Array[Byte]]
+    try {
+      parser().parse(binary)
+    } catch {
+      case NonFatal(e) => handleException(e)
+    }
+  }
+
+  override def prettyName: String = "from_protobuf"
+
+  override protected def doGenCode(ctx: CodegenContext, ev: ExprCode): ExprCode = {
+    val expr = ctx.addReferenceObj("this", this)
+    nullSafeCodeGen(
+      ctx,
+      ev,
+      eval => {
+        val result = ctx.freshName("result")
+        val dt = CodeGenerator.boxedType(dataType)
+        s"""
+           |$dt $result = ($dt) $expr.nullSafeEval($eval);
+           |if ($result == null) {
+           |  ${ev.isNull} = true;
+           |} else {
+           |  ${ev.value} = $result;
+           |}
+           |""".stripMargin
+      }
+    )
+  }
+
+  override protected def withNewChildInternal(newChild: Expression): ProtobufDataToCatalyst =
+    copy(child = newChild)
+
+  private def buildPlan(): Plan = {
+    val desc = descriptor()
+
+    val schema: StructType = binaryDescriptorSet match {
+      case Some(_) =>
+        RecursiveSchemaConverters.toSqlTypeWithTrueRecursion(desc, enumAsInt = true)
+      case None =>
+        SchemaConverters.toSqlType(desc, protobufOptions).dataType.asInstanceOf[StructType]
+    }
+
+    val compiledClassName = (descFilePath, binaryDescriptorSet) match {
       case (None, None) =>
         try {
-          Some(Class.forName(messageName).asInstanceOf[Class[PbMessage]])
+          Some(Class.forName(messageName).asInstanceOf[Class[PbMessage]].getName)
         } catch {
           case _: Throwable => None
         }
       case _ => None
     }
+
+    val parserKind =
+      if (compiledClassName.isDefined) ParserKind.Generated
+      else if (binaryDescriptorSet.isDefined) ParserKind.WireFormat
+      else ParserKind.Dynamic
+
+    Plan(schema, parserKind, compiledClassName)
   }
 
-  /**
-   * Lazily create a [[fastproto.MessageParser]] for the compiled message class.
-   * The parser uses the descriptor corresponding to this expression (from
-   * either the provided binary descriptor set or `ProtobufUtils.buildDescriptor`)
-   * so that the schema matches the Catalyst data type.  If the message class
-   * cannot be loaded this will be [[None]].
-   */
-  @transient private lazy val messageParserOpt: Option[Parser] = messageClassOpt.map { cls =>
-    // Use the descriptor used to compute the Catalyst schema so that
-    // the row parser's schema matches the Catalyst data type.  Cast
-    // the generated parser to Parser[PbMessage] since PbMessage
-    // is a supertype of all generated protobuf classes.
-    ProtoToRowGenerator.generateParser(messageDescriptor, cls, dataType)
+  private def descriptor(): Descriptors.Descriptor = {
+    if (descriptorCache == null) {
+      this.synchronized {
+        if (descriptorCache == null) {
+          descriptorCache = binaryDescriptorSet match {
+            case Some(bytes) => ProtobufUtils.buildDescriptorFromBytes(bytes, messageName)
+            case None => ProtobufUtils.buildDescriptor(messageName, descFilePath)
+          }
+        }
+      }
+    }
+    descriptorCache
   }
 
-  /**
-   * Lazily create a generated [[fastproto.StreamWireParser]] for binary descriptor sets.
-   * This provides an optimized fast path for direct wire format parsing when using binary
-   * descriptor sets, avoiding DynamicMessage overhead. Uses code generation to create
-   * optimized parsers with inlined field parsing and JIT-friendly branch prediction.
-   * Falls back to DynamicMessage if code generation fails.
-   */
-  @transient private lazy val wireFormatParserOpt: Option[StreamWireParser] = binaryDescriptorSet match {
-    // TODO always prefer wireFormatParser
-    case Some(_) =>
+  private def createParser(plan: Plan): Parser = plan.parserKind match {
+    case ParserKind.Generated =>
+      val cls = Utils.classForName(plan.compiledClassName.get).asInstanceOf[Class[PbMessage]]
+      ProtoToRowGenerator.generateParser(descriptor(), cls, plan.schema)
+
+    case ParserKind.WireFormat =>
       try {
-        // Generate optimized parser using code generation
-        Some(WireFormatToRowGenerator.generateParser(messageDescriptor, dataType))
+        WireFormatToRowGenerator.generateParser(descriptor(), plan.schema)
       } catch {
         case NonFatal(e) if parseMode == PermissiveMode =>
-          logWarning(s"Failed to generate wire format parser for message $messageName, " +
-            s"falling back to DynamicMessage parsing: ${e.getMessage}")
-          None
+          logWarning(
+            s"Failed to generate wire format parser for message $messageName, falling back to DynamicMessage parsing: ${e.getMessage}")
+          new DynamicMessageParser(descriptor(), plan.schema)
       }
-    case None => None
-  }
 
-  /**
-   * Lazily create a [[DynamicMessageParser]] for the fallback DynamicMessage path.
-   * This parser wraps the existing ProtobufDeserializer logic and is used when neither
-   * compiled class nor wire format parsers are available. It provides a consistent
-   * Parser interface while maintaining the original DynamicMessage deserialization behavior.
-   */
-  @transient private lazy val dynamicMessageParserOpt: Option[Parser] = {
-    // Create when no other fast paths are available
-    if (messageParserOpt.isEmpty && wireFormatParserOpt.isEmpty) {
-      Some(new DynamicMessageParser(messageDescriptor, dataType))
-    } else {
-      None
-    }
+    case ParserKind.Dynamic =>
+      new DynamicMessageParser(descriptor(), plan.schema)
   }
 
   /**
@@ -182,80 +228,4 @@ private[backport] case class ProtobufDataToCatalyst(
         }
     }
   }
-
-  override def nullSafeEval(input: Any): Any = {
-    val binary = input.asInstanceOf[Array[Byte]]
-
-    val parser = messageParserOpt
-      .orElse(wireFormatParserOpt)
-      .orElse(dynamicMessageParserOpt)
-      .getOrElse(throw new IllegalStateException("No parser available"))
-
-    try {
-      parser.parse(binary)
-    } catch {
-      case NonFatal(e) => handleException(e)
-    }
-  }
-
-  override def prettyName: String = "from_protobuf"
-
-  override protected def doGenCode(ctx: CodegenContext, ev: ExprCode): ExprCode = {
-    // Check if we can generate optimized code using any available parser
-    // val parserOpt = messageParserOpt
-    //   .orElse(wireFormatParserOpt)
-    //   .orElse(dynamicMessageParserOpt)
-    //
-    // parserOpt match {
-    //   case Some(parser) =>
-    //     // Generate optimized code path using the parser directly
-    //     val expr = ctx.addReferenceObj("this", this)
-    //     val parserRef = ctx.addReferenceObj("parser", parser)
-    //
-    //     nullSafeCodeGen(
-    //       ctx,
-    //       ev,
-    //       eval => {
-    //         val result = ctx.freshName("result")
-    //         val dt = CodeGenerator.boxedType(dataType)
-    //         s"""
-    //            |// Optimized codegen path using parser with direct binary conversion
-    //            |try {
-    //            |  $dt $result = ($dt) $parserRef.parse($eval);
-    //            |  if ($result == null) {
-    //            |    ${ev.isNull} = true;
-    //            |  } else {
-    //            |    ${ev.value} = $result;
-    //            |  }
-    //            |} catch (java.lang.Exception e) {
-    //            |  $expr.handleException(e);
-    //            |  ${ev.isNull} = true;
-    //            |}
-    //            |""".stripMargin
-    //       }
-    //     )
-    //   case None =>
-    // Fallback to standard codegen path that calls nullSafeEval
-    val expr = ctx.addReferenceObj("this", this)
-    nullSafeCodeGen(
-      ctx,
-      ev,
-      eval => {
-        val result = ctx.freshName("result")
-        val dt = CodeGenerator.boxedType(dataType)
-        s"""
-           |$dt $result = ($dt) $expr.nullSafeEval($eval);
-           |if ($result == null) {
-           |  ${ev.isNull} = true;
-           |} else {
-           |  ${ev.value} = $result;
-           |}
-           |""".stripMargin
-      }
-    )
-    // }
-  }
-
-  override protected def withNewChildInternal(newChild: Expression): ProtobufDataToCatalyst =
-    copy(child = newChild)
 }
