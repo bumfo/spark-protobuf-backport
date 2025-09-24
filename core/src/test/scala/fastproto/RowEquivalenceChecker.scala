@@ -437,8 +437,10 @@ object RowEquivalenceChecker {
 
       elementType1 match {
         case _: org.apache.spark.sql.types.StringType =>
-          val str1 = array1.getUTF8String(index).toString
-          val str2 = array2.getUTF8String(index).toString
+          val utf8Str1 = array1.getUTF8String(index)
+          val utf8Str2 = array2.getUTF8String(index)
+          val str1 = if (utf8Str1 != null) utf8Str1.toString else null
+          val str2 = if (utf8Str2 != null) utf8Str2.toString else null
 
           if (options.treatEmptyStringAsNull) {
             val normalizedStr1 = if (str1 == null || str1.isEmpty) null else str1
@@ -483,7 +485,8 @@ object RowEquivalenceChecker {
     dataType match {
       case _: org.apache.spark.sql.types.StringType =>
         // Stored as string - return as-is (could be enum name or empty/garbage if actually int)
-        val str = row.getUTF8String(fieldIndex).toString
+        val utf8Str = row.getUTF8String(fieldIndex)
+        val str = if (utf8Str != null) utf8Str.toString else ""
         // // If empty string, likely int bytes read as UTF8 - assume it's enum value 0
         // if (str.isEmpty) {
         //   fieldDescriptor match {
@@ -530,7 +533,8 @@ object RowEquivalenceChecker {
     dataType match {
       case _: org.apache.spark.sql.types.StringType =>
         // Stored as string - return as-is
-        val str = array.getUTF8String(index).toString
+        val utf8Str = array.getUTF8String(index)
+        val str = if (utf8Str != null) utf8Str.toString else ""
         // If empty string, likely int bytes read as UTF8 - assume it's enum value 0
         if (str.isEmpty) {
           fieldDescriptor match {
