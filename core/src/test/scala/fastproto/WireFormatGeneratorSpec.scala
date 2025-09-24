@@ -602,5 +602,4 @@ class WireFormatGeneratorSpec extends AnyFlatSpec with Matchers {
       spark.stop()
     }
   }
-
 }

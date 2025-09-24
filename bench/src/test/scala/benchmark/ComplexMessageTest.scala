@@ -1,7 +1,6 @@
 package benchmark
 
 import fastproto.{ProtoToRowGenerator, WireFormatToRowGenerator}
-import org.apache.spark.sql.catalyst.InternalRow
 import org.apache.spark.sql.protobuf.backport.utils.SchemaConverters
 import org.apache.spark.sql.types.StructType
 import org.scalatest.funsuite.AnyFunSuite

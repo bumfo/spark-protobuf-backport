@@ -9,7 +9,7 @@ abstract class BufferSharingParser(val schema: StructType) extends Parser {
 
   private def acquireWriter(parentWriter: UnsafeWriter): RowWriter = {
     if (parentWriter == null) {
-      instanceWriter.resetRow()
+      instanceWriter.initRow()
       instanceWriter
     } else {
       val writer = acquireNestedWriter(parentWriter)

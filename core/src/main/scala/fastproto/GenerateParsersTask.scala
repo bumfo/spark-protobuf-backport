@@ -1,7 +1,7 @@
 package fastproto
 
-import com.google.protobuf.Descriptors.{Descriptor, FileDescriptor}
 import com.google.protobuf.DescriptorProtos.FileDescriptorSet
+import com.google.protobuf.Descriptors.{Descriptor, FileDescriptor}
 
 import java.io.{File, FileInputStream, PrintWriter}
 import java.nio.file.StandardCopyOption

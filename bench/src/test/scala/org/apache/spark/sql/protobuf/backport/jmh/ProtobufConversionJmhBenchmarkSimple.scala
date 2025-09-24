@@ -1,18 +1,15 @@
 package org.apache.spark.sql.protobuf.backport.jmh
 
-import java.util.concurrent.TimeUnit
-import benchmark.{SimpleBenchmarkProtos, TestDataGenerator}
+import benchmark.TestDataGenerator
 import com.google.protobuf.{DescriptorProtos, Descriptors}
-import fastproto.{ProtoToRowGenerator, StreamWireParser, WireFormatParser, WireFormatToRowGenerator}
+import fastproto.{StreamWireParser, WireFormatParser, WireFormatToRowGenerator}
 import org.apache.spark.sql.protobuf.backport.DynamicMessageParser
-import org.apache.spark.sql.catalyst.expressions.Literal
-import org.apache.spark.sql.protobuf.backport.ProtobufDataToCatalyst
 import org.apache.spark.sql.protobuf.backport.utils.SchemaConverters
 import org.apache.spark.sql.types._
 import org.openjdk.jmh.annotations._
 import org.openjdk.jmh.infra.Blackhole
 
-import scala.collection.JavaConverters._
+import java.util.concurrent.TimeUnit
 
 
 /**
