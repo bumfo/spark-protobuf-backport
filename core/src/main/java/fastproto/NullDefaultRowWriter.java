@@ -84,7 +84,7 @@ public final class NullDefaultRowWriter extends AbstractRowWriter implements Row
 
     public void setNullAt(int ordinal) {
         BitSetMethods.set(getBuffer(), startingOffset, ordinal);
-        write(ordinal, 0L);
+        writeLong(getFieldOffset(ordinal), 0L); // Cannot use write(ordinal, long) which calls clearNullBit
     }
 
     @Override
