@@ -15,3 +15,7 @@
 - Scala tests live under `core/src/test/scala` with `*Spec.scala` naming.
 - Python test runner validates the shaded JAR works with PySpark; ensure the JAR is built first.
 
+## Commit Workflow
+- Use an imperative subject under 72 chars and include a short body explaining motivation, impact, and validation steps.
+- Append `Co-Authored-By: Codex <codex@users.noreply.github.com>` to every commit message.
+- Prefer new commits over amending existing history unless the user requests otherwise.
