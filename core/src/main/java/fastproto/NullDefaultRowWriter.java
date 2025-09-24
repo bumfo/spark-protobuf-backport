@@ -55,23 +55,33 @@ public final class NullDefaultRowWriter extends AbstractRowWriter implements Row
     }
 
     /**
-     * Resets the `startingOffset` according to the current cursor of row buffer, and sets all
-     * fields to null.  This should be called before we write a new nested struct to the row buffer.
+     * Reserves buffer space for a new row's fixed-length data.
+     * This method prepares the buffer for a new nested structure by:
+     * 1. Setting the starting offset to the current cursor position
+     * 2. Growing the buffer to accommodate fixed-length field data
+     * 3. Advancing the cursor past the reserved space
+     *
+     * Note: Null bit initialization is handled separately by setAllNullBytes().
      */
-    public void resetRowWriter() {
+    @Override
+    public void reserveRowSpace() {
         this.startingOffset = cursor();
 
         // grow the global buffer to make sure it has enough space to write fixed-length data.
         grow(fixedSize);
         increaseCursor(fixedSize);
 
-        setAllNullBytes();
+        // setAllNullBytes(); // called from resetRowWriter instead
     }
 
     /**
-     * Sets all fields to null (all null bits = 1). This should be called before writing
-     * a new row to initialize all fields as null by default.
+     * Initializes all fields as null by setting every null bit to 1.
+     * This establishes the null-by-default semantics that make NullDefaultRowWriter
+     * safer for sparse data like protobuf messages where most fields may be absent.
+     *
+     * This method writes -1L (all bits set) to each 8-byte chunk of the null bit vector.
      */
+    @Override
     public void setAllNullBytes() {
         for (int i = 0; i < nullBitsSize; i += 8) {
             Platform.putLong(getBuffer(), startingOffset + i, -1L);  // All 1s = all null
@@ -82,9 +92,10 @@ public final class NullDefaultRowWriter extends AbstractRowWriter implements Row
         return BitSetMethods.isSet(getBuffer(), startingOffset, ordinal);
     }
 
+    @Override
     public void setNullAt(int ordinal) {
         BitSetMethods.set(getBuffer(), startingOffset, ordinal);
-        writeLong(getFieldOffset(ordinal), 0L); // Cannot use write(ordinal, long) which calls clearNullBit
+        writeLong(getFieldOffset(ordinal), 0L); // Write zero directly to avoid clearNullBit() call
     }
 
     @Override
@@ -113,6 +124,7 @@ public final class NullDefaultRowWriter extends AbstractRowWriter implements Row
      *
      * @param ordinal the field ordinal to mark as non-null
      */
+    @Override
     public void clearNullBit(int ordinal) {
         BitSetMethods.unset(getBuffer(), startingOffset, ordinal);
     }
@@ -122,8 +134,7 @@ public final class NullDefaultRowWriter extends AbstractRowWriter implements Row
         final long offset = getFieldOffset(ordinal);
         writeLong(offset, 0L);
         writeBoolean(offset, value);
-        // Automatically clear null bit when writing data
-        clearNullBit(ordinal);
+        clearNullBit(ordinal); // Mark field as non-null
     }
 
     @Override
@@ -131,8 +142,7 @@ public final class NullDefaultRowWriter extends AbstractRowWriter implements Row
         final long offset = getFieldOffset(ordinal);
         writeLong(offset, 0L);
         writeByte(offset, value);
-        // Automatically clear null bit when writing data
-        clearNullBit(ordinal);
+        clearNullBit(ordinal); // Mark field as non-null
     }
 
     @Override
@@ -140,8 +150,7 @@ public final class NullDefaultRowWriter extends AbstractRowWriter implements Row
         final long offset = getFieldOffset(ordinal);
         writeLong(offset, 0L);
         writeShort(offset, value);
-        // Automatically clear null bit when writing data
-        clearNullBit(ordinal);
+        clearNullBit(ordinal); // Mark field as non-null
     }
 
     @Override
@@ -149,15 +158,13 @@ public final class NullDefaultRowWriter extends AbstractRowWriter implements Row
         final long offset = getFieldOffset(ordinal);
         writeLong(offset, 0L);
         writeInt(offset, value);
-        // Automatically clear null bit when writing data
-        clearNullBit(ordinal);
+        clearNullBit(ordinal); // Mark field as non-null
     }
 
     @Override
     public void write(int ordinal, long value) {
         writeLong(getFieldOffset(ordinal), value);
-        // Automatically clear null bit when writing data
-        clearNullBit(ordinal);
+        clearNullBit(ordinal); // Mark field as non-null
     }
 
     @Override
@@ -165,15 +172,13 @@ public final class NullDefaultRowWriter extends AbstractRowWriter implements Row
         final long offset = getFieldOffset(ordinal);
         writeLong(offset, 0);
         writeFloat(offset, value);
-        // Automatically clear null bit when writing data
-        clearNullBit(ordinal);
+        clearNullBit(ordinal); // Mark field as non-null
     }
 
     @Override
     public void write(int ordinal, double value) {
         writeDouble(getFieldOffset(ordinal), value);
-        // Automatically clear null bit when writing data
-        clearNullBit(ordinal);
+        clearNullBit(ordinal); // Mark field as non-null
     }
 
     @Override
@@ -208,8 +213,7 @@ public final class NullDefaultRowWriter extends AbstractRowWriter implements Row
                 Platform.copyMemory(
                         bytes, Platform.BYTE_ARRAY_OFFSET, getBuffer(), cursor(), numBytes);
                 setOffsetAndSize(ordinal, bytes.length);
-                // Automatically clear null bit when writing valid decimal data
-                clearNullBit(ordinal);
+                clearNullBit(ordinal); // Mark field as non-null for valid decimal data
             }
 
             // move the cursor forward.
@@ -225,6 +229,7 @@ public final class NullDefaultRowWriter extends AbstractRowWriter implements Row
      * @param ordinal the field ordinal to write
      * @param value the byte array to write
      */
+    @Override
     public void writeBytes(int ordinal, byte[] value) {
         write(ordinal, value);  // Call parent's final method
         clearNullBit(ordinal);
@@ -241,6 +246,7 @@ public final class NullDefaultRowWriter extends AbstractRowWriter implements Row
      * @param ordinal the field ordinal to write
      * @param value the UTF8String to write
      */
+    @Override
     public void writeUTF8String(int ordinal, UTF8String value) {
         write(ordinal, value);  // Call parent's final method
         clearNullBit(ordinal);
@@ -254,6 +260,7 @@ public final class NullDefaultRowWriter extends AbstractRowWriter implements Row
      * @param ordinal the field ordinal to write
      * @param previousCursor the previous cursor position before the variable-length data was written
      */
+    @Override
     public void writeVariableField(int ordinal, int previousCursor) {
         setOffsetAndSizeFromPreviousCursor(ordinal, previousCursor);
         clearNullBit(ordinal);

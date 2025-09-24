@@ -13,18 +13,55 @@ trait RowWriter {
   self: UnsafeWriter =>
 
   // Core State & Lifecycle
-  /** Reset the row writer and set all fields to null */
-  def resetRowWriter(): Unit
 
-  def resetRow(): Unit = {
-    reset()
+  /**
+   * Reset the row writer and set all fields to null for nested writers.
+   * This method is designed for nested row writers that don't own their own UnsafeRow.
+   *
+   * @throws IllegalStateException if called on a top-level writer that owns a row
+   */
+  def resetRowWriter(): Unit = {
+    if (hasRow) throw new IllegalStateException("resetRowWriter() should not be called on top-level writers - use resetRow() instead")
+    reserveRowSpace()
     setAllNullBytes()
-    // todo also fill all fields to 0
   }
 
-  /** Get the UnsafeRow result */
+  /**
+   * Reset the row writer for top-level writers that own their UnsafeRow.
+   * This method resets the buffer and sets all fields to null by default.
+   *
+   * @throws IllegalStateException if called on a nested writer that doesn't own a row
+   */
+  def resetRow(): Unit = {
+    if (!hasRow) throw new IllegalStateException("resetRow() should only be called on top-level writers that own a row")
+    reset() // TODO: also clear buffer to zeros for security
+    setAllNullBytes()
+  }
+
+  /**
+   * Reserves buffer space for a new row's fixed-length data.
+   * This method handles memory allocation and cursor management without null bit initialization.
+   */
+  protected def reserveRowSpace(): Unit
+
+  /**
+   * Returns whether this writer owns its own UnsafeRow instance.
+   * Top-level writers return true, nested writers return false.
+   */
+  def hasRow: Boolean
+
+  /**
+   * Gets the final UnsafeRow with correct size metadata.
+   * Only valid for top-level writers that own their row.
+   *
+   * @return the completed UnsafeRow, or null for nested writers
+   */
   def getRow: UnsafeRow
 
+  /**
+   * Gets the current cursor position in the underlying buffer.
+   * Used for tracking where variable-length data should be written.
+   */
   def cursor: Int
 
   // Type System Bridge
