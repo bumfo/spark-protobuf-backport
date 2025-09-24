@@ -245,7 +245,7 @@ object ProtoToRowGenerator {
     val code = new StringBuilder
     // Imports required by the generated Java source
     code ++= "import org.apache.spark.sql.catalyst.expressions.UnsafeRow;\n"
-    code ++= "import org.apache.spark.sql.catalyst.expressions.codegen.UnsafeRowWriter;\n"
+    code ++= "import fastproto.RowWriter;\n"
     code ++= "import org.apache.spark.sql.catalyst.expressions.codegen.UnsafeWriter;\n"
     code ++= "import org.apache.spark.sql.catalyst.expressions.codegen.UnsafeArrayWriter;\n"
     code ++= "import org.apache.spark.sql.catalyst.InternalRow;\n"
@@ -290,110 +290,110 @@ object ProtoToRowGenerator {
       fd.getJavaType match {
         case FieldDescriptor.JavaType.STRING if fd.isRepeated =>
           // Generate method for repeated string field
-          code ++= s"  private void write${accessor}Field(UnsafeRowWriter writer, ${messageClass.getName} msg) {\n"
+          code ++= s"  private void write${accessor}Field(RowWriter writer, ${messageClass.getName} msg) {\n"
           code ++= s"    int count = msg.${countMethodName}();\n"
           code ++= s"    int offset = writer.cursor();\n"
-          code ++= s"    UnsafeArrayWriter arrayWriter = new UnsafeArrayWriter(writer, 8);\n"
+          code ++= s"    UnsafeArrayWriter arrayWriter = new UnsafeArrayWriter(writer.toUnsafeWriter(), 8);\n"
           code ++= s"    arrayWriter.initialize(count);\n"
           code ++= s"    for (int i = 0; i < count; i++) {\n"
           code ++= s"      ${classOf[ByteString].getName} bs = msg.${getBytesMethodName}(i);\n"
           code ++= s"      byte[] bytes = bs.toByteArray();\n"
           code ++= s"      arrayWriter.write(i, bytes);\n"
           code ++= s"    }\n"
-          code ++= s"    writer.setOffsetAndSizeFromPreviousCursor($idx, offset);\n"
+          code ++= s"    writer.writeVariableField($idx, offset);\n"
           code ++= s"  }\n\n"
 
         case FieldDescriptor.JavaType.BYTE_STRING if fd.isRepeated =>
           // Generate method for repeated ByteString field
-          code ++= s"  private void write${accessor}Field(UnsafeRowWriter writer, ${messageClass.getName} msg) {\n"
+          code ++= s"  private void write${accessor}Field(RowWriter writer, ${messageClass.getName} msg) {\n"
           code ++= s"    int count = msg.${countMethodName}();\n"
           code ++= s"    int offset = writer.cursor();\n"
-          code ++= s"    UnsafeArrayWriter arrayWriter = new UnsafeArrayWriter(writer, 8);\n"
+          code ++= s"    UnsafeArrayWriter arrayWriter = new UnsafeArrayWriter(writer.toUnsafeWriter(), 8);\n"
           code ++= s"    arrayWriter.initialize(count);\n"
           code ++= s"    for (int i = 0; i < count; i++) {\n"
           code ++= s"      " + classOf[ByteString].getName + s" bs = msg.${indexGetterName}(i);\n"
           code ++= s"      if (bs == null) { arrayWriter.setNull(i); } else { arrayWriter.write(i, bs.toByteArray()); }\n"
           code ++= s"    }\n"
-          code ++= s"    writer.setOffsetAndSizeFromPreviousCursor($idx, offset);\n"
+          code ++= s"    writer.writeVariableField($idx, offset);\n"
           code ++= s"  }\n\n"
 
         case FieldDescriptor.JavaType.INT if fd.isRepeated =>
           // Generate method for repeated int field
-          code ++= s"  private void write${accessor}Field(UnsafeRowWriter writer, ${messageClass.getName} msg) {\n"
+          code ++= s"  private void write${accessor}Field(RowWriter writer, ${messageClass.getName} msg) {\n"
           code ++= s"    int count = msg.${countMethodName}();\n"
           code ++= s"    int offset = writer.cursor();\n"
-          code ++= s"    UnsafeArrayWriter arrayWriter = new UnsafeArrayWriter(writer, 4);\n"
+          code ++= s"    UnsafeArrayWriter arrayWriter = new UnsafeArrayWriter(writer.toUnsafeWriter(), 4);\n"
           code ++= s"    arrayWriter.initialize(count);\n"
           code ++= s"    for (int i = 0; i < count; i++) {\n"
           code ++= s"      arrayWriter.write(i, msg.${indexGetterName}(i));\n"
           code ++= s"    }\n"
-          code ++= s"    writer.setOffsetAndSizeFromPreviousCursor($idx, offset);\n"
+          code ++= s"    writer.writeVariableField($idx, offset);\n"
           code ++= s"  }\n\n"
 
         case FieldDescriptor.JavaType.LONG if fd.isRepeated =>
           // Generate method for repeated long field
-          code ++= s"  private void write${accessor}Field(UnsafeRowWriter writer, ${messageClass.getName} msg) {\n"
+          code ++= s"  private void write${accessor}Field(RowWriter writer, ${messageClass.getName} msg) {\n"
           code ++= s"    int count = msg.${countMethodName}();\n"
           code ++= s"    int offset = writer.cursor();\n"
-          code ++= s"    UnsafeArrayWriter arrayWriter = new UnsafeArrayWriter(writer, 8);\n"
+          code ++= s"    UnsafeArrayWriter arrayWriter = new UnsafeArrayWriter(writer.toUnsafeWriter(), 8);\n"
           code ++= s"    arrayWriter.initialize(count);\n"
           code ++= s"    for (int i = 0; i < count; i++) {\n"
           code ++= s"      arrayWriter.write(i, msg.${indexGetterName}(i));\n"
           code ++= s"    }\n"
-          code ++= s"    writer.setOffsetAndSizeFromPreviousCursor($idx, offset);\n"
+          code ++= s"    writer.writeVariableField($idx, offset);\n"
           code ++= s"  }\n\n"
 
         case FieldDescriptor.JavaType.FLOAT if fd.isRepeated =>
           // Generate method for repeated float field
-          code ++= s"  private void write${accessor}Field(UnsafeRowWriter writer, ${messageClass.getName} msg) {\n"
+          code ++= s"  private void write${accessor}Field(RowWriter writer, ${messageClass.getName} msg) {\n"
           code ++= s"    int count = msg.${countMethodName}();\n"
           code ++= s"    int offset = writer.cursor();\n"
-          code ++= s"    UnsafeArrayWriter arrayWriter = new UnsafeArrayWriter(writer, 4);\n"
+          code ++= s"    UnsafeArrayWriter arrayWriter = new UnsafeArrayWriter(writer.toUnsafeWriter(), 4);\n"
           code ++= s"    arrayWriter.initialize(count);\n"
           code ++= s"    for (int i = 0; i < count; i++) {\n"
           code ++= s"      arrayWriter.write(i, msg.${indexGetterName}(i));\n"
           code ++= s"    }\n"
-          code ++= s"    writer.setOffsetAndSizeFromPreviousCursor($idx, offset);\n"
+          code ++= s"    writer.writeVariableField($idx, offset);\n"
           code ++= s"  }\n\n"
 
         case FieldDescriptor.JavaType.DOUBLE if fd.isRepeated =>
           // Generate method for repeated double field
-          code ++= s"  private void write${accessor}Field(UnsafeRowWriter writer, ${messageClass.getName} msg) {\n"
+          code ++= s"  private void write${accessor}Field(RowWriter writer, ${messageClass.getName} msg) {\n"
           code ++= s"    int count = msg.${countMethodName}();\n"
           code ++= s"    int offset = writer.cursor();\n"
-          code ++= s"    UnsafeArrayWriter arrayWriter = new UnsafeArrayWriter(writer, 8);\n"
+          code ++= s"    UnsafeArrayWriter arrayWriter = new UnsafeArrayWriter(writer.toUnsafeWriter(), 8);\n"
           code ++= s"    arrayWriter.initialize(count);\n"
           code ++= s"    for (int i = 0; i < count; i++) {\n"
           code ++= s"      arrayWriter.write(i, msg.${indexGetterName}(i));\n"
           code ++= s"    }\n"
-          code ++= s"    writer.setOffsetAndSizeFromPreviousCursor($idx, offset);\n"
+          code ++= s"    writer.writeVariableField($idx, offset);\n"
           code ++= s"  }\n\n"
 
         case FieldDescriptor.JavaType.BOOLEAN if fd.isRepeated =>
           // Generate method for repeated boolean field
-          code ++= s"  private void write${accessor}Field(UnsafeRowWriter writer, ${messageClass.getName} msg) {\n"
+          code ++= s"  private void write${accessor}Field(RowWriter writer, ${messageClass.getName} msg) {\n"
           code ++= s"    int count = msg.${countMethodName}();\n"
           code ++= s"    int offset = writer.cursor();\n"
-          code ++= s"    UnsafeArrayWriter arrayWriter = new UnsafeArrayWriter(writer, 1);\n"
+          code ++= s"    UnsafeArrayWriter arrayWriter = new UnsafeArrayWriter(writer.toUnsafeWriter(), 1);\n"
           code ++= s"    arrayWriter.initialize(count);\n"
           code ++= s"    for (int i = 0; i < count; i++) {\n"
           code ++= s"      arrayWriter.write(i, msg.${indexGetterName}(i));\n"
           code ++= s"    }\n"
-          code ++= s"    writer.setOffsetAndSizeFromPreviousCursor($idx, offset);\n"
+          code ++= s"    writer.writeVariableField($idx, offset);\n"
           code ++= s"  }\n\n"
 
         case FieldDescriptor.JavaType.ENUM if fd.isRepeated =>
           // Generate method for repeated enum field
-          code ++= s"  private void write${accessor}Field(UnsafeRowWriter writer, ${messageClass.getName} msg) {\n"
+          code ++= s"  private void write${accessor}Field(RowWriter writer, ${messageClass.getName} msg) {\n"
           code ++= s"    int count = msg.${countMethodName}();\n"
           code ++= s"    int offset = writer.cursor();\n"
-          code ++= s"    UnsafeArrayWriter arrayWriter = new UnsafeArrayWriter(writer, 8);\n"
+          code ++= s"    UnsafeArrayWriter arrayWriter = new UnsafeArrayWriter(writer.toUnsafeWriter(), 8);\n"
           code ++= s"    arrayWriter.initialize(count);\n"
           code ++= s"    for (int i = 0; i < count; i++) {\n"
           code ++= s"      " + classOf[ProtocolMessageEnum].getName + s" e = msg.${indexGetterName}(i);\n"
           code ++= s"      if (e == null) { arrayWriter.setNull(i); } else { arrayWriter.write(i, UTF8String.fromString(e.toString())); }\n"
           code ++= s"    }\n"
-          code ++= s"    writer.setOffsetAndSizeFromPreviousCursor($idx, offset);\n"
+          code ++= s"    writer.writeVariableField($idx, offset);\n"
           code ++= s"  }\n\n"
 
         case FieldDescriptor.JavaType.MESSAGE if fd.isRepeated && fd.getMessageType.getOptions.hasMapEntry =>
@@ -404,16 +404,16 @@ object ProtoToRowGenerator {
           val keyJavaType = getJavaTypeString(keyField)
           val valueJavaType = getJavaTypeString(valueField)
 
-          code ++= s"  private void write${accessor}Field(UnsafeRowWriter writer, ${messageClass.getName} msg) {\n"
+          code ++= s"  private void write${accessor}Field(RowWriter writer, ${messageClass.getName} msg) {\n"
           code ++= s"    java.util.Map mapField = msg.get${accessor}Map();\n"
           code ++= s"    int count = mapField.size();\n"
           code ++= s"    int offset = writer.cursor();\n"
-          code ++= s"    UnsafeArrayWriter arrayWriter = new UnsafeArrayWriter(writer, 8);\n"
+          code ++= s"    UnsafeArrayWriter arrayWriter = new UnsafeArrayWriter(writer.toUnsafeWriter(), 8);\n"
           code ++= s"    arrayWriter.initialize(count);\n"
           code ++= s"    int entryIndex = 0;\n"
           code ++= s"    for (java.util.Map.Entry entry : (java.util.Set<java.util.Map.Entry>) mapField.entrySet()) {\n"
           code ++= s"      int elemOffset = arrayWriter.cursor();\n"
-          code ++= s"      UnsafeRowWriter structWriter = new UnsafeRowWriter(arrayWriter, 2);\n"
+          code ++= s"      RowWriter structWriter = new fastproto.NullDefaultRowWriter(arrayWriter, 2);\n"
           code ++= s"      structWriter.resetRowWriter();\n"
           code ++= s"      // Write key (field 0)\n"
           code ++= s"      ${keyJavaType} key = (${keyJavaType}) entry.getKey();\n"
@@ -424,20 +424,20 @@ object ProtoToRowGenerator {
           code ++= s"      arrayWriter.setOffsetAndSizeFromPreviousCursor(entryIndex, elemOffset);\n"
           code ++= s"      entryIndex++;\n"
           code ++= s"    }\n"
-          code ++= s"    writer.setOffsetAndSizeFromPreviousCursor($idx, offset);\n"
+          code ++= s"    writer.writeVariableField($idx, offset);\n"
           code ++= s"  }\n\n"
 
         case FieldDescriptor.JavaType.MESSAGE if fd.isRepeated =>
           // Generate method for repeated message field
           val parserIndex = fieldToParserIndex(fd)
           val nestedParserName = s"nestedConv${parserIndex}"
-          code ++= s"  private void write${accessor}Field(UnsafeRowWriter writer, ${messageClass.getName} msg) {\n"
+          code ++= s"  private void write${accessor}Field(RowWriter writer, ${messageClass.getName} msg) {\n"
           code ++= s"    int count = msg.${countMethodName}();\n"
           code ++= s"    int offset = writer.cursor();\n"
-          code ++= s"    UnsafeArrayWriter arrayWriter = new UnsafeArrayWriter(writer, 8);\n"
+          code ++= s"    UnsafeArrayWriter arrayWriter = new UnsafeArrayWriter(writer.toUnsafeWriter(), 8);\n"
           code ++= s"    arrayWriter.initialize(count);\n"
           // Lift writer acquisition outside loop for O(1) allocations instead of O(n)
-          code ++= s"    UnsafeRowWriter nestedWriter = null;\n"
+          code ++= s"    RowWriter nestedWriter = null;\n"
           code ++= s"    if (${nestedParserName} != null) {\n"
           code ++= s"      nestedWriter = ${nestedParserName}.acquireNestedWriter(writer);\n"
           code ++= s"    }\n"
@@ -452,7 +452,7 @@ object ProtoToRowGenerator {
           code ++= s"        arrayWriter.setOffsetAndSizeFromPreviousCursor(i, elemOffset);\n"
           code ++= s"      }\n"
           code ++= s"    }\n"
-          code ++= s"    writer.setOffsetAndSizeFromPreviousCursor($idx, offset);\n"
+          code ++= s"    writer.writeVariableField($idx, offset);\n"
           code ++= s"  }\n\n"
 
         case FieldDescriptor.JavaType.MESSAGE if !fd.isRepeated =>
@@ -465,7 +465,7 @@ object ProtoToRowGenerator {
           } else {
             None
           }
-          code ++= s"  private void write${accessor}Field(UnsafeRowWriter writer, ${messageClass.getName} msg) {\n"
+          code ++= s"  private void write${accessor}Field(RowWriter writer, ${messageClass.getName} msg) {\n"
           hasMethodName match {
             case Some(method) =>
               code ++= s"    if (!msg.${method}()) {\n"
@@ -477,10 +477,10 @@ object ProtoToRowGenerator {
               code ++= s"      } else {\n"
               code ++= s"        int offset = writer.cursor();\n"
               // Inline parseWithSharedBuffer for potential optimizations
-              code ++= s"        UnsafeRowWriter nestedWriter = ${nestedParserName}.acquireWriter(writer);\n"
+              code ++= s"        RowWriter nestedWriter = ${nestedParserName}.acquireWriter(writer);\n"
               code ++= s"        ${nestedParserName}.parseInto(v, nestedWriter);\n"
-              code ++= s"        writer.setOffsetAndSizeFromPreviousCursor($idx, offset);\n"
-              code ++= s"      }\n"
+              code ++= s"        writer.writeVariableField($idx, offset);\n"
+                  code ++= s"      }\n"
               code ++= s"    }\n"
             case None =>
               code ++= s"    " + classOf[Message].getName + s" v = (" + classOf[Message].getName + s") msg.${getterName}();\n"
@@ -489,9 +489,9 @@ object ProtoToRowGenerator {
               code ++= s"    } else {\n"
               code ++= s"      int offset = writer.cursor();\n"
               // Inline parseWithSharedBuffer for potential optimizations
-              code ++= s"      UnsafeRowWriter nestedWriter = ${nestedParserName}.acquireWriter(writer);\n"
+              code ++= s"      RowWriter nestedWriter = ${nestedParserName}.acquireWriter(writer);\n"
               code ++= s"      ${nestedParserName}.parseInto(v, nestedWriter);\n"
-              code ++= s"      writer.setOffsetAndSizeFromPreviousCursor($idx, offset);\n"
+              code ++= s"      writer.writeVariableField($idx, offset);\n"
               code ++= s"    }\n"
           }
           code ++= s"  }\n\n"
@@ -502,7 +502,7 @@ object ProtoToRowGenerator {
 
     // Override parseInto to implement binary conversion with inlined parseFrom
     code ++= "  @Override\n"
-    code ++= "  protected void parseInto(byte[] binary, UnsafeRowWriter writer) {\n"
+    code ++= "  protected void parseInto(byte[] binary, RowWriter writer) {\n"
     code ++= "    try {\n"
     code ++= "      // Direct parseFrom call - no reflection needed\n"
     code ++= s"      ${messageClass.getName} message = ${messageClass.getName}.parseFrom(binary);\n"
@@ -513,8 +513,14 @@ object ProtoToRowGenerator {
     code ++= "  }\n"
     code ++= "\n"
 
-    // Typed parseInto implementation (called by bridge method)
-    code ++= "  private void parseInto(" + messageClass.getName + " msg, UnsafeRowWriter writer) {\n"
+    // Bridge method for type erasure (implements abstract method from AbstractMessageParser)
+    code ++= "  @Override\n"
+    code ++= "  public void parseInto(Object message, RowWriter writer) {\n"
+    code ++= "    parseInto((" + messageClass.getName + ") message, writer);\n"
+    code ++= "  }\n\n"
+
+    // Typed parseInto implementation
+    code ++= "  public void parseInto(" + messageClass.getName + " msg, RowWriter writer) {\n"
 
     // Generate per‑field extraction and writing logic using writer
     descriptor.getFields.asScala.zipWithIndex.foreach { case (fd, idx) =>
@@ -565,16 +571,16 @@ object ProtoToRowGenerator {
         case FieldDescriptor.JavaType.BOOLEAN =>
           code ++= s"    writer.write($idx, msg.${getterName}());\n"
         case FieldDescriptor.JavaType.STRING =>
-          // Optimized singular string: use direct bytes
-          code ++= s"    byte[] bytes${idx} = msg.${getBytesMethodName}().toByteArray();\n"
-          code ++= s"    writer.write($idx, bytes${idx});\n"
+          // Singular string: convert to UTF8String with auto null bit clearing
+          code ++= s"    String str${idx} = msg.${getterName}();\n"
+          code ++= s"    writer.writeUTF8String($idx, UTF8String.fromString(str${idx}));\n"
         case FieldDescriptor.JavaType.BYTE_STRING =>
           // Singular ByteString: already optimized in original code
           code ++= s"    " + classOf[ByteString].getName + s" b${idx} = msg.${getterName}();\n"
           code ++= s"    if (b${idx} == null) {\n"
           code ++= s"      writer.setNullAt($idx);\n"
           code ++= s"    } else {\n"
-          code ++= s"      writer.write($idx, b${idx}.toByteArray());\n"
+          code ++= s"      writer.writeBytes($idx, b${idx}.toByteArray());\n"
           code ++= s"    }\n"
         case FieldDescriptor.JavaType.ENUM =>
           // Singular enum: convert to string (keep UTF8String for now, could be optimized later)
@@ -582,17 +588,12 @@ object ProtoToRowGenerator {
           code ++= s"    if (e${idx} == null) {\n"
           code ++= s"      writer.setNullAt($idx);\n"
           code ++= s"    } else {\n"
-          code ++= s"      writer.write($idx, UTF8String.fromString(e${idx}.toString()));\n"
+          code ++= s"      writer.writeUTF8String($idx, UTF8String.fromString(e${idx}.toString()));\n"
           code ++= s"    }\n"
       }
     }
 
     code ++= "  }\n" // End of parseInto method
-
-    // Bridge method for type erasure compatibility (implements abstract method)
-    code ++= "  public void parseInto(Object msg, UnsafeRowWriter writer) {\n"
-    code ++= s"    parseInto((${messageClass.getName}) msg, writer);\n"
-    code ++= "  }\n"
 
     code ++= "}\n" // End of class
 
@@ -654,7 +655,7 @@ object ProtoToRowGenerator {
   }
 
   /**
-   * Generate code to write a field value to an UnsafeRowWriter.
+   * Generate code to write a field value to an RowWriter.
    */
   private def generateFieldWriteCode(fd: FieldDescriptor, varName: String, writerName: String, fieldIndex: Int): String = {
     fd.getJavaType match {
@@ -669,11 +670,11 @@ object ProtoToRowGenerator {
       case FieldDescriptor.JavaType.BOOLEAN =>
         s"if ($varName == null) { $writerName.setNullAt($fieldIndex); } else { $writerName.write($fieldIndex, $varName.booleanValue()); }"
       case FieldDescriptor.JavaType.STRING =>
-        s"if ($varName == null) { $writerName.setNullAt($fieldIndex); } else { $writerName.write($fieldIndex, UTF8String.fromString($varName)); }"
+        s"if ($varName == null) { $writerName.setNullAt($fieldIndex); } else { $writerName.writeUTF8String($fieldIndex, UTF8String.fromString($varName)); }"
       case FieldDescriptor.JavaType.BYTE_STRING =>
-        s"if ($varName == null) { $writerName.setNullAt($fieldIndex); } else { $writerName.write($fieldIndex, $varName.toByteArray()); }"
+        s"if ($varName == null) { $writerName.setNullAt($fieldIndex); } else { $writerName.writeBytes($fieldIndex, $varName.toByteArray()); }"
       case FieldDescriptor.JavaType.ENUM =>
-        s"if ($varName == null) { $writerName.setNullAt($fieldIndex); } else { $writerName.write($fieldIndex, UTF8String.fromString($varName.toString())); }"
+        s"if ($varName == null) { $writerName.setNullAt($fieldIndex); } else { $writerName.writeUTF8String($fieldIndex, UTF8String.fromString($varName.toString())); }"
       case FieldDescriptor.JavaType.MESSAGE =>
         // For map nested messages, this shouldn't be called, but provide a fallback
         s"$writerName.setNullAt($fieldIndex); // Nested message not supported in map values"

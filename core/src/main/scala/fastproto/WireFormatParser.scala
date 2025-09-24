@@ -2,10 +2,8 @@ package fastproto
 
 import com.google.protobuf.Descriptors.{Descriptor, FieldDescriptor}
 import com.google.protobuf.{CodedInputStream, WireFormat}
-import StreamWireParser._
-import org.apache.spark.sql.catalyst.expressions.codegen.UnsafeRowWriter
+import fastproto.StreamWireParser._
 import org.apache.spark.sql.types.{ArrayType, StructType}
-import org.apache.spark.unsafe.types.UTF8String
 
 import scala.collection.JavaConverters._
 
@@ -38,7 +36,7 @@ class WireFormatParser(
   private val nestedParsersArray: Array[WireFormatParser] = buildNestedParsersArray()
 
 
-  override protected def parseInto(input: CodedInputStream, writer: UnsafeRowWriter): Unit = {
+  override protected def parseInto(input: CodedInputStream, writer: RowWriter): Unit = {
 
     // Reset all field accumulators for this conversion
     resetAccumulators()
@@ -176,8 +174,7 @@ class WireFormatParser(
       tag: Int,
       wireType: Int,
       mapping: FieldMapping,
-      writer: UnsafeRowWriter): Unit = {
-    import FieldDescriptor.Type._
+      writer: RowWriter): Unit = {
 
     // Validate wire type matches expected type for this field
     val expectedWireType = getExpectedWireType(mapping.fieldDescriptor.getType)
@@ -313,7 +310,7 @@ class WireFormatParser(
   private def parseSingleField(
       input: CodedInputStream,
       mapping: FieldMapping,
-      writer: UnsafeRowWriter): Unit = {
+      writer: RowWriter): Unit = {
     import FieldDescriptor.Type._
 
     // Single field - write directly to the row
@@ -333,16 +330,11 @@ class WireFormatParser(
       case BOOL =>
         writer.write(mapping.rowOrdinal, input.readBool())
       case STRING =>
-        val bytes = input.readByteArray()
-        writer.write(mapping.rowOrdinal, UTF8String.fromBytes(bytes))
+        writer.writeBytes(mapping.rowOrdinal, input.readByteArray())
       case BYTES =>
-        writer.write(mapping.rowOrdinal, input.readByteArray())
+        writer.writeBytes(mapping.rowOrdinal, input.readByteArray())
       case ENUM =>
-        val enumValue = input.readEnum()
-        val enumDescriptor = mapping.fieldDescriptor.getEnumType
-        val enumValueDescriptor = enumDescriptor.findValueByNumber(enumValue)
-        val enumName = if (enumValueDescriptor != null) enumValueDescriptor.getName else enumValue.toString
-        writer.write(mapping.rowOrdinal, UTF8String.fromString(enumName))
+        writer.write(mapping.rowOrdinal, input.readEnum())
       case SINT32 =>
         writer.write(mapping.rowOrdinal, input.readSInt32())
       case SINT64 =>
@@ -357,26 +349,26 @@ class WireFormatParser(
   private def parseNestedMessage(
       input: CodedInputStream,
       mapping: FieldMapping,
-      writer: UnsafeRowWriter): Unit = {
+      writer: RowWriter): Unit = {
     val messageBytes = input.readByteArray()
     val fieldNumber = mapping.fieldDescriptor.getNumber
     val parser = nestedParsersArray(fieldNumber)
 
     if (parser != null) {
-      val offset = writer.cursor()
+      val offset = writer.cursor
 
       // Write directly to parent writer like repeated messages - unified approach
       val nestedWriter = parser.acquireNestedWriter(writer)
-      nestedWriter.resetRowWriter()
+      nestedWriter.resetRowWriter()  // resetRowWriter automatically calls setAllNullBytes()
       parser.parseInto(messageBytes, nestedWriter)
 
-      writer.setOffsetAndSizeFromPreviousCursor(mapping.rowOrdinal, offset)
+      writer.writeVariableField(mapping.rowOrdinal, offset)
     } else {
       throw new IllegalStateException(s"No nested parser found for field ${mapping.fieldDescriptor.getName}")
     }
   }
 
-  private def writeAccumulatedRepeatedFields(writer: UnsafeRowWriter): Unit = {
+  private def writeAccumulatedRepeatedFields(writer: RowWriter): Unit = {
     var fieldNumber = 0
     while (fieldNumber < fieldMappingArray.length) {
       val mapping = fieldMappingArray(fieldNumber)
@@ -389,19 +381,19 @@ class WireFormatParser(
             } else {
               writeIntArray(list.array, list.count, mapping.rowOrdinal, writer)
             }
-
+    
           case list: LongList if list.count > 0 =>
             writeLongArray(list.array, list.count, mapping.rowOrdinal, writer)
-
+    
           case list: FloatList if list.count > 0 =>
             writeFloatArray(list.array, list.count, mapping.rowOrdinal, writer)
-
+    
           case list: DoubleList if list.count > 0 =>
             writeDoubleArray(list.array, list.count, mapping.rowOrdinal, writer)
-
+    
           case list: BooleanList if list.count > 0 =>
             writeBooleanArray(list.array, list.count, mapping.rowOrdinal, writer)
-
+    
           case list: ByteArrayList if list.count > 0 =>
             mapping.fieldDescriptor.getType match {
               case FieldDescriptor.Type.MESSAGE =>
@@ -414,7 +406,7 @@ class WireFormatParser(
               case _ =>
                 throw new IllegalStateException(s"Unexpected field type ${mapping.fieldDescriptor.getType} for ByteArrayList")
             }
-
+    
           case _ => // Empty lists or null - skip
         }
       }
@@ -422,7 +414,7 @@ class WireFormatParser(
     }
   }
 
-  private def writeEnumArray(list: IntList, mapping: FieldMapping, writer: UnsafeRowWriter): Unit = {
+  private def writeEnumArray(list: IntList, mapping: FieldMapping, writer: RowWriter): Unit = {
     // Convert enum values to string array
     val enumDescriptor = mapping.fieldDescriptor.getEnumType
     val stringBytes = new Array[Array[Byte]](list.count)

@@ -335,7 +335,7 @@ object WireFormatToRowGenerator {
         val compiler = new SimpleCompiler()
         compiler.setParentClassLoader(this.getClass.getClassLoader)
         compiler.cook(sourceCode.toString)
-        val generatedClass = compiler.getClassLoader.loadClass(className).asInstanceOf[Class[_ <: StreamWireParser]]
+        val generatedClass = compiler.getClassLoader.loadClass(s"fastproto.generated.$className").asInstanceOf[Class[_ <: StreamWireParser]]
 
         // Cache the compiled class globally and return
         Option(classCache.putIfAbsent(key, generatedClass)).getOrElse(generatedClass)
@@ -360,10 +360,13 @@ object WireFormatToRowGenerator {
   private def generateSourceCode(className: String, descriptor: Descriptor, schema: StructType): StringBuilder = {
     val code = new StringBuilder
 
+    // Package declaration
+    code ++= "package fastproto.generated;\n\n"
+
     // Imports
     code ++= s"import ${classOf[com.google.protobuf.CodedInputStream].getName};\n"
     code ++= s"import ${classOf[WireFormat].getName};\n"
-    code ++= "import org.apache.spark.sql.catalyst.expressions.codegen.UnsafeRowWriter;\n"
+    code ++= "import fastproto.RowWriter;\n"
     code ++= "import org.apache.spark.sql.types.StructType;\n"
     code ++= "import org.apache.spark.unsafe.types.UTF8String;\n"
     code ++= "import fastproto.StreamWireParser;\n"
@@ -534,7 +537,7 @@ object WireFormatToRowGenerator {
    */
   private def generateParseIntoMethod(code: StringBuilder, descriptor: Descriptor, schema: StructType): Unit = {
     code ++= "  @Override\n"
-    code ++= "  protected void parseInto(CodedInputStream input, UnsafeRowWriter writer) {\n\n"
+    code ++= "  protected void parseInto(CodedInputStream input, RowWriter writer) {\n\n"
 
     // Handle repeated field accumulators based on recursion
     val repeatedFields = descriptor.getFields.asScala.filter(field =>
@@ -669,9 +672,9 @@ object WireFormatToRowGenerator {
       case FieldDescriptor.Type.BOOL =>
         code ++= s"            writer.write($ordinal, input.readBool());\n"
       case FieldDescriptor.Type.STRING =>
-        code ++= s"            writer.write($ordinal, input.readByteArray());\n"
+        code ++= s"            writer.writeBytes($ordinal, input.readByteArray());\n"
       case FieldDescriptor.Type.BYTES =>
-        code ++= s"            writer.write($ordinal, input.readByteArray());\n"
+        code ++= s"            writer.writeBytes($ordinal, input.readByteArray());\n"
       case FieldDescriptor.Type.ENUM =>
         // Check schema to determine if enum should be written as integer or string
         val enumField = schema.fields(ordinal)
@@ -679,18 +682,18 @@ object WireFormatToRowGenerator {
           case IntegerType =>
             code ++= s"            writer.write($ordinal, input.readEnum());\n"
           case StringType =>
-            code ++= s"            writer.write($ordinal, UTF8String.fromString(getEnumName${fieldNum}(input.readEnum())));\n"
+            code ++= s"            writer.writeUTF8String($ordinal, UTF8String.fromString(getEnumName${fieldNum}(input.readEnum())));\n"
           case other =>
             throw new IllegalArgumentException(s"Unsupported enum target type: $other")
         }
       case FieldDescriptor.Type.MESSAGE =>
-        code ++= s"            byte[] messageBytes = input.readByteArray();\n"
+        code ++= s"            byte[] messageBytes${fieldNum} = input.readByteArray();\n"
         code ++= s"            if (nestedConv${fieldNum} != null) {\n"
         code ++= s"              int offset = writer.cursor();\n"
-        code ++= s"              UnsafeRowWriter nestedWriter = nestedConv${fieldNum}.acquireNestedWriter(writer);\n"
+        code ++= s"              RowWriter nestedWriter = nestedConv${fieldNum}.acquireNestedWriter(writer);\n"
         code ++= s"              nestedWriter.resetRowWriter();\n"
-        code ++= s"              nestedConv${fieldNum}.parseInto(messageBytes, nestedWriter);\n"
-        code ++= s"              writer.setOffsetAndSizeFromPreviousCursor($ordinal, offset);\n"
+        code ++= s"              nestedConv${fieldNum}.parseInto(messageBytes${fieldNum}, nestedWriter);\n"
+        code ++= s"              writer.writeVariableField($ordinal, offset);\n"
         code ++= s"            }\n"
       case _ =>
         code ++= s"            input.skipField(tag); // Unsupported type\n"

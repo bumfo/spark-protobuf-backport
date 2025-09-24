@@ -1,28 +1,31 @@
 package fastproto
 
 import org.apache.spark.sql.catalyst.InternalRow
-import org.apache.spark.sql.catalyst.expressions.codegen.{UnsafeRowWriter, UnsafeWriter}
+import org.apache.spark.sql.catalyst.expressions.codegen.UnsafeWriter
 import org.apache.spark.sql.types.StructType
 
 abstract class BufferSharingParser(val schema: StructType) extends Parser {
-  protected val instanceWriter = new UnsafeRowWriter(schema.length)
+  protected val instanceWriter: RowWriter = new NullDefaultRowWriter(schema.length)
 
-  def acquireWriter(parentWriter: UnsafeWriter): UnsafeRowWriter = {
+  private def acquireWriter(parentWriter: UnsafeWriter): RowWriter = {
     if (parentWriter == null) {
-      instanceWriter.reset()
-      instanceWriter.zeroOutNullBytes()
+      instanceWriter.initRow()
       instanceWriter
     } else {
       val writer = acquireNestedWriter(parentWriter)
-      writer.resetRowWriter()
+      writer.resetRowWriter()  // resetRowWriter automatically calls setAllNullBytes()
       writer
     }
   }
 
-  def acquireNestedWriter(parentWriter: UnsafeWriter): UnsafeRowWriter = new UnsafeRowWriter(parentWriter, schema.length)
+  private def acquireNestedWriter(parentWriter: UnsafeWriter): RowWriter = new NullDefaultRowWriter(parentWriter, schema.length)
+
+  def acquireWriter(parentWriter: RowWriter): RowWriter = acquireWriter(parentWriter.toUnsafeWriter)
+
+  def acquireNestedWriter(parentWriter: RowWriter): RowWriter = acquireNestedWriter(parentWriter.toUnsafeWriter)
 
   /**
-   * Core parsing method that implementations must override to write protobuf data to UnsafeRowWriter.
+   * Core parsing method that implementations must override to write protobuf data to row writer.
    * <p>
    * This abstract method defines the contract for parsing protobuf binary data and writing
    * the extracted fields to specific ordinal positions in the provided writer. Implementations
@@ -40,9 +43,9 @@ abstract class BufferSharingParser(val schema: StructType) extends Parser {
    * on parsing and field extraction logic.
    *
    * @param binary the protobuf binary data to parse
-   * @param writer the UnsafeRowWriter to populate with parsed field data
+   * @param writer the row writer to populate with parsed field data
    */
-  def parseInto(binary: Array[Byte], writer: UnsafeRowWriter): Unit
+  def parseInto(binary: Array[Byte], writer: RowWriter): Unit
 
   /**
    * Core parsing method with partial byte array support that implementations must override.
@@ -60,9 +63,9 @@ abstract class BufferSharingParser(val schema: StructType) extends Parser {
    * @param binary the byte array containing protobuf data
    * @param offset the starting position in the array
    * @param length the number of bytes to read from the array
-   * @param writer the UnsafeRowWriter to populate with parsed field data
+   * @param writer the row writer to populate with parsed field data
    */
-  def parseInto(binary: Array[Byte], offset: Int, length: Int, writer: UnsafeRowWriter): Unit
+  def parseInto(binary: Array[Byte], offset: Int, length: Int, writer: RowWriter): Unit
 
   /**
    * Convert protobuf binary data using a shared UnsafeWriter for BufferHolder sharing.

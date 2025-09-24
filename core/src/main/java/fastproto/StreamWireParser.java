@@ -2,7 +2,6 @@ package fastproto;
 
 import com.google.protobuf.CodedInputStream;
 import org.apache.spark.sql.catalyst.expressions.codegen.UnsafeArrayWriter;
-import org.apache.spark.sql.catalyst.expressions.codegen.UnsafeRowWriter;
 import org.apache.spark.sql.types.StructType;
 
 import java.io.IOException;
@@ -25,20 +24,20 @@ public abstract class StreamWireParser extends BufferSharingParser {
 
     /**
      * Convenience method that creates a CodedInputStream from binary data and delegates
-     * to the abstract parseInto(CodedInputStream, UnsafeRowWriter) method.
+     * to the abstract parseInto(CodedInputStream, RowWriter) method.
      */
     @Override
-    public final void parseInto(byte[] binary, UnsafeRowWriter writer) {
+    public final void parseInto(byte[] binary, RowWriter writer) {
         parseInto(binary, 0, binary.length, writer);
     }
 
     /**
      * Convenience method that creates a CodedInputStream from a partial byte array and delegates
-     * to the abstract parseInto(CodedInputStream, UnsafeRowWriter) method.
+     * to the abstract parseInto(CodedInputStream, RowWriter) method.
      * This avoids array copying when parsing embedded or streamed protobuf data.
      */
     @Override
-    public final void parseInto(byte[] binary, int offset, int length, UnsafeRowWriter writer) {
+    public final void parseInto(byte[] binary, int offset, int length, RowWriter writer) {
         CodedInputStream input = CodedInputStream.newInstance(binary, offset, length);
         input.enableAliasing(true);
 
@@ -47,12 +46,12 @@ public abstract class StreamWireParser extends BufferSharingParser {
 
     /**
      * Abstract method for subclasses to implement CodedInputStream-based parsing logic.
-     * Parses protobuf fields from the CodedInputStream and writes them to the UnsafeRowWriter.
+     * Parses protobuf fields from the CodedInputStream and writes them to the RowWriter.
      *
      * @param input  the CodedInputStream to read protobuf data from
-     * @param writer the UnsafeRowWriter to populate with parsed field data
+     * @param writer the RowWriter to populate with parsed field data
      */
-    protected abstract void parseInto(CodedInputStream input, UnsafeRowWriter writer);
+    protected abstract void parseInto(CodedInputStream input, RowWriter writer);
 
     // ========== Array Resizing Utilities ==========
 
@@ -122,7 +121,7 @@ public abstract class StreamWireParser extends BufferSharingParser {
      * Write a repeated string field as an array to the UnsafeRow.
      * Optimized for direct byte array writing without UTF8String allocation per element.
      */
-    protected void writeStringArray(byte[][] values, int ordinal, UnsafeRowWriter writer) {
+    protected void writeStringArray(byte[][] values, int ordinal, RowWriter writer) {
         writeStringArray(values, values.length, ordinal, writer);
     }
 
@@ -131,11 +130,11 @@ public abstract class StreamWireParser extends BufferSharingParser {
      * Eliminates array slicing by using size parameter instead of values.length.
      * Writes bytes directly without UTF8String wrapper allocation.
      */
-    protected void writeStringArray(byte[][] values, int size, int ordinal, UnsafeRowWriter writer) {
+    protected void writeStringArray(byte[][] values, int size, int ordinal, RowWriter writer) {
         assert size <= values.length;
 
         int offset = writer.cursor();
-        UnsafeArrayWriter arrayWriter = new UnsafeArrayWriter(writer, 8); // Variable-length strings use 8-byte offset/size
+        UnsafeArrayWriter arrayWriter = new UnsafeArrayWriter(writer.toUnsafeWriter(), 8); // Variable-length strings use 8-byte offset/size
         arrayWriter.initialize(size);
 
         for (int i = 0; i < size; i++) {
@@ -143,7 +142,7 @@ public abstract class StreamWireParser extends BufferSharingParser {
             arrayWriter.write(i, values[i]);
         }
 
-        writer.setOffsetAndSizeFromPreviousCursor(ordinal, offset);
+        writer.writeVariableField(ordinal, offset);
     }
 
     // ========== Bytes Array Methods ==========
@@ -151,7 +150,7 @@ public abstract class StreamWireParser extends BufferSharingParser {
     /**
      * Write a repeated byte array field as an array to the UnsafeRow.
      */
-    protected void writeBytesArray(byte[][] values, int ordinal, UnsafeRowWriter writer) {
+    protected void writeBytesArray(byte[][] values, int ordinal, RowWriter writer) {
         writeBytesArray(values, values.length, ordinal, writer);
     }
 
@@ -159,18 +158,18 @@ public abstract class StreamWireParser extends BufferSharingParser {
      * Write a repeated byte array field as an array to the UnsafeRow with size parameter.
      * Eliminates array slicing by using size parameter instead of values.length.
      */
-    protected void writeBytesArray(byte[][] values, int size, int ordinal, UnsafeRowWriter writer) {
+    protected void writeBytesArray(byte[][] values, int size, int ordinal, RowWriter writer) {
         assert size <= values.length;
 
         int offset = writer.cursor();
-        UnsafeArrayWriter arrayWriter = new UnsafeArrayWriter(writer, 8);
+        UnsafeArrayWriter arrayWriter = new UnsafeArrayWriter(writer.toUnsafeWriter(), 8);
         arrayWriter.initialize(size);
 
         for (int i = 0; i < size; i++) {
             arrayWriter.write(i, values[i]);
         }
 
-        writer.setOffsetAndSizeFromPreviousCursor(ordinal, offset);
+        writer.writeVariableField(ordinal, offset);
     }
 
     // ========== Primitive Array Methods ==========
@@ -178,7 +177,7 @@ public abstract class StreamWireParser extends BufferSharingParser {
     /**
      * Write a repeated int field as an array to the UnsafeRow.
      */
-    protected void writeIntArray(int[] values, int ordinal, UnsafeRowWriter writer) {
+    protected void writeIntArray(int[] values, int ordinal, RowWriter writer) {
         writeIntArray(values, values.length, ordinal, writer);
     }
 
@@ -186,24 +185,24 @@ public abstract class StreamWireParser extends BufferSharingParser {
      * Write a repeated int field as an array to the UnsafeRow with size parameter.
      * Eliminates array slicing by using size parameter instead of values.length.
      */
-    protected void writeIntArray(int[] values, int size, int ordinal, UnsafeRowWriter writer) {
+    protected void writeIntArray(int[] values, int size, int ordinal, RowWriter writer) {
         assert size <= values.length;
 
         int offset = writer.cursor();
-        UnsafeArrayWriter arrayWriter = new UnsafeArrayWriter(writer, 4);
+        UnsafeArrayWriter arrayWriter = new UnsafeArrayWriter(writer.toUnsafeWriter(), 4);
         arrayWriter.initialize(size);
 
         for (int i = 0; i < size; i++) {
             arrayWriter.write(i, values[i]);
         }
 
-        writer.setOffsetAndSizeFromPreviousCursor(ordinal, offset);
+        writer.writeVariableField(ordinal, offset);
     }
 
     /**
      * Write a repeated long field as an array to the UnsafeRow.
      */
-    protected void writeLongArray(long[] values, int ordinal, UnsafeRowWriter writer) {
+    protected void writeLongArray(long[] values, int ordinal, RowWriter writer) {
         writeLongArray(values, values.length, ordinal, writer);
     }
 
@@ -211,24 +210,24 @@ public abstract class StreamWireParser extends BufferSharingParser {
      * Write a repeated long field as an array to the UnsafeRow with size parameter.
      * Eliminates array slicing by using size parameter instead of values.length.
      */
-    protected void writeLongArray(long[] values, int size, int ordinal, UnsafeRowWriter writer) {
+    protected void writeLongArray(long[] values, int size, int ordinal, RowWriter writer) {
         assert size <= values.length;
 
         int offset = writer.cursor();
-        UnsafeArrayWriter arrayWriter = new UnsafeArrayWriter(writer, 8);
+        UnsafeArrayWriter arrayWriter = new UnsafeArrayWriter(writer.toUnsafeWriter(), 8);
         arrayWriter.initialize(size);
 
         for (int i = 0; i < size; i++) {
             arrayWriter.write(i, values[i]);
         }
 
-        writer.setOffsetAndSizeFromPreviousCursor(ordinal, offset);
+        writer.writeVariableField(ordinal, offset);
     }
 
     /**
      * Write a repeated float field as an array to the UnsafeRow.
      */
-    protected void writeFloatArray(float[] values, int ordinal, UnsafeRowWriter writer) {
+    protected void writeFloatArray(float[] values, int ordinal, RowWriter writer) {
         writeFloatArray(values, values.length, ordinal, writer);
     }
 
@@ -236,24 +235,24 @@ public abstract class StreamWireParser extends BufferSharingParser {
      * Write a repeated float field as an array to the UnsafeRow with size parameter.
      * Eliminates array slicing by using size parameter instead of values.length.
      */
-    protected void writeFloatArray(float[] values, int size, int ordinal, UnsafeRowWriter writer) {
+    protected void writeFloatArray(float[] values, int size, int ordinal, RowWriter writer) {
         assert size <= values.length;
 
         int offset = writer.cursor();
-        UnsafeArrayWriter arrayWriter = new UnsafeArrayWriter(writer, 4);
+        UnsafeArrayWriter arrayWriter = new UnsafeArrayWriter(writer.toUnsafeWriter(), 4);
         arrayWriter.initialize(size);
 
         for (int i = 0; i < size; i++) {
             arrayWriter.write(i, values[i]);
         }
 
-        writer.setOffsetAndSizeFromPreviousCursor(ordinal, offset);
+        writer.writeVariableField(ordinal, offset);
     }
 
     /**
      * Write a repeated double field as an array to the UnsafeRow.
      */
-    protected void writeDoubleArray(double[] values, int ordinal, UnsafeRowWriter writer) {
+    protected void writeDoubleArray(double[] values, int ordinal, RowWriter writer) {
         writeDoubleArray(values, values.length, ordinal, writer);
     }
 
@@ -261,24 +260,24 @@ public abstract class StreamWireParser extends BufferSharingParser {
      * Write a repeated double field as an array to the UnsafeRow with size parameter.
      * Eliminates array slicing by using size parameter instead of values.length.
      */
-    protected void writeDoubleArray(double[] values, int size, int ordinal, UnsafeRowWriter writer) {
+    protected void writeDoubleArray(double[] values, int size, int ordinal, RowWriter writer) {
         assert size <= values.length;
 
         int offset = writer.cursor();
-        UnsafeArrayWriter arrayWriter = new UnsafeArrayWriter(writer, 8);
+        UnsafeArrayWriter arrayWriter = new UnsafeArrayWriter(writer.toUnsafeWriter(), 8);
         arrayWriter.initialize(size);
 
         for (int i = 0; i < size; i++) {
             arrayWriter.write(i, values[i]);
         }
 
-        writer.setOffsetAndSizeFromPreviousCursor(ordinal, offset);
+        writer.writeVariableField(ordinal, offset);
     }
 
     /**
      * Write a repeated boolean field as an array to the UnsafeRow.
      */
-    protected void writeBooleanArray(boolean[] values, int ordinal, UnsafeRowWriter writer) {
+    protected void writeBooleanArray(boolean[] values, int ordinal, RowWriter writer) {
         writeBooleanArray(values, values.length, ordinal, writer);
     }
 
@@ -286,18 +285,18 @@ public abstract class StreamWireParser extends BufferSharingParser {
      * Write a repeated boolean field as an array to the UnsafeRow with size parameter.
      * Eliminates array slicing by using size parameter instead of values.length.
      */
-    protected void writeBooleanArray(boolean[] values, int size, int ordinal, UnsafeRowWriter writer) {
+    protected void writeBooleanArray(boolean[] values, int size, int ordinal, RowWriter writer) {
         assert size <= values.length;
 
         int offset = writer.cursor();
-        UnsafeArrayWriter arrayWriter = new UnsafeArrayWriter(writer, 1);
+        UnsafeArrayWriter arrayWriter = new UnsafeArrayWriter(writer.toUnsafeWriter(), 1);
         arrayWriter.initialize(size);
 
         for (int i = 0; i < size; i++) {
             arrayWriter.write(i, values[i]);
         }
 
-        writer.setOffsetAndSizeFromPreviousCursor(ordinal, offset);
+        writer.writeVariableField(ordinal, offset);
     }
 
     // ========== Message Array Methods ==========
@@ -306,7 +305,7 @@ public abstract class StreamWireParser extends BufferSharingParser {
      * Write a repeated message field as an array to the UnsafeRow.
      * Uses nested parser with writer sharing for optimal performance.
      */
-    protected void writeMessageArray(byte[][] messageBytes, int ordinal, StreamWireParser parser, UnsafeRowWriter writer) {
+    protected void writeMessageArray(byte[][] messageBytes, int ordinal, StreamWireParser parser, RowWriter writer) {
         writeMessageArray(messageBytes, messageBytes.length, ordinal, parser, writer);
     }
 
@@ -314,23 +313,23 @@ public abstract class StreamWireParser extends BufferSharingParser {
      * Write a repeated message field as an array to the UnsafeRow with size parameter.
      * Eliminates array slicing by using size parameter instead of messageBytes.length.
      */
-    protected void writeMessageArray(byte[][] messageBytes, int size, int ordinal, StreamWireParser parser, UnsafeRowWriter writer) {
+    protected void writeMessageArray(byte[][] messageBytes, int size, int ordinal, StreamWireParser parser, RowWriter writer) {
         assert size <= messageBytes.length;
 
         int offset = writer.cursor();
-        UnsafeArrayWriter arrayWriter = new UnsafeArrayWriter(writer, 8);
+        UnsafeArrayWriter arrayWriter = new UnsafeArrayWriter(writer.toUnsafeWriter(), 8);
         arrayWriter.initialize(size);
 
         // Lift writer acquisition outside loop for O(1) allocations instead of O(n)
-        UnsafeRowWriter nestedWriter = parser.acquireNestedWriter(writer);
+        RowWriter nestedWriter = parser.acquireNestedWriter(writer);
         for (int i = 0; i < size; i++) {
             int elemOffset = arrayWriter.cursor();
-            nestedWriter.resetRowWriter();
+            nestedWriter.resetRowWriter();  // resetRowWriter automatically calls setAllNullBytes()
             parser.parseInto(messageBytes[i], nestedWriter);
             arrayWriter.setOffsetAndSizeFromPreviousCursor(i, elemOffset);
         }
 
-        writer.setOffsetAndSizeFromPreviousCursor(ordinal, offset);
+        writer.writeVariableField(ordinal, offset);
     }
 
     // ========== Single Message Methods ==========
@@ -339,13 +338,13 @@ public abstract class StreamWireParser extends BufferSharingParser {
      * Write a single nested message field to the UnsafeRow.
      * Uses nested parser with writer sharing.
      */
-    protected void writeMessage(byte[] messageBytes, int ordinal, StreamWireParser parser, UnsafeRowWriter writer) {
+    protected void writeMessage(byte[] messageBytes, int ordinal, StreamWireParser parser, RowWriter writer) {
         int offset = writer.cursor();
         // Use acquireNestedWriter directly for nested message parsing
-        UnsafeRowWriter nestedWriter = parser.acquireNestedWriter(writer);
-        nestedWriter.resetRowWriter();
+        RowWriter nestedWriter = parser.acquireNestedWriter(writer);
+        nestedWriter.resetRowWriter();  // resetRowWriter automatically calls setAllNullBytes()
         parser.parseInto(messageBytes, nestedWriter);
-        writer.setOffsetAndSizeFromPreviousCursor(ordinal, offset);
+        writer.writeVariableField(ordinal, offset);
     }
 
     // ========== Packed Field Parsing Methods ==========
