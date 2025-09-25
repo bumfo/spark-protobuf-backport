@@ -214,7 +214,7 @@ public final class NullDefaultRowWriter extends AbstractRowWriter implements Row
                 Platform.copyMemory(
                         bytes, Platform.BYTE_ARRAY_OFFSET, getBuffer(), cursor(), numBytes);
                 setOffsetAndSize(ordinal, bytes.length);
-                clearNullBit(ordinal); // Mark field as non-null for valid decimal data
+                // clearNullBit(ordinal); // this is not needed
             }
 
             // move the cursor forward.
@@ -233,7 +233,7 @@ public final class NullDefaultRowWriter extends AbstractRowWriter implements Row
     @Override
     public void writeBytes(int ordinal, byte[] value) {
         write(ordinal, value);  // Call parent's final method
-        clearNullBit(ordinal);
+        // clearNullBit(ordinal); // this is not needed
     }
 
     /**
@@ -273,7 +273,7 @@ public final class NullDefaultRowWriter extends AbstractRowWriter implements Row
     @Override
     public void writeUTF8String(int ordinal, UTF8String value) {
         write(ordinal, value);  // Call parent's final method
-        clearNullBit(ordinal);
+        // clearNullBit(ordinal); // this is not needed
     }
 
     /**
@@ -287,6 +287,6 @@ public final class NullDefaultRowWriter extends AbstractRowWriter implements Row
     @Override
     public void writeVariableField(int ordinal, int previousCursor) {
         setOffsetAndSizeFromPreviousCursor(ordinal, previousCursor);
-        clearNullBit(ordinal);
+        // clearNullBit(ordinal); // this is not needed
     }
 }
