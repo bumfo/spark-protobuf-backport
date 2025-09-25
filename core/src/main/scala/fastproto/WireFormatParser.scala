@@ -127,7 +127,7 @@ class WireFormatParser(
 
       // String/Bytes types use BytesList, Message types use GenericList[ByteBuffer]
       case STRING | BYTES => new BytesList()
-      case MESSAGE => new GenericList[ByteBuffer]()
+      case MESSAGE => new GenericList(classOf[java.nio.ByteBuffer])
 
       case GROUP => throw new UnsupportedOperationException("GROUP type is deprecated and not supported")
     }
