@@ -618,15 +618,8 @@ object WireFormatParser {
           case _ => throw new IllegalArgumentException(s"Expected StructType or ArrayType[StructType] for message field ${mapping.fieldDescriptor.getName}")
         }
 
-        // Check if we have a ParserRef already (handles cycles)
-        visited.get(nestedKey) match {
-          case Some(existingRef) =>
-            // Use existing ParserRef (may have null parser if being built)
-            parsersArray(i) = existingRef
-          case None =>
-            // Build child parser (returns ParserRef)
-            parsersArray(i) = buildOptimizedParser(nestedDescriptor, nestedSchema, recursiveTypes, visited)
-        }
+        // Build child parser (buildOptimizedParser handles existing ParserRef in visited map)
+        parsersArray(i) = buildOptimizedParser(nestedDescriptor, nestedSchema, recursiveTypes, visited)
       }
       i += 1
     }
