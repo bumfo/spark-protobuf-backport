@@ -576,7 +576,7 @@ object WireFormatToRowGenerator {
         repeatedFields.foreach { field =>
           val fieldNum = field.getNumber
           if (isVarint32(field.getType) || isVarint64(field.getType)) {
-            code ++= s"    field${fieldNum}_list.count = 0;\n"
+            code ++= s"    field${fieldNum}_list.reset();\n"
           } else {
             code ++= s"    field${fieldNum}_count = 0;\n"
           }

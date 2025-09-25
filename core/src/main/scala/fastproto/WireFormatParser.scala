@@ -538,13 +538,13 @@ object WireFormatParser {
     def reset(): Unit = {
       var i = 0
       while (i <= maxFieldNumber) {
-        if (intLists(i) != null) intLists(i).count = 0
-        if (longLists(i) != null) longLists(i).count = 0
-        if (floatLists(i) != null) floatLists(i).count = 0
-        if (doubleLists(i) != null) doubleLists(i).count = 0
-        if (booleanLists(i) != null) booleanLists(i).count = 0
-        if (bytesLists(i) != null) bytesLists(i).count = 0
-        if (bufferLists(i) != null) bufferLists(i).count = 0
+        if (intLists(i) != null) intLists(i).reset()
+        if (longLists(i) != null) longLists(i).reset()
+        if (floatLists(i) != null) floatLists(i).reset()
+        if (doubleLists(i) != null) doubleLists(i).reset()
+        if (booleanLists(i) != null) booleanLists(i).reset()
+        if (bytesLists(i) != null) bytesLists(i).reset()
+        if (bufferLists(i) != null) bufferLists(i).reset()
         i += 1
       }
     }

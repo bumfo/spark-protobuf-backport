@@ -4,11 +4,8 @@ package fastproto;
  * Efficient growable long array for packed repeated field parsing.
  * Uses public fields for performance and direct access in generated code.
  */
-public class LongList {
+public class LongList extends FastList {
     public long[] array;
-    public int count;
-
-    private static final int DEFAULT_CAPACITY = 10;
 
     public LongList() {
         this.array = new long[DEFAULT_CAPACITY];
