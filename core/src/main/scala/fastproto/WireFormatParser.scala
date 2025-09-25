@@ -6,7 +6,6 @@ import fastproto.StreamWireParser._
 import org.apache.spark.sql.types.{ArrayType, StructType}
 
 import java.nio.ByteBuffer
-import scala.annotation.tailrec
 import scala.collection.JavaConverters._
 import scala.collection.mutable
 
@@ -114,7 +113,6 @@ class WireFormatParser(
 
     (mappingArray, maxFieldNum, typesArray)
   }
-
 
 
   private def buildNestedParsersArray(): Array[ParserRef] = {
@@ -622,7 +620,6 @@ object WireFormatParser {
 
     parsersArray
   }
-
 
 
   private def buildFieldMappingArrayForDescriptor(descriptor: Descriptor, schema: StructType): Array[FieldMapping] = {
