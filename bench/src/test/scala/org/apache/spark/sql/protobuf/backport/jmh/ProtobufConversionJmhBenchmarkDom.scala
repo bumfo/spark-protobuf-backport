@@ -3,7 +3,7 @@ package org.apache.spark.sql.protobuf.backport.jmh
 import benchmark.DomBenchmarkProtos.DomDocument
 import benchmark.DomTestDataGenerator
 import com.google.protobuf.{DescriptorProtos, Descriptors}
-import fastproto.{Parser, ProtoToRowGenerator, RecursiveSchemaConverters, StreamWireParser, WireFormatToRowGenerator}
+import fastproto.{Parser, ProtoToRowGenerator, RecursiveSchemaConverters, StreamWireParser, WireFormatParser, WireFormatToRowGenerator}
 import org.apache.spark.sql.types._
 import org.openjdk.jmh.annotations._
 import org.openjdk.jmh.infra.Blackhole
@@ -50,7 +50,7 @@ class ProtobufConversionJmhBenchmarkDom {
   var domTempDescFile: java.io.File = _
 
   // Parsers for DOM structure (using standard complexity)
-  // var domDirectParser: WireFormatParser = _
+  var domDirectParser: WireFormatParser = _
   var domGeneratedWireParser: StreamWireParser = _
   var domProtoToRowParser: Parser = _  // ProtoToRowGenerator produces parsers that implement Parser
   // var domDynamicParser: DynamicMessageParser = _
@@ -94,7 +94,7 @@ class ProtobufConversionJmhBenchmarkDom {
     domTempDescFile.deleteOnExit()
 
     // === Initialize DOM Parsers ===
-    // domDirectParser = new WireFormatParser(domDescriptor, domSparkSchema)
+    domDirectParser = new WireFormatParser(domDescriptor, domSparkSchema)
     domGeneratedWireParser = WireFormatToRowGenerator.generateParser(domDescriptor, domSparkSchema)
     domProtoToRowParser = ProtoToRowGenerator.generateParser(domDescriptor, classOf[DomDocument], domSparkSchema)
     // domDynamicParser = new DynamicMessageParser(domDescriptor, domSparkSchema)
@@ -168,10 +168,10 @@ class ProtobufConversionJmhBenchmarkDom {
     bh.consume(domProtoToRowParser.parse(deepDomBinary))
   }
 
-  // @Benchmark
-  // def domDeepDirectWireFormatParser(bh: Blackhole): Unit = {
-  //   bh.consume(domDirectParser.parse(deepDomBinary))
-  // }
+  @Benchmark
+  def domDeepDirectWireFormatParser(bh: Blackhole): Unit = {
+    bh.consume(domDirectParser.parse(deepDomBinary))
+  }
 
   // @Benchmark
   // def domDeepDynamicMessageParser(bh: Blackhole): Unit = {

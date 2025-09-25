@@ -6,6 +6,7 @@ import fastproto.StreamWireParser._
 import org.apache.spark.sql.types.{ArrayType, StructType}
 
 import scala.collection.JavaConverters._
+import scala.collection.mutable
 
 /**
  * A high-performance parser that reads protobuf binary data directly from wire format
@@ -24,7 +25,8 @@ import scala.collection.JavaConverters._
  */
 class WireFormatParser(
     descriptor: Descriptor,
-    override val schema: StructType)
+    override val schema: StructType,
+    visitedOpt: Option[mutable.HashMap[String, WireFormatParser.ParserRef]] = None)
   extends StreamWireParser(schema) {
 
   import WireFormatParser._
@@ -33,7 +35,7 @@ class WireFormatParser(
   private val (fieldMappingArray, maxFieldNumber) = buildFieldMappingArray()
 
   // Cache nested parsers for message fields - use array for O(1) lookup
-  private val nestedParsersArray: Array[WireFormatParser] = buildNestedParsersArray()
+  private val nestedParsersArray: Array[ParserRef] = buildNestedParsersArray(visitedOpt.getOrElse(new mutable.HashMap()))
 
 
   override protected def parseInto(input: CodedInputStream, writer: RowWriter): Unit = {
@@ -129,21 +131,32 @@ class WireFormatParser(
     }
   }
 
-  private def buildNestedParsersArray(): Array[WireFormatParser] = {
-    val parsersArray = new Array[WireFormatParser](maxFieldNumber + 1)
+
+  private def buildNestedParsersArray(visited: scala.collection.mutable.HashMap[String, ParserRef]): Array[ParserRef] = {
+    val parsersArray = new Array[ParserRef](maxFieldNumber + 1)
 
     var i = 0
     while (i < fieldMappingArray.length) {
       val mapping = fieldMappingArray(i)
       if (mapping != null && mapping.fieldDescriptor.getType == FieldDescriptor.Type.MESSAGE) {
         val nestedDescriptor = mapping.fieldDescriptor.getMessageType
-        val nestedSchema = mapping.sparkDataType match {
-          case struct: StructType => struct
-          case arrayType: ArrayType =>
-            arrayType.elementType.asInstanceOf[StructType]
-          case _ => throw new IllegalArgumentException(s"Expected StructType or ArrayType[StructType] for message field ${mapping.fieldDescriptor.getName}")
+        val key = nestedDescriptor.getFullName
+        if (visited.contains(key)) {
+          parsersArray(i) = visited(key)
+        } else {
+          val ref = ParserRef(null)
+          visited(key) = ref
+
+          val nestedSchema = mapping.sparkDataType match {
+            case struct: StructType => struct
+            case arrayType: ArrayType =>
+              arrayType.elementType.asInstanceOf[StructType]
+            case _ => throw new IllegalArgumentException(s"Expected StructType or ArrayType[StructType] for message field ${mapping.fieldDescriptor.getName}")
+          }
+
+          ref.parser = new WireFormatParser(nestedDescriptor, nestedSchema, Some(visited))
+          parsersArray(i) = ref
         }
-        parsersArray(i) = new WireFormatParser(nestedDescriptor, nestedSchema)
       }
       i += 1
     }
@@ -351,7 +364,7 @@ class WireFormatParser(
       mapping: FieldMapping,
       writer: RowWriter): Unit = {
     val fieldNumber = mapping.fieldDescriptor.getNumber
-    val parser = nestedParsersArray(fieldNumber)
+    val parser = nestedParsersArray(fieldNumber).parser
 
     val offset = writer.cursor
     parseNestedMessage(input, parser, writer.toUnsafeWriter)
@@ -387,7 +400,7 @@ class WireFormatParser(
           case list: BytesList if list.count > 0 =>
             mapping.fieldDescriptor.getType match {
               case FieldDescriptor.Type.MESSAGE =>
-                val parser = nestedParsersArray(fieldNumber).asInstanceOf[StreamWireParser]
+                val parser = nestedParsersArray(fieldNumber).parser
                 writeMessageArray(list.array, list.count, mapping.rowOrdinal, parser, writer)
               case FieldDescriptor.Type.STRING =>
                 writeStringArray(list.array, list.count, mapping.rowOrdinal, writer)
@@ -485,5 +498,7 @@ object WireFormatParser {
       rowOrdinal: Int,
       sparkDataType: org.apache.spark.sql.types.DataType,
       isRepeated: Boolean,
-      accumulator: Any)  // Direct list: IntList, LongList, FloatList, etc.
+      accumulator: Any) // Direct list: IntList, LongList, FloatList, etc.
+
+  case class ParserRef(var parser: WireFormatParser)
 }
