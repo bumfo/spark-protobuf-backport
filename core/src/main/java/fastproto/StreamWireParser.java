@@ -130,6 +130,16 @@ public abstract class StreamWireParser extends BufferSharingParser {
         return newArray;
     }
 
+    /**
+     * Resize ByteBuffer array when capacity is exceeded.
+     */
+    protected static ByteBuffer[] resizeByteBufferArray(ByteBuffer[] array, int currentCount, int minSize) {
+        int newSize = Math.max(array.length * 2, minSize);
+        ByteBuffer[] newArray = new ByteBuffer[newSize];
+        System.arraycopy(array, 0, newArray, 0, currentCount);
+        return newArray;
+    }
+
     // ========== String Array Methods ==========
 
     /**
@@ -186,6 +196,65 @@ public abstract class StreamWireParser extends BufferSharingParser {
 
         writer.writeVariableField(ordinal, offset);
     }
+
+    // ========== ByteBuffer Array Methods (Zero-Copy) ==========
+
+    /**
+     * Write a repeated string field from ByteBuffer array to the UnsafeRow.
+     * Uses zero-copy ByteBuffer views from CodedInputStream aliasing.
+     */
+    protected void writeStringArrayFromBuffers(ByteBuffer[] buffers, int size, int ordinal, RowWriter writer) {
+        assert size <= buffers.length;
+
+        int offset = writer.cursor();
+        UnsafeArrayWriter arrayWriter = new UnsafeArrayWriter(writer.toUnsafeWriter(), 8);
+        arrayWriter.initialize(size);
+
+        for (int i = 0; i < size; i++) {
+            // Write directly from ByteBuffer view without copying
+            ByteBuffer buffer = buffers[i];
+            if (buffer.hasArray()) {
+                // Direct array access for heap ByteBuffers
+                arrayWriter.write(i, buffer.array(), buffer.arrayOffset() + buffer.position(), buffer.remaining());
+            } else {
+                // Copy for direct ByteBuffers (less common case)
+                byte[] bytes = new byte[buffer.remaining()];
+                buffer.duplicate().get(bytes);
+                arrayWriter.write(i, bytes);
+            }
+        }
+
+        writer.writeVariableField(ordinal, offset);
+    }
+
+    /**
+     * Write a repeated bytes field from ByteBuffer array to the UnsafeRow.
+     * Uses zero-copy ByteBuffer views from CodedInputStream aliasing.
+     */
+    protected void writeBytesArrayFromBuffers(ByteBuffer[] buffers, int size, int ordinal, RowWriter writer) {
+        assert size <= buffers.length;
+
+        int offset = writer.cursor();
+        UnsafeArrayWriter arrayWriter = new UnsafeArrayWriter(writer.toUnsafeWriter(), 8);
+        arrayWriter.initialize(size);
+
+        for (int i = 0; i < size; i++) {
+            // Write directly from ByteBuffer view without copying
+            ByteBuffer buffer = buffers[i];
+            if (buffer.hasArray()) {
+                // Direct array access for heap ByteBuffers
+                arrayWriter.write(i, buffer.array(), buffer.arrayOffset() + buffer.position(), buffer.remaining());
+            } else {
+                // Copy for direct ByteBuffers (less common case)
+                byte[] bytes = new byte[buffer.remaining()];
+                buffer.duplicate().get(bytes);
+                arrayWriter.write(i, bytes);
+            }
+        }
+
+        writer.writeVariableField(ordinal, offset);
+    }
+
 
     // ========== Primitive Array Methods ==========
 
