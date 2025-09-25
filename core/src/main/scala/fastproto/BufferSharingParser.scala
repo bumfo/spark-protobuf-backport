@@ -18,7 +18,7 @@ abstract class BufferSharingParser(val schema: StructType) extends Parser {
     }
   }
 
-  private def acquireNestedWriter(parentWriter: UnsafeWriter): RowWriter = new NullDefaultRowWriter(parentWriter, schema.length)
+  def acquireNestedWriter(parentWriter: UnsafeWriter): RowWriter = new NullDefaultRowWriter(parentWriter, schema.length)
 
   def acquireWriter(parentWriter: RowWriter): RowWriter = acquireWriter(parentWriter.unsafeWriterOrNull)
 

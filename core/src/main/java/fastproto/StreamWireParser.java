@@ -1,7 +1,9 @@
 package fastproto;
 
 import com.google.protobuf.CodedInputStream;
+import com.google.protobuf.InvalidProtocolBufferException;
 import org.apache.spark.sql.catalyst.expressions.codegen.UnsafeArrayWriter;
+import org.apache.spark.sql.catalyst.expressions.codegen.UnsafeWriter;
 import org.apache.spark.sql.types.StructType;
 
 import java.io.IOException;
@@ -346,6 +348,27 @@ public abstract class StreamWireParser extends BufferSharingParser {
     //     parser.parseInto(input, nestedWriter);
     //     writer.writeVariableField(ordinal, offset);
     // }
+
+    protected void parseNestedMessage(CodedInputStream input, StreamWireParser parser, UnsafeWriter writer) throws IOException {
+        RowWriter nestedWriter = parser.acquireNestedWriter(writer);
+        nestedWriter.resetRowWriter();  // resetRowWriter automatically calls setAllNullBytes()
+
+        final int length = input.readRawVarint32();
+        int oldLimit = input.pushLimit(length);
+        try {
+            parser.parseInto(input, nestedWriter);
+            // input.checkLastTagWas(0); // TODO fix test with this
+            if (input.getBytesUntilLimit() != 0) {
+                throw new InvalidProtocolBufferException(
+                        "While parsing a protocol message, the input ended unexpectedly "
+                                + "in the middle of a field.  This could mean either that the "
+                                + "input has been truncated or that an embedded message "
+                                + "misreported its own length.");
+            }
+        } finally {
+            input.popLimit(oldLimit);
+        }
+    }
 
     // ========== Packed Field Parsing Methods ==========
 

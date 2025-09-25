@@ -340,13 +340,13 @@ class WireFormatParser(
       case SINT64 =>
         writer.write(mapping.rowOrdinal, input.readSInt64())
       case MESSAGE =>
-        parseNestedMessage(input, mapping, writer)
+        writeNestedMessage(input, mapping, writer)
       case GROUP =>
         throw new UnsupportedOperationException("GROUP type is deprecated and not supported")
     }
   }
 
-  private def parseNestedMessage(
+  private def writeNestedMessage(
       input: CodedInputStream,
       mapping: FieldMapping,
       writer: RowWriter): Unit = {
@@ -354,9 +354,7 @@ class WireFormatParser(
     val parser = nestedParsersArray(fieldNumber)
 
     val offset = writer.cursor
-    val nestedWriter = parser.acquireNestedWriter(writer)
-    nestedWriter.resetRowWriter()
-    input.readMessage(new ParserBridge(parser, nestedWriter), null)
+    parseNestedMessage(input, parser, writer.toUnsafeWriter)
     writer.writeVariableField(mapping.rowOrdinal, offset)
   }
 
@@ -373,19 +371,19 @@ class WireFormatParser(
             } else {
               writeIntArray(list.array, list.count, mapping.rowOrdinal, writer)
             }
-    
+
           case list: LongList if list.count > 0 =>
             writeLongArray(list.array, list.count, mapping.rowOrdinal, writer)
-    
+
           case list: FloatList if list.count > 0 =>
             writeFloatArray(list.array, list.count, mapping.rowOrdinal, writer)
-    
+
           case list: DoubleList if list.count > 0 =>
             writeDoubleArray(list.array, list.count, mapping.rowOrdinal, writer)
-    
+
           case list: BooleanList if list.count > 0 =>
             writeBooleanArray(list.array, list.count, mapping.rowOrdinal, writer)
-    
+
           case list: ByteArrayList if list.count > 0 =>
             mapping.fieldDescriptor.getType match {
               case FieldDescriptor.Type.MESSAGE =>
@@ -398,7 +396,7 @@ class WireFormatParser(
               case _ =>
                 throw new IllegalStateException(s"Unexpected field type ${mapping.fieldDescriptor.getType} for ByteArrayList")
             }
-    
+
           case _ => // Empty lists or null - skip
         }
       }
