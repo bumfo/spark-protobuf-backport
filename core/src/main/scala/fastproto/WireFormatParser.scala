@@ -116,29 +116,9 @@ class WireFormatParser(
 
 
   private def buildNestedParsersArray(): Array[ParserRef] = {
-    val parsersArray = new Array[ParserRef](maxFieldNumber + 1)
-
-    var i = 0
-    while (i < fieldMappingArray.length) {
-      val mapping = fieldMappingArray(i)
-      if (mapping != null && mapping.fieldDescriptor.getType == FieldDescriptor.Type.MESSAGE) {
-        val nestedDescriptor = mapping.fieldDescriptor.getMessageType
-
-        val nestedSchema = mapping.sparkDataType match {
-          case struct: StructType => struct
-          case arrayType: ArrayType =>
-            arrayType.elementType.asInstanceOf[StructType]
-          case _ => throw new IllegalArgumentException(s"Expected StructType or ArrayType[StructType] for message field ${mapping.fieldDescriptor.getName}")
-        }
-
-        // Each child uses smart mode (WireFormatParser.apply)
-        val childParser = WireFormatParser(nestedDescriptor, nestedSchema)
-        parsersArray(i) = ParserRef(childParser)
-      }
-      i += 1
-    }
-
-    parsersArray
+    // Delegate to buildOptimizedNestedParsers with fresh visited map for smart construction
+    val visited = mutable.HashMap[(String, Boolean), ParserRef]()
+    buildOptimizedNestedParsers(descriptor, schema, isRecursive = false, visited)
   }
 
 
