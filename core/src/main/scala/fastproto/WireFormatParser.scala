@@ -484,67 +484,34 @@ object WireFormatParser {
    * This ensures thread-safe recursive parsing by isolating state per call.
    */
   private class ParseState(maxFieldNumber: Int, fieldTypes: Array[FieldDescriptor.Type]) {
-    // Pre-allocated accumulator arrays by type for O(1) access
-    private val intLists = new Array[IntList](maxFieldNumber + 1)
-    private val longLists = new Array[LongList](maxFieldNumber + 1)
-    private val floatLists = new Array[FloatList](maxFieldNumber + 1)
-    private val doubleLists = new Array[DoubleList](maxFieldNumber + 1)
-    private val booleanLists = new Array[BooleanList](maxFieldNumber + 1)
-    private val bytesLists = new Array[BytesList](maxFieldNumber + 1)
-    private val bufferLists = new Array[GenericList[ByteBuffer]](maxFieldNumber + 1)
+    // Single array of FastList for all field types - cast to specific subtype when needed
+    private val lists = new Array[FastList](maxFieldNumber + 1)
 
     def getOrCreateAccumulator(fieldNumber: Int, fieldType: FieldDescriptor.Type): Any = {
       import FieldDescriptor.Type._
-      fieldType match {
-        case INT32 | SINT32 | UINT32 | ENUM | FIXED32 | SFIXED32 =>
-          if (intLists(fieldNumber) == null) intLists(fieldNumber) = new IntList()
-          intLists(fieldNumber)
-        case INT64 | SINT64 | UINT64 | FIXED64 | SFIXED64 =>
-          if (longLists(fieldNumber) == null) longLists(fieldNumber) = new LongList()
-          longLists(fieldNumber)
-        case FLOAT =>
-          if (floatLists(fieldNumber) == null) floatLists(fieldNumber) = new FloatList()
-          floatLists(fieldNumber)
-        case DOUBLE =>
-          if (doubleLists(fieldNumber) == null) doubleLists(fieldNumber) = new DoubleList()
-          doubleLists(fieldNumber)
-        case BOOL =>
-          if (booleanLists(fieldNumber) == null) booleanLists(fieldNumber) = new BooleanList()
-          booleanLists(fieldNumber)
-        case STRING | BYTES =>
-          if (bytesLists(fieldNumber) == null) bytesLists(fieldNumber) = new BytesList()
-          bytesLists(fieldNumber)
-        case MESSAGE =>
-          if (bufferLists(fieldNumber) == null) bufferLists(fieldNumber) = new GenericList(classOf[java.nio.ByteBuffer])
-          bufferLists(fieldNumber)
-        case GROUP => throw new UnsupportedOperationException("GROUP type is deprecated and not supported")
+      if (lists(fieldNumber) == null) {
+        lists(fieldNumber) = fieldType match {
+          case INT32 | SINT32 | UINT32 | ENUM | FIXED32 | SFIXED32 => new IntList()
+          case INT64 | SINT64 | UINT64 | FIXED64 | SFIXED64 => new LongList()
+          case FLOAT => new FloatList()
+          case DOUBLE => new DoubleList()
+          case BOOL => new BooleanList()
+          case STRING | BYTES => new BytesList()
+          case MESSAGE => new GenericList(classOf[java.nio.ByteBuffer])
+          case GROUP => throw new UnsupportedOperationException("GROUP type is deprecated and not supported")
+        }
       }
+      lists(fieldNumber)
     }
 
     def getAccumulator(fieldNumber: Int, fieldType: FieldDescriptor.Type): Any = {
-      import FieldDescriptor.Type._
-      fieldType match {
-        case INT32 | SINT32 | UINT32 | ENUM | FIXED32 | SFIXED32 => intLists(fieldNumber)
-        case INT64 | SINT64 | UINT64 | FIXED64 | SFIXED64 => longLists(fieldNumber)
-        case FLOAT => floatLists(fieldNumber)
-        case DOUBLE => doubleLists(fieldNumber)
-        case BOOL => booleanLists(fieldNumber)
-        case STRING | BYTES => bytesLists(fieldNumber)
-        case MESSAGE => bufferLists(fieldNumber)
-        case GROUP => throw new UnsupportedOperationException("GROUP type is deprecated and not supported")
-      }
+      lists(fieldNumber)
     }
 
     def reset(): Unit = {
       var i = 0
       while (i <= maxFieldNumber) {
-        if (intLists(i) != null) intLists(i).reset()
-        if (longLists(i) != null) longLists(i).reset()
-        if (floatLists(i) != null) floatLists(i).reset()
-        if (doubleLists(i) != null) doubleLists(i).reset()
-        if (booleanLists(i) != null) booleanLists(i).reset()
-        if (bytesLists(i) != null) bytesLists(i).reset()
-        if (bufferLists(i) != null) bufferLists(i).reset()
+        if (lists(i) != null) lists(i).reset()
         i += 1
       }
     }
