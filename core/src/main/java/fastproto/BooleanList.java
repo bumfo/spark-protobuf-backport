@@ -4,11 +4,8 @@ package fastproto;
  * Efficient growable boolean array for packed repeated field parsing.
  * Uses public fields for performance and direct access in generated code.
  */
-public class BooleanList {
+public class BooleanList extends FastList {
     public boolean[] array;
-    public int count;
-
-    private static final int DEFAULT_CAPACITY = 10;
 
     public BooleanList() {
         this.array = new boolean[DEFAULT_CAPACITY];

@@ -4,11 +4,8 @@ package fastproto;
  * Efficient growable float array for packed repeated field parsing.
  * Uses public fields for performance and direct access in generated code.
  */
-public class FloatList {
+public class FloatList extends FastList {
     public float[] array;
-    public int count;
-
-    private static final int DEFAULT_CAPACITY = 10;
 
     public FloatList() {
         this.array = new float[DEFAULT_CAPACITY];
