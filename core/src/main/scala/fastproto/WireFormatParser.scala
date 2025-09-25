@@ -553,21 +553,17 @@ object WireFormatParser {
 
   // Smart construction that detects recursion and optimizes entire tree
   def apply(descriptor: Descriptor, schema: StructType): WireFormatParser = {
-    // Phase 1: Find all recursive types
-    val recursiveTypes = findRecursiveTypes(descriptor)
-
-    // Phase 2: Build parser with recursion information using ParserRef for cycles
-    val visited = mutable.HashMap[String, ParserRef]()
-    buildOptimizedParser(descriptor, schema, recursiveTypes, visited).parser
+    val visited = mutable.HashMap[(String, Boolean), ParserRef]()
+    buildOptimizedParser(descriptor, schema, isRecursive = false, visited).parser
   }
 
   private def buildOptimizedParser(
       descriptor: Descriptor,
       schema: StructType,
-      recursiveTypes: Set[String],
-      visited: mutable.HashMap[String, ParserRef]): ParserRef = {
+      isRecursive: Boolean,
+      visited: mutable.HashMap[(String, Boolean), ParserRef]): ParserRef = {
 
-    val key = descriptor.getFullName
+    val key = (descriptor.getFullName, isRecursive)
 
     // Return existing ParserRef if already built (handles cycles)
     visited.get(key) match {
@@ -575,15 +571,12 @@ object WireFormatParser {
       case None =>
     }
 
-    // Determine if this type is recursive
-    val isRecursive = recursiveTypes.contains(key)
-
     // Mark as being built with placeholder ParserRef
     val ref = ParserRef(null)
     visited(key) = ref
 
     // Build nested parsers array first
-    val nestedParsers = buildOptimizedNestedParsers(descriptor, schema, recursiveTypes, visited)
+    val nestedParsers = buildOptimizedNestedParsers(descriptor, schema, isRecursive, visited)
 
     // Create parser with pre-built nested parsers array
     val parser = new WireFormatParser(descriptor, schema, isRecursive, Some(nestedParsers))
@@ -597,8 +590,8 @@ object WireFormatParser {
   private def buildOptimizedNestedParsers(
       descriptor: Descriptor,
       schema: StructType,
-      recursiveTypes: Set[String],
-      visited: mutable.HashMap[String, ParserRef]): Array[ParserRef] = {
+      isRecursive: Boolean,
+      visited: mutable.HashMap[(String, Boolean), ParserRef]): Array[ParserRef] = {
 
     val fieldMappingArray = buildFieldMappingArrayForDescriptor(descriptor, schema)
     val maxFieldNumber = if (fieldMappingArray.nonEmpty) fieldMappingArray.indices.max else 0
@@ -618,8 +611,15 @@ object WireFormatParser {
           case _ => throw new IllegalArgumentException(s"Expected StructType or ArrayType[StructType] for message field ${mapping.fieldDescriptor.getName}")
         }
 
-        // Build child parser (buildOptimizedParser handles existing ParserRef in visited map)
-        parsersArray(i) = buildOptimizedParser(nestedDescriptor, nestedSchema, recursiveTypes, visited)
+        // Check if this would create a cycle (same descriptor being built non-recursively)
+        val nonRecursiveKey = (nestedKey, false)
+        if (!isRecursive && visited.contains(nonRecursiveKey)) {
+          // Cycle detected! Create recursive version
+          parsersArray(i) = buildOptimizedParser(nestedDescriptor, nestedSchema, isRecursive = true, visited)
+        } else {
+          // Build child parser with same recursion flag
+          parsersArray(i) = buildOptimizedParser(nestedDescriptor, nestedSchema, isRecursive, visited)
+        }
       }
       i += 1
     }
@@ -627,35 +627,6 @@ object WireFormatParser {
     parsersArray
   }
 
-  private def findRecursiveTypes(descriptor: Descriptor): Set[String] = {
-    val visited = mutable.Set[String]()
-    val currentPath = mutable.Set[String]()
-    val recursive = mutable.Set[String]()
-
-    def traverse(desc: Descriptor): Unit = {
-      val key = desc.getFullName
-      if (currentPath.contains(key)) {
-        // Found cycle - mark entire path as recursive
-        recursive ++= currentPath
-        return
-      }
-      if (visited.contains(key)) return
-
-      visited += key
-      currentPath += key
-
-      desc.getFields.asScala.foreach { field =>
-        if (field.getType == FieldDescriptor.Type.MESSAGE) {
-          traverse(field.getMessageType)
-        }
-      }
-
-      currentPath -= key
-    }
-
-    traverse(descriptor)
-    recursive.toSet
-  }
 
 
   private def buildFieldMappingArrayForDescriptor(descriptor: Descriptor, schema: StructType): Array[FieldMapping] = {
