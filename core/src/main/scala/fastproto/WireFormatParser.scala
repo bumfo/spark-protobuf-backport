@@ -27,7 +27,8 @@ import scala.collection.mutable
 class WireFormatParser(
     descriptor: Descriptor,
     override val schema: StructType,
-    visitedOpt: Option[mutable.HashMap[String, WireFormatParser.ParserRef]] = None)
+    isRecursive: Boolean = false,
+    nestedParsersArrayOpt: Option[Array[WireFormatParser]] = None)
   extends StreamWireParser(schema) {
 
   import WireFormatParser._
@@ -36,11 +37,21 @@ class WireFormatParser(
   private val (fieldMappingArray, maxFieldNumber, fieldTypesArray) = buildFieldMappingArray()
 
   // Cache nested parsers for message fields - use array for O(1) lookup
-  private val nestedParsersArray: Array[ParserRef] = buildNestedParsersArray(visitedOpt.getOrElse(new mutable.HashMap()))
+  private val nestedParsersArray: Array[WireFormatParser] =
+    nestedParsersArrayOpt.getOrElse(buildNestedParsersArray())
+
+  // Instance-level ParseState - reuse to avoid allocation on each parse (only for non-recursive types)
+  private val instanceParseState: ParseState =
+    if (!isRecursive) new ParseState(maxFieldNumber, fieldTypesArray) else null
 
 
   override protected def parseInto(input: CodedInputStream, writer: RowWriter): Unit = {
-    val state = new ParseState(maxFieldNumber, fieldTypesArray)
+    val state = if (instanceParseState != null) {
+      instanceParseState.reset()
+      instanceParseState
+    } else {
+      new ParseState(maxFieldNumber, fieldTypesArray)
+    }
     parseIntoWithState(input, writer, state)
   }
 
@@ -105,31 +116,24 @@ class WireFormatParser(
 
 
 
-  private def buildNestedParsersArray(visited: scala.collection.mutable.HashMap[String, ParserRef]): Array[ParserRef] = {
-    val parsersArray = new Array[ParserRef](maxFieldNumber + 1)
+  private def buildNestedParsersArray(): Array[WireFormatParser] = {
+    val parsersArray = new Array[WireFormatParser](maxFieldNumber + 1)
 
     var i = 0
     while (i < fieldMappingArray.length) {
       val mapping = fieldMappingArray(i)
       if (mapping != null && mapping.fieldDescriptor.getType == FieldDescriptor.Type.MESSAGE) {
         val nestedDescriptor = mapping.fieldDescriptor.getMessageType
-        val key = nestedDescriptor.getFullName
-        if (visited.contains(key)) {
-          parsersArray(i) = visited(key)
-        } else {
-          val ref = ParserRef(null)
-          visited(key) = ref
 
-          val nestedSchema = mapping.sparkDataType match {
-            case struct: StructType => struct
-            case arrayType: ArrayType =>
-              arrayType.elementType.asInstanceOf[StructType]
-            case _ => throw new IllegalArgumentException(s"Expected StructType or ArrayType[StructType] for message field ${mapping.fieldDescriptor.getName}")
-          }
-
-          ref.parser = new WireFormatParser(nestedDescriptor, nestedSchema, Some(visited))
-          parsersArray(i) = ref
+        val nestedSchema = mapping.sparkDataType match {
+          case struct: StructType => struct
+          case arrayType: ArrayType =>
+            arrayType.elementType.asInstanceOf[StructType]
+          case _ => throw new IllegalArgumentException(s"Expected StructType or ArrayType[StructType] for message field ${mapping.fieldDescriptor.getName}")
         }
+
+        // Each child uses smart mode (WireFormatParser.apply)
+        parsersArray(i) = WireFormatParser(nestedDescriptor, nestedSchema)
       }
       i += 1
     }
@@ -329,7 +333,7 @@ class WireFormatParser(
       mapping: FieldMapping,
       writer: RowWriter): Unit = {
     val fieldNumber = mapping.fieldDescriptor.getNumber
-    val parser = nestedParsersArray(fieldNumber).parser
+    val parser = nestedParsersArray(fieldNumber)
 
     val offset = writer.cursor
     parseNestedMessage(input, parser, writer.toUnsafeWriter)
@@ -377,7 +381,7 @@ class WireFormatParser(
             case list: GenericList[_] if list.count > 0 =>
               mapping.fieldDescriptor.getType match {
                 case FieldDescriptor.Type.MESSAGE =>
-                  val parser = nestedParsersArray(fieldNumber).parser
+                  val parser = nestedParsersArray(fieldNumber)
                   val bufferList = list.asInstanceOf[GenericList[ByteBuffer]]
                   writeMessageArrayFromBuffers(bufferList.array, list.count, mapping.rowOrdinal, parser, writer)
                 case _ =>
@@ -544,6 +548,138 @@ object WireFormatParser {
         i += 1
       }
     }
+  }
+
+  // Smart construction that detects recursion and optimizes entire tree
+  def apply(descriptor: Descriptor, schema: StructType): WireFormatParser = {
+    // Phase 1: Find all recursive types
+    val recursiveTypes = findRecursiveTypes(descriptor)
+
+    // Phase 2: Build optimized parser tree
+    val visited = mutable.HashMap[String, WireFormatParser]()
+    buildOptimizedTree(descriptor, schema, recursiveTypes, visited)
+  }
+
+  private def findRecursiveTypes(descriptor: Descriptor): Set[String] = {
+    val visited = mutable.Set[String]()
+    val currentPath = mutable.Set[String]()
+    val recursive = mutable.Set[String]()
+
+    def traverse(desc: Descriptor): Unit = {
+      val key = desc.getFullName
+      if (currentPath.contains(key)) {
+        // Found cycle - mark entire path as recursive
+        recursive ++= currentPath
+        return
+      }
+      if (visited.contains(key)) return
+
+      visited += key
+      currentPath += key
+
+      desc.getFields.asScala.foreach { field =>
+        if (field.getType == FieldDescriptor.Type.MESSAGE) {
+          traverse(field.getMessageType)
+        }
+      }
+
+      currentPath -= key
+    }
+
+    traverse(descriptor)
+    recursive.toSet
+  }
+
+  private def buildOptimizedTree(
+      descriptor: Descriptor,
+      schema: StructType,
+      recursiveTypes: Set[String],
+      visited: mutable.HashMap[String, WireFormatParser]): WireFormatParser = {
+
+    val key = descriptor.getFullName
+
+    // Handle cycles - return existing parser if found
+    visited.get(key).foreach(return _)
+
+    // Determine if this type is recursive
+    val isRecursive = recursiveTypes.contains(key)
+
+    // Create placeholder to handle cycles
+    val parser = new WireFormatParser(descriptor, schema, isRecursive, Some(new Array[WireFormatParser](0)))
+    visited(key) = parser
+
+    // Build nested parsers array
+    val nestedParsers = buildNestedParsers(descriptor, schema, recursiveTypes, visited)
+
+    // Replace the parser with one that has the correct nested parsers
+    val finalParser = new WireFormatParser(descriptor, schema, isRecursive, Some(nestedParsers))
+    visited(key) = finalParser
+
+    finalParser
+  }
+
+  private def buildNestedParsers(
+      descriptor: Descriptor,
+      schema: StructType,
+      recursiveTypes: Set[String],
+      visited: mutable.HashMap[String, WireFormatParser]): Array[WireFormatParser] = {
+
+    val fieldMappingArray = buildFieldMappingArrayForDescriptor(descriptor, schema)
+    val maxFieldNumber = fieldMappingArray.indices.lastOption.getOrElse(0)
+    val parsersArray = new Array[WireFormatParser](maxFieldNumber + 1)
+
+    var i = 0
+    while (i < fieldMappingArray.length) {
+      val mapping = fieldMappingArray(i)
+      if (mapping != null && mapping.fieldDescriptor.getType == FieldDescriptor.Type.MESSAGE) {
+        val nestedDescriptor = mapping.fieldDescriptor.getMessageType
+
+        val nestedSchema = mapping.sparkDataType match {
+          case struct: StructType => struct
+          case arrayType: ArrayType =>
+            arrayType.elementType.asInstanceOf[StructType]
+          case _ => throw new IllegalArgumentException(s"Expected StructType or ArrayType[StructType] for message field ${mapping.fieldDescriptor.getName}")
+        }
+
+        // Recursively build with optimization
+        parsersArray(i) = buildOptimizedTree(nestedDescriptor, nestedSchema, recursiveTypes, visited)
+      }
+      i += 1
+    }
+
+    parsersArray
+  }
+
+  private def buildFieldMappingArrayForDescriptor(descriptor: Descriptor, schema: StructType): Array[FieldMapping] = {
+    val tempMapping = scala.collection.mutable.Map[Int, FieldMapping]()
+    var maxFieldNum = 0
+
+    descriptor.getFields.asScala.foreach { field =>
+      val fieldNum = field.getNumber
+      maxFieldNum = Math.max(maxFieldNum, fieldNum)
+
+      // Find corresponding field in Spark schema by name
+      schema.fields.zipWithIndex.find(_._1.name == field.getName) match {
+        case Some((sparkField, ordinal)) =>
+          tempMapping(fieldNum) = FieldMapping(
+            fieldDescriptor = field,
+            rowOrdinal = ordinal,
+            sparkDataType = sparkField.dataType,
+            isRepeated = field.isRepeated,
+            accumulatorType = field.getType
+          )
+        case None =>
+        // Field exists in protobuf but not in Spark schema - skip it
+      }
+    }
+
+    // Create array and populate it
+    val mappingArray = new Array[FieldMapping](maxFieldNum + 1)
+    tempMapping.foreach { case (fieldNum, mapping) =>
+      mappingArray(fieldNum) = mapping
+    }
+
+    mappingArray
   }
 
   case class ParserRef(var parser: WireFormatParser)
