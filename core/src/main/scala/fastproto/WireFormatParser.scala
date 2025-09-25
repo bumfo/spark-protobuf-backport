@@ -613,11 +613,11 @@ object WireFormatParser {
 
         // Check if this would create a cycle (same descriptor being built non-recursively)
         val nonRecursiveKey = (nestedKey, false)
-        if (!isRecursive && visited.contains(nonRecursiveKey)) {
-          // Cycle detected! Create recursive version
+        if (!isRecursive && visited.get(nonRecursiveKey).exists(_.parser == null)) {
+          // Cycle detected! The ParserRef exists but parser is null (currently being built)
           parsersArray(i) = buildOptimizedParser(nestedDescriptor, nestedSchema, isRecursive = true, visited)
         } else {
-          // Build child parser with same recursion flag
+          // Build child parser with same recursion flag (will reuse if already complete)
           parsersArray(i) = buildOptimizedParser(nestedDescriptor, nestedSchema, isRecursive, visited)
         }
       }
