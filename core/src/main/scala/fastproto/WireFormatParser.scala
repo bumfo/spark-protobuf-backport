@@ -350,22 +350,14 @@ class WireFormatParser(
       input: CodedInputStream,
       mapping: FieldMapping,
       writer: RowWriter): Unit = {
-    val messageBytes = input.readByteArray()
     val fieldNumber = mapping.fieldDescriptor.getNumber
     val parser = nestedParsersArray(fieldNumber)
 
-    if (parser != null) {
-      val offset = writer.cursor
-
-      // Write directly to parent writer like repeated messages - unified approach
-      val nestedWriter = parser.acquireNestedWriter(writer)
-      nestedWriter.resetRowWriter()  // resetRowWriter automatically calls setAllNullBytes()
-      parser.parseInto(messageBytes, nestedWriter)
-
-      writer.writeVariableField(mapping.rowOrdinal, offset)
-    } else {
-      throw new IllegalStateException(s"No nested parser found for field ${mapping.fieldDescriptor.getName}")
-    }
+    val offset = writer.cursor
+    val nestedWriter = parser.acquireNestedWriter(writer)
+    nestedWriter.resetRowWriter()
+    input.readMessage(new ParserBridge(parser, nestedWriter), null)
+    writer.writeVariableField(mapping.rowOrdinal, offset)
   }
 
   private def writeAccumulatedRepeatedFields(writer: RowWriter): Unit = {
