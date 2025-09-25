@@ -178,16 +178,19 @@ COURSIER_CACHE=~/Library/Caches/Coursier/v1/https/repo1.maven.org/maven2
 # Protobuf Java 3.21.7 sources
 PROTOBUF_JAR=$COURSIER_CACHE/com/google/protobuf/protobuf-java/3.21.7/protobuf-java-3.21.7-sources.jar
 
-# Spark SQL 3.2.1 sources
-SPARK_JAR=$COURSIER_CACHE/org/apache/spark/spark-sql_2.12/3.2.1/spark-sql_2.12-3.2.1-sources.jar
+# Spark 3.2.1 sources
+SPARK_CATALYST_JAR=$COURSIER_CACHE/org/apache/spark/spark-catalyst_2.12/3.2.1/spark-catalyst_2.12-3.2.1-sources.jar
+SPARK_SQL_JAR=$COURSIER_CACHE/org/apache/spark/spark-sql_2.12/3.2.1/spark-sql_2.12-3.2.1-sources.jar
+SPARK_CORE_JAR=$COURSIER_CACHE/org/apache/spark/spark-core_2.12/3.2.1/spark-core_2.12-3.2.1-sources.jar
 
 # Search for files (use rg if available, otherwise grep)
 jar tf $PROTOBUF_JAR | rg CodedInputStream
-jar tf $SPARK_JAR | rg FileScan.scala
+jar tf $SPARK_CATALYST_JAR | rg UnsafeWriter
+jar tf $SPARK_SQL_JAR | rg FileScan.scala
 
-# Read source file (first 200 lines) - inline jar path for bash commands
+# Read source files - inline jar paths for bash commands
 unzip -p $PROTOBUF_JAR com/google/protobuf/CodedInputStream.java | sed -n '1,200p'
-unzip -p $SPARK_JAR org/apache/spark/sql/execution/datasources/v2/FileScan.scala | sed -n '1,200p'
+unzip -p $SPARK_CATALYST_JAR org/apache/spark/sql/catalyst/expressions/codegen/UnsafeWriter.java | sed -n '113,120p'
 ```
 
 **Note**: When using bash commands, inline the jar path variables for direct execution.
