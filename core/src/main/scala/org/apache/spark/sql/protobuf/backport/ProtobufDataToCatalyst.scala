@@ -167,7 +167,7 @@ private[backport] case class ProtobufDataToCatalyst(
       else ParserKind.Dynamic
 
     val schema: StructType = parserKind match {
-      case ParserKind.Dynamic =>
+      case ParserKind.WireFormat =>
         RecursiveSchemaConverters.toSqlTypeWithTrueRecursion(desc, enumAsInt = true)
       case _ =>
         SchemaConverters.toSqlType(desc, protobufOptions).dataType
