@@ -491,11 +491,19 @@ object WireFormatParser {
     }
   }
 
-  // Smart construction that detects recursion and optimizes entire tree
-  def apply(descriptor: Descriptor, schema: StructType): WireFormatParser = {
-    val visited = mutable.HashMap[(String, Boolean), ParserRef]()
-    buildOptimizedParser(descriptor, schema, isRecursive = false, visited).parser
-  }
+  private val threadVisited = ThreadLocal.withInitial(() => mutable.HashMap[(String, Boolean), ParserRef]())
+
+  /**
+   * Smart construction that detects recursion and optimizes entire parser tree.
+   * Uses ThreadLocal caching to reuse visited parser references within the same thread,
+   * enabling efficient cycle detection and parser reuse for recursive message structures.
+   *
+   * @param descriptor the protobuf message descriptor
+   * @param schema the corresponding Spark SQL schema
+   * @return optimized WireFormatParser with recursion detection
+   */
+  def apply(descriptor: Descriptor, schema: StructType): WireFormatParser =
+    buildOptimizedParser(descriptor, schema, isRecursive = false, threadVisited.get()).parser
 
   private def buildOptimizedParser(
       descriptor: Descriptor,
