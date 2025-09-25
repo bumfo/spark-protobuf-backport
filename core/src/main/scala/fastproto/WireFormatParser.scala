@@ -122,8 +122,8 @@ class WireFormatParser(
       // Boolean types use BooleanList
       case BOOL => new BooleanList()
 
-      // String/Bytes/Message types use ByteArrayList
-      case STRING | BYTES | MESSAGE => new ByteArrayList()
+      // String/Bytes/Message types use BytesList
+      case STRING | BYTES | MESSAGE => new BytesList()
 
       case GROUP => throw new UnsupportedOperationException("GROUP type is deprecated and not supported")
     }
@@ -162,7 +162,7 @@ class WireFormatParser(
           case list: FloatList => list.count = 0
           case list: DoubleList => list.count = 0
           case list: BooleanList => list.count = 0
-          case list: ByteArrayList => list.count = 0
+          case list: BytesList => list.count = 0
         }
       }
       i += 1
@@ -299,7 +299,7 @@ class WireFormatParser(
 
       // String/Bytes/Message types
       case STRING | BYTES | MESSAGE =>
-        val list = mapping.accumulator.asInstanceOf[ByteArrayList]
+        val list = mapping.accumulator.asInstanceOf[BytesList]
         list.add(input.readByteArray())
 
       case GROUP =>
@@ -384,7 +384,7 @@ class WireFormatParser(
           case list: BooleanList if list.count > 0 =>
             writeBooleanArray(list.array, list.count, mapping.rowOrdinal, writer)
 
-          case list: ByteArrayList if list.count > 0 =>
+          case list: BytesList if list.count > 0 =>
             mapping.fieldDescriptor.getType match {
               case FieldDescriptor.Type.MESSAGE =>
                 val parser = nestedParsersArray(fieldNumber).asInstanceOf[StreamWireParser]
@@ -394,7 +394,7 @@ class WireFormatParser(
               case FieldDescriptor.Type.BYTES =>
                 writeBytesArray(list.array, list.count, mapping.rowOrdinal, writer)
               case _ =>
-                throw new IllegalStateException(s"Unexpected field type ${mapping.fieldDescriptor.getType} for ByteArrayList")
+                throw new IllegalStateException(s"Unexpected field type ${mapping.fieldDescriptor.getType} for BytesList")
             }
 
           case _ => // Empty lists or null - skip
