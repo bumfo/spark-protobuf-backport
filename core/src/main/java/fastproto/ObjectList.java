@@ -9,13 +9,21 @@ public abstract class ObjectList<T> {
     public T[] array;
     public int count;
 
-    private static final int DEFAULT_CAPACITY = 10;
+    protected static final int DEFAULT_CAPACITY = 10;
 
     protected abstract T[] newArray(int len);
 
     public ObjectList() {
         this.array = newArray(DEFAULT_CAPACITY);
         this.count = 0;
+    }
+
+    protected ObjectList(boolean initialize) {
+        if (initialize) {
+            this.array = newArray(DEFAULT_CAPACITY);
+            this.count = 0;
+        }
+        // Otherwise, subclass will initialize manually
     }
 
     /**
