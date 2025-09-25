@@ -611,15 +611,11 @@ object WireFormatParser {
           case _ => throw new IllegalArgumentException(s"Expected StructType or ArrayType[StructType] for message field ${mapping.fieldDescriptor.getName}")
         }
 
-        // Check if this would create a cycle (same descriptor being built non-recursively)
-        val nonRecursiveKey = (nestedKey, false)
-        if (!isRecursive && visited.get(nonRecursiveKey).exists(_.parser == null)) {
-          // Cycle detected! The ParserRef exists but parser is null (currently being built)
-          parsersArray(i) = buildOptimizedParser(nestedDescriptor, nestedSchema, isRecursive = true, visited)
-        } else {
-          // Build child parser with same recursion flag (will reuse if already complete)
-          parsersArray(i) = buildOptimizedParser(nestedDescriptor, nestedSchema, isRecursive, visited)
-        }
+        // Check if we need to switch to recursive mode (only when not already recursive)
+        val shouldBeRecursive = isRecursive ||
+          visited.get((nestedKey, false)).exists(_.parser == null)
+
+        parsersArray(i) = buildOptimizedParser(nestedDescriptor, nestedSchema, shouldBeRecursive, visited)
       }
       i += 1
     }
