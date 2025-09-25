@@ -3,7 +3,7 @@ package org.apache.spark.sql.protobuf.backport.jmh
 import benchmark.DomBenchmarkProtos.DomDocument
 import benchmark.DomTestDataGenerator
 import com.google.protobuf.{DescriptorProtos, Descriptors}
-import fastproto.{Parser, ProtoToRowGenerator, RecursiveSchemaConverters, StreamWireParser, WireFormatParser, WireFormatToRowGenerator}
+import fastproto._
 import org.apache.spark.sql.types._
 import org.openjdk.jmh.annotations._
 import org.openjdk.jmh.infra.Blackhole
@@ -39,9 +39,9 @@ import java.util.concurrent.TimeUnit
 class ProtobufConversionJmhBenchmarkDom {
 
   // Test data with different complexity levels
-  var shallowDomBinary: Array[Byte] = _     // depth=3, breadth=2
-  var standardDomBinary: Array[Byte] = _    // depth=6, breadth=3
-  var deepDomBinary: Array[Byte] = _        // depth=8, breadth=4
+  var shallowDomBinary: Array[Byte] = _ // depth=3, breadth=2
+  var standardDomBinary: Array[Byte] = _ // depth=6, breadth=3
+  var deepDomBinary: Array[Byte] = _ // depth=8, breadth=4
 
   // Descriptors and schemas
   var domDescriptor: Descriptors.Descriptor = _
@@ -52,7 +52,7 @@ class ProtobufConversionJmhBenchmarkDom {
   // Parsers for DOM structure (using standard complexity)
   var domDirectParser: WireFormatParser = _
   var domGeneratedWireParser: StreamWireParser = _
-  var domProtoToRowParser: Parser = _  // ProtoToRowGenerator produces parsers that implement Parser
+  var domProtoToRowParser: Parser = _ // ProtoToRowGenerator produces parsers that implement Parser
   // var domDynamicParser: DynamicMessageParser = _
 
   @Setup
@@ -163,7 +163,7 @@ class ProtobufConversionJmhBenchmarkDom {
     bh.consume(domGeneratedWireParser.parse(deepDomBinary))
   }
 
-  @Benchmark
+  // @Benchmark
   def domDeepProtoToRowParser(bh: Blackhole): Unit = {
     bh.consume(domProtoToRowParser.parse(deepDomBinary))
   }
@@ -171,6 +171,11 @@ class ProtobufConversionJmhBenchmarkDom {
   @Benchmark
   def domDeepDirectWireFormatParser(bh: Blackhole): Unit = {
     bh.consume(domDirectParser.parse(deepDomBinary))
+  }
+
+  @Benchmark
+  def domDeepProtoParsing(bh: Blackhole): Unit = {
+    bh.consume(DomDocument.parseFrom(deepDomBinary))
   }
 
   // @Benchmark
