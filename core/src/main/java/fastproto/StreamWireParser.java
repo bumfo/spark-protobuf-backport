@@ -595,19 +595,4 @@ public abstract class StreamWireParser extends BufferSharingParser {
 
         input.popLimit(oldLimit);
     }
-
-    public static final class ParserBridge extends AbstractParserBridge {
-        private final StreamWireParser parser;
-        private final RowWriter writer;
-
-        public ParserBridge(StreamWireParser parser, RowWriter writer) {
-            this.parser = parser;
-            this.writer = writer;
-        }
-
-        @Override
-        public void parse(CodedInputStream input) {
-            parser.parseInto(input, writer);
-        }
-    }
 }
