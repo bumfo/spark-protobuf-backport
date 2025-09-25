@@ -5,6 +5,7 @@ import com.google.protobuf.{CodedInputStream, WireFormat}
 import fastproto.StreamWireParser._
 import org.apache.spark.sql.types.{ArrayType, StructType}
 
+import java.nio.ByteBuffer
 import scala.collection.JavaConverters._
 import scala.collection.mutable
 
@@ -124,8 +125,9 @@ class WireFormatParser(
       // Boolean types use BooleanList
       case BOOL => new BooleanList()
 
-      // String/Bytes/Message types use BytesList
-      case STRING | BYTES | MESSAGE => new BytesList()
+      // String/Bytes types use BytesList, Message types use GenericList[ByteBuffer]
+      case STRING | BYTES => new BytesList()
+      case MESSAGE => new GenericList[ByteBuffer]()
 
       case GROUP => throw new UnsupportedOperationException("GROUP type is deprecated and not supported")
     }
@@ -176,6 +178,7 @@ class WireFormatParser(
           case list: DoubleList => list.count = 0
           case list: BooleanList => list.count = 0
           case list: BytesList => list.count = 0
+          case list: GenericList[_] => list.count = 0
         }
       }
       i += 1
@@ -310,10 +313,15 @@ class WireFormatParser(
           list.add(input.readBool())
         }
 
-      // String/Bytes/Message types
-      case STRING | BYTES | MESSAGE =>
+      // String/Bytes types
+      case STRING | BYTES =>
         val list = mapping.accumulator.asInstanceOf[BytesList]
         list.add(input.readByteArray())
+
+      // Message types use ByteBuffer to avoid copying
+      case MESSAGE =>
+        val list = mapping.accumulator.asInstanceOf[GenericList[ByteBuffer]]
+        list.add(input.readByteBuffer())
 
       case GROUP =>
         throw new UnsupportedOperationException("GROUP type is deprecated and not supported")
@@ -399,15 +407,22 @@ class WireFormatParser(
 
           case list: BytesList if list.count > 0 =>
             mapping.fieldDescriptor.getType match {
-              case FieldDescriptor.Type.MESSAGE =>
-                val parser = nestedParsersArray(fieldNumber).parser
-                writeMessageArray(list.array, list.count, mapping.rowOrdinal, parser, writer)
               case FieldDescriptor.Type.STRING =>
                 writeStringArray(list.array, list.count, mapping.rowOrdinal, writer)
               case FieldDescriptor.Type.BYTES =>
                 writeBytesArray(list.array, list.count, mapping.rowOrdinal, writer)
               case _ =>
                 throw new IllegalStateException(s"Unexpected field type ${mapping.fieldDescriptor.getType} for BytesList")
+            }
+
+          case list: GenericList[_] if list.count > 0 =>
+            mapping.fieldDescriptor.getType match {
+              case FieldDescriptor.Type.MESSAGE =>
+                val parser = nestedParsersArray(fieldNumber).parser
+                val bufferList = list.asInstanceOf[GenericList[ByteBuffer]]
+                writeMessageArrayFromBuffers(bufferList.array, list.count, mapping.rowOrdinal, parser, writer)
+              case _ =>
+                throw new IllegalStateException(s"Unexpected field type ${mapping.fieldDescriptor.getType} for GenericList")
             }
 
           case _ => // Empty lists or null - skip
