@@ -6,6 +6,7 @@ import fastproto.StreamWireParser._
 import org.apache.spark.sql.types.{ArrayType, StructType}
 
 import java.nio.ByteBuffer
+import scala.annotation.tailrec
 import scala.collection.JavaConverters._
 import scala.collection.mutable
 
