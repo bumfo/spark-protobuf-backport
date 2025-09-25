@@ -334,18 +334,18 @@ public abstract class StreamWireParser extends BufferSharingParser {
 
     // ========== Single Message Methods ==========
 
-    /**
-     * Write a single nested message field to the UnsafeRow.
-     * Uses nested parser with writer sharing.
-     */
-    protected void writeMessage(byte[] messageBytes, int ordinal, StreamWireParser parser, RowWriter writer) {
-        int offset = writer.cursor();
-        // Use acquireNestedWriter directly for nested message parsing
-        RowWriter nestedWriter = parser.acquireNestedWriter(writer);
-        nestedWriter.resetRowWriter();  // resetRowWriter automatically calls setAllNullBytes()
-        parser.parseInto(messageBytes, nestedWriter);
-        writer.writeVariableField(ordinal, offset);
-    }
+    // /**
+    //  * Write a single nested message field to the UnsafeRow.
+    //  * Uses nested parser with writer sharing.
+    //  */
+    // protected void writeMessage(CodedInputStream input, int ordinal, StreamWireParser parser, RowWriter writer) {
+    //     int offset = writer.cursor();
+    //     // Use acquireNestedWriter directly for nested message parsing
+    //     RowWriter nestedWriter = parser.acquireNestedWriter(writer);
+    //     nestedWriter.resetRowWriter();  // resetRowWriter automatically calls setAllNullBytes()
+    //     parser.parseInto(input, nestedWriter);
+    //     writer.writeVariableField(ordinal, offset);
+    // }
 
     // ========== Packed Field Parsing Methods ==========
 
@@ -571,5 +571,20 @@ public abstract class StreamWireParser extends BufferSharingParser {
         list.count = count;
 
         input.popLimit(oldLimit);
+    }
+
+    public static final class ParserBridge extends AbstractParserBridge {
+        private final StreamWireParser parser;
+        private final RowWriter writer;
+
+        public ParserBridge(StreamWireParser parser, RowWriter writer) {
+            this.parser = parser;
+            this.writer = writer;
+        }
+
+        @Override
+        public void parse(CodedInputStream input) {
+            parser.parseInto(input, writer);
+        }
     }
 }
