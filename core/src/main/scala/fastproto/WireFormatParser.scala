@@ -558,21 +558,20 @@ object WireFormatParser {
 
     // Phase 2: Build parser with recursion information using ParserRef for cycles
     val visited = mutable.HashMap[String, ParserRef]()
-    buildOptimizedParser(descriptor, schema, recursiveTypes, visited)
+    buildOptimizedParser(descriptor, schema, recursiveTypes, visited).parser
   }
 
   private def buildOptimizedParser(
       descriptor: Descriptor,
       schema: StructType,
       recursiveTypes: Set[String],
-      visited: mutable.HashMap[String, ParserRef]): WireFormatParser = {
+      visited: mutable.HashMap[String, ParserRef]): ParserRef = {
 
     val key = descriptor.getFullName
 
-    // Return existing parser if already built (handles cycles)
+    // Return existing ParserRef if already built (handles cycles)
     visited.get(key) match {
-      case Some(ref) if ref.parser != null => return ref.parser
-      case Some(ref) => return null // Being built, cycle detected
+      case Some(ref) => return ref
       case None =>
     }
 
@@ -592,7 +591,7 @@ object WireFormatParser {
     // Update the ParserRef
     ref.parser = parser
 
-    parser
+    ref
   }
 
   private def buildOptimizedNestedParsers(
@@ -625,14 +624,8 @@ object WireFormatParser {
             // Use existing ParserRef (may have null parser if being built)
             parsersArray(i) = existingRef
           case None =>
-            // Build child parser
-            val childParser = buildOptimizedParser(nestedDescriptor, nestedSchema, recursiveTypes, visited)
-            if (childParser != null) {
-              parsersArray(i) = ParserRef(childParser)
-            } else {
-              // Child returned null due to cycle, get the ParserRef from visited
-              parsersArray(i) = visited(nestedKey)
-            }
+            // Build child parser (returns ParserRef)
+            parsersArray(i) = buildOptimizedParser(nestedDescriptor, nestedSchema, recursiveTypes, visited)
         }
       }
       i += 1
