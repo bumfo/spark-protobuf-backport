@@ -281,7 +281,7 @@ class WireFormatParser(
 
       // Message types use ByteBuffer to avoid copying
       case MESSAGE =>
-        val list = state.getOrCreateAccumulator(fieldNumber, fieldType).asInstanceOf[GenericList[ByteBuffer]]
+        val list = state.getOrCreateAccumulator(fieldNumber, fieldType).asInstanceOf[BufferList]
         list.add(input.readByteBuffer())
 
       case GROUP =>
@@ -378,15 +378,9 @@ class WireFormatParser(
                   throw new IllegalStateException(s"Unexpected field type ${mapping.fieldDescriptor.getType} for BytesList")
               }
 
-            case list: GenericList[_] if list.count > 0 =>
-              mapping.fieldDescriptor.getType match {
-                case FieldDescriptor.Type.MESSAGE =>
-                  val parser = nestedParsersArray(fieldNumber).parser
-                  val bufferList = list.asInstanceOf[GenericList[ByteBuffer]]
-                  writeMessageArrayFromBuffers(bufferList.array, list.count, mapping.rowOrdinal, parser, writer)
-                case _ =>
-                  throw new IllegalStateException(s"Unexpected field type ${mapping.fieldDescriptor.getType} for GenericList")
-              }
+            case list: BufferList if list.count > 0 =>
+              val parser = nestedParsersArray(fieldNumber).parser
+              writeMessageArrayFromBuffers(list.array, list.count, mapping.rowOrdinal, parser, writer)
 
             case _ => // Empty lists or null - skip
           }
@@ -497,7 +491,7 @@ object WireFormatParser {
           case DOUBLE => new DoubleList()
           case BOOL => new BooleanList()
           case STRING | BYTES => new BytesList()
-          case MESSAGE => new GenericList(classOf[java.nio.ByteBuffer])
+          case MESSAGE => new BufferList()
           case GROUP => throw new UnsupportedOperationException("GROUP type is deprecated and not supported")
         }
       }
