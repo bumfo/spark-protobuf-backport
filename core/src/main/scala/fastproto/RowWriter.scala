@@ -5,6 +5,8 @@ import org.apache.spark.sql.catalyst.expressions.codegen.UnsafeWriter
 import org.apache.spark.sql.types.Decimal
 import org.apache.spark.unsafe.types.UTF8String
 
+import java.nio.ByteBuffer
+
 /**
  * Trait for row writers that manage null bits automatically.
  * Requires extending UnsafeWriter but encapsulates it from the public interface.
@@ -92,6 +94,7 @@ trait RowWriter {
 
   // Variable-Length Writers (auto-clear null bits)
   def writeBytes(ordinal: Int, value: Array[Byte]): Unit
+  def writeBytes(ordinal: Int, value: ByteBuffer): Unit
 
   /**
    * Note: For UTF8 strings from byte arrays, prefer writeBytes(ordinal, bytes) over

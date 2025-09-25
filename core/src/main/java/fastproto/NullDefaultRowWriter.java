@@ -23,6 +23,8 @@ import org.apache.spark.unsafe.Platform;
 import org.apache.spark.unsafe.bitset.BitSetMethods;
 import org.apache.spark.unsafe.types.UTF8String;
 
+import java.nio.ByteBuffer;
+
 /**
  * A row writer that defaults all fields to null, optimized for sparse data like protobuf messages.
  * <p>
@@ -232,6 +234,29 @@ public final class NullDefaultRowWriter extends AbstractRowWriter implements Row
     public void writeBytes(int ordinal, byte[] value) {
         write(ordinal, value);  // Call parent's final method
         clearNullBit(ordinal);
+    }
+
+    /**
+     * Writes a ByteBuffer and automatically clears the null bit.
+     * This method extracts the bytes from the ByteBuffer and writes them using the parent's
+     * byte array write method, then clears the null bit to maintain NullDefaultRowWriter's
+     * design principle that all writes mark fields as non-null.
+     *
+     * @param ordinal the field ordinal to write
+     * @param value the ByteBuffer to write
+     */
+    @Override
+    public void writeBytes(int ordinal, ByteBuffer value) {
+        if (value.hasArray()) {
+            // Direct access to backing array if available (most common case)
+            write(ordinal, value.array(), value.arrayOffset() + value.position(), value.remaining());
+        } else {
+            // Fallback for direct ByteBuffers or read-only buffers
+            byte[] bytes = new byte[value.remaining()];
+            value.duplicate().get(bytes);
+            write(ordinal, bytes);
+        }
+        // clearNullBit(ordinal); // this is not needed
     }
 
     /**
