@@ -49,7 +49,6 @@ class WireFormatParser(
   private val rowOrdinals = new Array[Int](maxFieldNumber + 1)
   private val fieldTypes = new Array[Type](maxFieldNumber + 1)
   private val fieldWireTypes = new Array[Byte](maxFieldNumber + 1)
-  private val fieldVarint64 = new Array[Boolean](maxFieldNumber + 1)
   private val isRepeatedFlags = new Array[Boolean](maxFieldNumber + 1)
   private val fieldDescriptors = new Array[FieldDescriptor](maxFieldNumber + 1)
 
@@ -62,7 +61,6 @@ class WireFormatParser(
   }
 
   private def buildFieldMappings(descriptor: Descriptor, schema: StructType): Unit = {
-    import FieldDescriptor.Type._
 
     // Pre-compute schema field name to ordinal mapping for O(1) lookups
     val schemaFieldMap = {
@@ -92,10 +90,6 @@ class WireFormatParser(
         fieldTypes(fieldNum) = field.getType
         fieldWireTypes(fieldNum) = getExpectedWireType(field.getType).toByte
         isRepeatedFlags(fieldNum) = field.isRepeated
-        fieldVarint64(fieldNum) = field.getType match {
-          case INT64 | UINT64 | SINT64 | BOOL => true
-          case _ => false
-        }
         fieldDescriptors(fieldNum) = field
       }
       // Field exists in protobuf but not in Spark schema - skip it
