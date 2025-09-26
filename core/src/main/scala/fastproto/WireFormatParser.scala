@@ -145,10 +145,10 @@ class WireFormatParser(
 
     val expect = fieldWireTypes(fieldNumber)
     if (isRepeatedFlags(fieldNumber)) {
-      if (wireType == WireFormat.WIRETYPE_LENGTH_DELIMITED && isPackable(fieldTypes(fieldNumber))) {
-        parsePackedRepeatedField(input, fieldNumber, state)
-      } else if (wireType == expect) {
+      if (wireType == expect) {
         parseUnpackedRepeatedField(input, fieldNumber, state)
+      } else if (wireType == WireFormat.WIRETYPE_LENGTH_DELIMITED && isPackable(fieldTypes(fieldNumber))) {
+        parsePackedRepeatedField(input, fieldNumber, state)
       } else {
         input.skipField(tag)
       }
