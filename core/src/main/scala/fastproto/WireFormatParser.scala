@@ -61,7 +61,6 @@ class WireFormatParser(
   }
 
   private def buildFieldMappings(descriptor: Descriptor, schema: StructType): Unit = {
-
     // Pre-compute schema field name to ordinal mapping for O(1) lookups
     val schemaFieldMap = {
       val map = new java.util.HashMap[String, Integer]()
@@ -316,28 +315,28 @@ class WireFormatParser(
 
     // Convert raw values based on field type
     fieldType match {
-      case DOUBLE =>
-        writer.write(rowOrdinal, input.readDouble())
-      case FLOAT =>
-        writer.write(rowOrdinal, input.readFloat())
       case INT64 | UINT64 =>
-        writer.write(rowOrdinal, input.readRawVarint64())
+        writer.write(rowOrdinal, input.readRawVarint64)
       case INT32 | UINT32 | ENUM =>
-        writer.write(rowOrdinal, input.readRawVarint32())
+        writer.write(rowOrdinal, input.readRawVarint32)
+      case DOUBLE =>
+        writer.write(rowOrdinal, java.lang.Double.longBitsToDouble(input.readRawLittleEndian64))
+      case FLOAT =>
+        writer.write(rowOrdinal, java.lang.Float.intBitsToFloat(input.readRawLittleEndian32()))
       case FIXED64 | SFIXED64 =>
-        writer.write(rowOrdinal, input.readRawLittleEndian64())
+        writer.write(rowOrdinal, input.readRawLittleEndian64)
       case FIXED32 | SFIXED32 =>
-        writer.write(rowOrdinal, input.readRawLittleEndian32())
-      case SINT32 =>
-        writer.write(rowOrdinal, CodedInputStream.decodeZigZag32(input.readRawVarint32()))
-      case SINT64 =>
-        writer.write(rowOrdinal, CodedInputStream.decodeZigZag64(input.readRawVarint64()))
+        writer.write(rowOrdinal, input.readRawLittleEndian32)
       case BOOL =>
-        writer.write(rowOrdinal, input.readRawVarint64() != 0)
+        writer.write(rowOrdinal, input.readRawVarint64 != 0)
       case BYTES | STRING =>
-        writer.writeBytes(rowOrdinal, input.readByteArray())
+        writer.writeBytes(rowOrdinal, input.readByteArray)
       case MESSAGE =>
         writeNestedMessage(input, fieldNumber, writer)
+      case SINT32 =>
+        writer.write(rowOrdinal, CodedInputStream.decodeZigZag32(input.readRawVarint32))
+      case SINT64 =>
+        writer.write(rowOrdinal, CodedInputStream.decodeZigZag64(input.readRawVarint64))
       case GROUP =>
         throw new UnsupportedOperationException("GROUP type is deprecated and not supported")
     }
