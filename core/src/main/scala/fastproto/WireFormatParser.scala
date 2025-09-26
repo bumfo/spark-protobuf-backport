@@ -34,7 +34,7 @@ class WireFormatParser(
   import WireFormatParser._
 
   // Build field number → row ordinal mapping during construction - use arrays for better performance
-  private val (fieldMappingArray, maxFieldNumber, fieldTypesArray) = buildFieldMappingArray()
+  private val (fieldMappingArray, maxFieldNumber) = buildFieldMappingArray()
 
   // Cache nested parsers for message fields - use array for O(1) lookup
   private val nestedParsersArray: Array[ParserRef] =
@@ -42,7 +42,7 @@ class WireFormatParser(
 
   // Instance-level ParseState - reuse to avoid allocation on each parse (only for non-recursive types)
   private val instanceParseState: ParseState =
-    if (!isRecursive) new ParseState(maxFieldNumber, fieldTypesArray) else null
+    if (!isRecursive) new ParseState(maxFieldNumber) else null
 
 
   override protected def parseInto(input: CodedInputStream, writer: RowWriter): Unit = {
@@ -50,7 +50,7 @@ class WireFormatParser(
       instanceParseState.reset()
       instanceParseState
     } else {
-      new ParseState(maxFieldNumber, fieldTypesArray)
+      new ParseState(maxFieldNumber)
     }
     parseIntoWithState(input, writer, state)
   }
@@ -74,23 +74,12 @@ class WireFormatParser(
     writeAccumulatedRepeatedFields(writer, state)
   }
 
-  private def buildFieldMappingArray(): (Array[FieldMapping], Int, Array[FieldDescriptor.Type]) = {
+  private def buildFieldMappingArray(): (Array[FieldMapping], Int) = {
     // Delegate to shared method for mapping array construction
     val mappingArray = buildFieldMappingArrayForDescriptor(descriptor, schema)
-    val maxFieldNum = if (mappingArray.nonEmpty) mappingArray.indices.max else 0
+    val maxFieldNum = if (mappingArray.nonEmpty) mappingArray.length - 1 else 0
 
-    // Build types array for repeated fields only
-    val typesArray = new Array[FieldDescriptor.Type](maxFieldNum + 1)
-    var i = 0
-    while (i < mappingArray.length) {
-      val mapping = mappingArray(i)
-      if (mapping != null && mapping.isRepeated) {
-        typesArray(i) = mapping.fieldDescriptor.getType
-      }
-      i += 1
-    }
-
-    (mappingArray, maxFieldNum, typesArray)
+    (mappingArray, maxFieldNum)
   }
 
 
@@ -456,7 +445,7 @@ object WireFormatParser {
    * Parse state that holds all accumulators for a single parse operation.
    * This ensures thread-safe recursive parsing by isolating state per call.
    */
-  private class ParseState(maxFieldNumber: Int, fieldTypes: Array[FieldDescriptor.Type]) {
+  private class ParseState(maxFieldNumber: Int) {
     // Single array of FastList for all field types - cast to specific subtype when needed
     private val lists = new Array[FastList](maxFieldNumber + 1)
 
@@ -544,7 +533,7 @@ object WireFormatParser {
       visited: mutable.HashMap[(String, Boolean), ParserRef]): Array[ParserRef] = {
 
     val fieldMappingArray = buildFieldMappingArrayForDescriptor(descriptor, schema)
-    val maxFieldNumber = if (fieldMappingArray.nonEmpty) fieldMappingArray.indices.max else 0
+    val maxFieldNumber = if (fieldMappingArray.nonEmpty) fieldMappingArray.length - 1 else 0
     val parsersArray = new Array[ParserRef](maxFieldNumber + 1)
 
     var i = 0
