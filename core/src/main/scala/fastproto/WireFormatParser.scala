@@ -322,19 +322,26 @@ class WireFormatParser(
 
     // Convert raw values based on field type
     fieldType match {
-      case INT32 | UINT32 | ENUM => writer.write(rowOrdinal, input.readRawVarint32())
-      case INT64 | UINT64 => writer.write(rowOrdinal, input.readRawVarint64())
-      case FIXED32 | SFIXED32 | FLOAT => writer.write(rowOrdinal, input.readRawLittleEndian32())
-      case FIXED64 | SFIXED64 | DOUBLE => writer.write(rowOrdinal, input.readRawLittleEndian64())
-      case SINT32 => writer.write(rowOrdinal, CodedInputStream.decodeZigZag32(input.readRawVarint32()))
-      case SINT64 => writer.write(rowOrdinal, CodedInputStream.decodeZigZag64(input.readRawVarint64()))
-      case BOOL => writer.write(rowOrdinal, input.readRawVarint64() != 0)
+      case INT32 | UINT32 | ENUM =>
+        writer.write(rowOrdinal, input.readRawVarint32())
+      case INT64 | UINT64 =>
+        writer.write(rowOrdinal, input.readRawVarint64())
+      case FIXED32 | SFIXED32 | FLOAT =>
+        writer.write(rowOrdinal, input.readRawLittleEndian32())
+      case FIXED64 | SFIXED64 | DOUBLE =>
+        writer.write(rowOrdinal, input.readRawLittleEndian64())
+      case SINT32 =>
+        writer.write(rowOrdinal, CodedInputStream.decodeZigZag32(input.readRawVarint32()))
+      case SINT64 =>
+        writer.write(rowOrdinal, CodedInputStream.decodeZigZag64(input.readRawVarint64()))
+      case BOOL =>
+        writer.write(rowOrdinal, input.readRawVarint64() != 0)
       case BYTES | STRING =>
         writer.writeBytes(rowOrdinal, input.readByteArray())
       case MESSAGE =>
         writeNestedMessage(input, fieldNumber, writer)
-      case _ =>
-        throw new IllegalStateException(s"Field type $fieldType incompatible with WIRETYPE_LENGTH_DELIMITED")
+      case GROUP =>
+        throw new UnsupportedOperationException("GROUP type is deprecated and not supported")
     }
   }
 
