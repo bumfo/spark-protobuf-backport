@@ -75,40 +75,19 @@ class WireFormatParser(
   }
 
   private def buildFieldMappingArray(): (Array[FieldMapping], Int, Array[FieldDescriptor.Type]) = {
-    val tempMapping = scala.collection.mutable.Map[Int, FieldMapping]()
-    val tempTypes = scala.collection.mutable.Map[Int, FieldDescriptor.Type]()
-    var maxFieldNum = 0
+    // Delegate to shared method for mapping array construction
+    val mappingArray = buildFieldMappingArrayForDescriptor(descriptor, schema)
+    val maxFieldNum = if (mappingArray.nonEmpty) mappingArray.indices.max else 0
 
-    descriptor.getFields.asScala.foreach { field =>
-      val fieldNum = field.getNumber
-      maxFieldNum = Math.max(maxFieldNum, fieldNum)
-
-      // Find corresponding field in Spark schema by name
-      schema.fields.zipWithIndex.find(_._1.name == field.getName) match {
-        case Some((sparkField, ordinal)) =>
-          tempMapping(fieldNum) = FieldMapping(
-            fieldDescriptor = field,
-            rowOrdinal = ordinal,
-            sparkDataType = sparkField.dataType,
-            isRepeated = field.isRepeated,
-            accumulatorType = field.getType
-          )
-          if (field.isRepeated) {
-            tempTypes(fieldNum) = field.getType
-          }
-        case None =>
-        // Field exists in protobuf but not in Spark schema - skip it
-      }
-    }
-
-    // Create arrays and populate them
-    val mappingArray = new Array[FieldMapping](maxFieldNum + 1)
+    // Build types array for repeated fields only
     val typesArray = new Array[FieldDescriptor.Type](maxFieldNum + 1)
-    tempMapping.foreach { case (fieldNum, mapping) =>
-      mappingArray(fieldNum) = mapping
-    }
-    tempTypes.foreach { case (fieldNum, fieldType) =>
-      typesArray(fieldNum) = fieldType
+    var i = 0
+    while (i < mappingArray.length) {
+      val mapping = mappingArray(i)
+      if (mapping != null && mapping.isRepeated) {
+        typesArray(i) = mapping.fieldDescriptor.getType
+      }
+      i += 1
     }
 
     (mappingArray, maxFieldNum, typesArray)
