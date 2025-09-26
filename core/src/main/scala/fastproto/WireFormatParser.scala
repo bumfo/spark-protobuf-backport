@@ -49,6 +49,7 @@ class WireFormatParser(
   private val rowOrdinals = new Array[Int](maxFieldNumber + 1)
   private val fieldTypes = new Array[Type](maxFieldNumber + 1)
   private val fieldWireTypes = new Array[Byte](maxFieldNumber + 1)
+  private val fieldVarint64 = new Array[Boolean](maxFieldNumber + 1)
   private val isRepeatedFlags = new Array[Boolean](maxFieldNumber + 1)
   private val fieldDescriptors = new Array[FieldDescriptor](maxFieldNumber + 1)
 
@@ -61,6 +62,8 @@ class WireFormatParser(
   }
 
   private def buildFieldMappings(descriptor: Descriptor, schema: StructType): Unit = {
+    import FieldDescriptor.Type._
+
     // Pre-compute schema field name to ordinal mapping for O(1) lookups
     val schemaFieldMap = {
       val map = new java.util.HashMap[String, Integer]()
@@ -89,6 +92,10 @@ class WireFormatParser(
         fieldTypes(fieldNum) = field.getType
         fieldWireTypes(fieldNum) = getExpectedWireType(field.getType).toByte
         isRepeatedFlags(fieldNum) = field.isRepeated
+        fieldVarint64(fieldNum) = field.getType match {
+          case INT64 | UINT64 | SINT64 | BOOL => true
+          case _ => false
+        }
         fieldDescriptors(fieldNum) = field
       }
       // Field exists in protobuf but not in Spark schema - skip it
@@ -315,53 +322,59 @@ class WireFormatParser(
     val fieldType = fieldTypes(fieldNumber)
 
     // Initialize raw values and read based on wire type, then switch on field type
-    var raw64 = 0L
-    var raw32 = 0
+    var var64 = 0L
+    var var32 = 0
+    var fix64 = 0L
+    var fix32 = 0
+    var float32 = 0f
+    var float64 = 0d
 
     wireType match {
       case WireFormat.WIRETYPE_VARINT =>
-        fieldType match {
-          case INT64 | UINT64 | SINT64 | BOOL =>
-            raw64 = input.readRawVarint64()
-          case INT32 | UINT32 | ENUM | SINT32 =>
-            raw32 = input.readRawVarint32()
-          case _ =>
-            throw new IllegalStateException(s"Field type $fieldType incompatible with WIRETYPE_VARINT")
+        if (fieldVarint64(fieldNumber)) {
+          var64 = input.readRawVarint64()
+        } else {
+          var32 = input.readRawVarint32()
         }
       case WireFormat.WIRETYPE_FIXED64 =>
-        raw64 = input.readRawLittleEndian64()
+        fix64 = input.readRawLittleEndian64()
       case WireFormat.WIRETYPE_FIXED32 =>
-        raw32 = input.readRawLittleEndian32()
+        fix32 = input.readRawLittleEndian32()
       case WireFormat.WIRETYPE_LENGTH_DELIMITED =>
-        // Handle length-delimited types separately since they don't use raw32/raw64
-        fieldType match {
-          case BYTES | STRING =>
-            writer.writeBytes(rowOrdinal, input.readByteArray())
-          // case BYTES =>
-          //   writer.writeBytes(rowOrdinal, input.readByteArray())
-          case MESSAGE =>
-            writeNestedMessage(input, fieldNumber, writer)
-          case _ =>
-            throw new IllegalStateException(s"Field type $fieldType incompatible with WIRETYPE_LENGTH_DELIMITED")
-        }
-        return
       case _ =>
         throw new UnsupportedOperationException(s"Unsupported wire type: $wireType")
     }
 
+    fieldType match {
+      case INT32 | UINT32 | ENUM =>
+      case INT64 | UINT64 =>
+      case SINT32 => var32 = CodedInputStream.decodeZigZag32(var32)
+      case SINT64 => var64 = CodedInputStream.decodeZigZag64(var64)
+      case FLOAT => float32 = java.lang.Float.intBitsToFloat(fix32)
+      case DOUBLE => float64 = java.lang.Double.longBitsToDouble(fix64)
+      // case BOOL => bool = var64 != 0
+      case _ =>
+    }
+
     // Convert raw values based on field type
     fieldType match {
-      case INT64 | UINT64 => writer.write(rowOrdinal, raw64)
-      case SINT64 => writer.write(rowOrdinal, CodedInputStream.decodeZigZag64(raw64))
-      case BOOL => writer.write(rowOrdinal, raw64 != 0)
-      case DOUBLE => writer.write(rowOrdinal, java.lang.Double.longBitsToDouble(raw64))
-      case FIXED64 | SFIXED64 => writer.write(rowOrdinal, raw64)
-      case INT32 | UINT32 | ENUM => writer.write(rowOrdinal, raw32)
-      case SINT32 => writer.write(rowOrdinal, CodedInputStream.decodeZigZag32(raw32))
-      case FLOAT => writer.write(rowOrdinal, java.lang.Float.intBitsToFloat(raw32))
-      case FIXED32 | SFIXED32 => writer.write(rowOrdinal, raw32)
+      case INT32 | UINT32 | ENUM => writer.write(rowOrdinal, var32)
+      case INT64 | UINT64 => writer.write(rowOrdinal, var64)
+      case SINT32 => writer.write(rowOrdinal, CodedInputStream.decodeZigZag32(var32))
+      case SINT64 => writer.write(rowOrdinal, CodedInputStream.decodeZigZag64(var64))
+      case FLOAT => writer.write(rowOrdinal, java.lang.Float.intBitsToFloat(fix32))
+      case DOUBLE => writer.write(rowOrdinal, java.lang.Double.longBitsToDouble(fix64))
+      case FIXED32 | SFIXED32 => writer.write(rowOrdinal, fix32)
+      case FIXED64 | SFIXED64 => writer.write(rowOrdinal, fix64)
+      case BOOL => writer.write(rowOrdinal, var64 != 0)
+      case BYTES | STRING =>
+        writer.writeBytes(rowOrdinal, input.readByteArray())
+      // case BYTES =>
+      //   writer.writeBytes(rowOrdinal, input.readByteArray())
+      case MESSAGE =>
+        writeNestedMessage(input, fieldNumber, writer)
       case _ =>
-        throw new IllegalStateException(s"Unexpected field type: $fieldType")
+        throw new IllegalStateException(s"Field type $fieldType incompatible with WIRETYPE_LENGTH_DELIMITED")
     }
   }
 
