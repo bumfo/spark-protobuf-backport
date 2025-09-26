@@ -1,11 +1,11 @@
 package fastproto
 
+import com.google.protobuf.Descriptors.FieldDescriptor.Type
 import com.google.protobuf.Descriptors.{Descriptor, FieldDescriptor}
 import com.google.protobuf.{CodedInputStream, WireFormat}
 import fastproto.StreamWireParser._
 import org.apache.spark.sql.types.{ArrayType, StructType}
 
-import scala.collection.JavaConverters._
 import scala.collection.mutable
 
 /**
@@ -47,7 +47,7 @@ class WireFormatParser(
 
   // Primitive arrays for hot path data - better cache locality
   private val rowOrdinals = new Array[Int](maxFieldNumber + 1)
-  private val fieldTypes = new Array[Byte](maxFieldNumber + 1)
+  private val fieldTypes = new Array[Type](maxFieldNumber + 1)
   private val isRepeatedFlags = new Array[Boolean](maxFieldNumber + 1)
   private val fieldDescriptors = new Array[FieldDescriptor](maxFieldNumber + 1)
 
@@ -85,7 +85,7 @@ class WireFormatParser(
 
         // Populate primitive arrays
         rowOrdinals(fieldNum) = ordinal
-        fieldTypes(fieldNum) = field.getType.toProto.getNumber.toByte
+        fieldTypes(fieldNum) = field.getType
         isRepeatedFlags(fieldNum) = field.isRepeated
         fieldDescriptors(fieldNum) = field
       }
