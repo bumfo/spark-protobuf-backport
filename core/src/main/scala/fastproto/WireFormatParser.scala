@@ -353,11 +353,11 @@ class WireFormatParser(
           accumulator match {
             case list: IntList if list.count > 0 =>
               // Handle enum conversion for ENUM fields
-              if (fieldType == FieldDescriptor.Type.ENUM) {
-                writeEnumArray(list, fieldNumber, writer)
-              } else {
-                writeIntArray(list.array, list.count, rowOrdinal, writer)
-              }
+              // if (fieldType == FieldDescriptor.Type.ENUM) {
+              //   writeEnumArray(list, fieldNumber, writer)
+              // } else {
+              writeIntArray(list.array, list.count, rowOrdinal, writer)
+            // }
 
             case list: LongList if list.count > 0 =>
               writeLongArray(list.array, list.count, rowOrdinal, writer)
