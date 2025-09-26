@@ -337,8 +337,7 @@ class WireFormatParser(
       writer.writeVariableField(rowOrdinal, offset)
     } else {
       // Skip the message if no parser is available (field not in schema)
-      val messageBytes = input.readByteArray()
-      // Message read but not processed - it's not in the schema
+      input.skipRawBytes(input.readRawVarint32)
     }
   }
 
