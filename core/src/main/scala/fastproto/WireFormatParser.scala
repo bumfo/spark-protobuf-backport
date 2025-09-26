@@ -62,7 +62,7 @@ class WireFormatParser(
   private def buildFieldMappings(descriptor: Descriptor, schema: StructType): Unit = {
     // Pre-compute schema field name to ordinal mapping for O(1) lookups
     val schemaFieldMap = {
-      val map = new java.util.HashMap[String, Int]()
+      val map = new java.util.HashMap[String, Integer]()
       var i = 0
       while (i < schema.fields.length) {
         map.put(schema.fields(i).name, i)
@@ -80,7 +80,7 @@ class WireFormatParser(
 
       // Find corresponding field in Spark schema by name
       val ordinalObj = schemaFieldMap.get(field.getName)
-      if (ordinalObj != null) {
+      if (ordinalObj ne null) {
         val ordinal = ordinalObj.intValue()
 
         // Populate primitive arrays
@@ -330,7 +330,7 @@ class WireFormatParser(
       fieldNumber: Int,
       writer: RowWriter): Unit = {
     val parserRef = nestedParsersArray(fieldNumber)
-    if (parserRef != null && parserRef.parser != null) {
+    if ((parserRef ne null) && (parserRef.parser ne null)) {
       val parser = parserRef.parser
       val rowOrdinal = rowOrdinals(fieldNumber)
 
@@ -349,7 +349,7 @@ class WireFormatParser(
     while (fieldNumber <= maxFieldNumber) {
       if (rowOrdinals(fieldNumber) >= 0 && isRepeatedFlags(fieldNumber)) {
         val accumulator = state.getAccumulator(fieldNumber)
-        if (accumulator != null) {
+        if (accumulator ne null) {
           val rowOrdinal = rowOrdinals(fieldNumber)
           val fieldDescriptor = fieldDescriptors(fieldNumber)
           val fieldType = fieldDescriptor.getType
@@ -387,7 +387,7 @@ class WireFormatParser(
 
             case list: BufferList if list.count > 0 =>
               val parserRef = nestedParsersArray(fieldNumber)
-              if (parserRef != null && parserRef.parser != null) {
+              if ((parserRef ne null) && (parserRef.parser ne null)) {
                 val parser = parserRef.parser
                 writeMessageArrayFromBuffers(list.array, list.count, rowOrdinal, parser, writer)
               }
@@ -410,7 +410,7 @@ class WireFormatParser(
     while (i < list.count) {
       val enumValue = list.array(i)
       val enumValueDescriptor = enumDescriptor.findValueByNumber(enumValue)
-      val enumName = if (enumValueDescriptor != null) enumValueDescriptor.getName else enumValue.toString
+      val enumName = if (enumValueDescriptor ne null) enumValueDescriptor.getName else enumValue.toString
       stringBytes(i) = enumName.getBytes("UTF-8")
       i += 1
     }
@@ -483,9 +483,9 @@ object WireFormatParser {
     // Single array of FastList for all field types - cast to specific subtype when needed
     private val lists = new Array[FastList](maxFieldNumber + 1)
 
-    def getOrCreateAccumulator(fieldNumber: Int, fieldType: FieldDescriptor.Type): Any = {
+    def getOrCreateAccumulator(fieldNumber: Int, fieldType: FieldDescriptor.Type): AnyRef = {
       import FieldDescriptor.Type._
-      if (lists(fieldNumber) == null) {
+      if (lists(fieldNumber) eq null) {
         lists(fieldNumber) = fieldType match {
           case INT32 | SINT32 | UINT32 | ENUM | FIXED32 | SFIXED32 => new IntList()
           case INT64 | SINT64 | UINT64 | FIXED64 | SFIXED64 => new LongList()
@@ -500,14 +500,14 @@ object WireFormatParser {
       lists(fieldNumber)
     }
 
-    def getAccumulator(fieldNumber: Int): Any = {
+    def getAccumulator(fieldNumber: Int): AnyRef = {
       lists(fieldNumber)
     }
 
     def reset(): Unit = {
       var i = 0
       while (i <= maxFieldNumber) {
-        if (lists(i) != null) lists(i).reset()
+        if (lists(i) ne null) lists(i).reset()
         i += 1
       }
     }
@@ -596,7 +596,7 @@ object WireFormatParser {
       val field = fields.get(i)
       if (field.getType == FieldDescriptor.Type.MESSAGE) {
         val fieldMapping = schemaFieldMap.get(field.getName)
-        if (fieldMapping != null) {
+        if (fieldMapping ne null) {
           val (sparkDataType, _) = fieldMapping
           val nestedDescriptor = field.getMessageType
 
