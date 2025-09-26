@@ -318,59 +318,19 @@ class WireFormatParser(
     import FieldDescriptor.Type._
 
     val rowOrdinal = rowOrdinals(fieldNumber)
-    val wireType = fieldWireTypes(fieldNumber)
     val fieldType = fieldTypes(fieldNumber)
-
-    // Initialize raw values and read based on wire type, then switch on field type
-    var var64 = 0L
-    var var32 = 0
-    var fix64 = 0L
-    var fix32 = 0
-    var float32 = 0f
-    var float64 = 0d
-
-    wireType match {
-      case WireFormat.WIRETYPE_VARINT =>
-        if (fieldVarint64(fieldNumber)) {
-          var64 = input.readRawVarint64()
-        } else {
-          var32 = input.readRawVarint32()
-        }
-      case WireFormat.WIRETYPE_FIXED64 =>
-        fix64 = input.readRawLittleEndian64()
-      case WireFormat.WIRETYPE_FIXED32 =>
-        fix32 = input.readRawLittleEndian32()
-      case WireFormat.WIRETYPE_LENGTH_DELIMITED =>
-      case _ =>
-        throw new UnsupportedOperationException(s"Unsupported wire type: $wireType")
-    }
-
-    fieldType match {
-      case INT32 | UINT32 | ENUM =>
-      case INT64 | UINT64 =>
-      case SINT32 => var32 = CodedInputStream.decodeZigZag32(var32)
-      case SINT64 => var64 = CodedInputStream.decodeZigZag64(var64)
-      case FLOAT => float32 = java.lang.Float.intBitsToFloat(fix32)
-      case DOUBLE => float64 = java.lang.Double.longBitsToDouble(fix64)
-      // case BOOL => bool = var64 != 0
-      case _ =>
-    }
 
     // Convert raw values based on field type
     fieldType match {
-      case INT32 | UINT32 | ENUM => writer.write(rowOrdinal, var32)
-      case INT64 | UINT64 => writer.write(rowOrdinal, var64)
-      case SINT32 => writer.write(rowOrdinal, CodedInputStream.decodeZigZag32(var32))
-      case SINT64 => writer.write(rowOrdinal, CodedInputStream.decodeZigZag64(var64))
-      case FLOAT => writer.write(rowOrdinal, java.lang.Float.intBitsToFloat(fix32))
-      case DOUBLE => writer.write(rowOrdinal, java.lang.Double.longBitsToDouble(fix64))
-      case FIXED32 | SFIXED32 => writer.write(rowOrdinal, fix32)
-      case FIXED64 | SFIXED64 => writer.write(rowOrdinal, fix64)
-      case BOOL => writer.write(rowOrdinal, var64 != 0)
+      case INT32 | UINT32 | ENUM => writer.write(rowOrdinal, input.readRawVarint32())
+      case INT64 | UINT64 => writer.write(rowOrdinal, input.readRawVarint64())
+      case FIXED32 | SFIXED32 | FLOAT => writer.write(rowOrdinal, input.readRawLittleEndian32())
+      case FIXED64 | SFIXED64 | DOUBLE => writer.write(rowOrdinal, input.readRawLittleEndian64())
+      case SINT32 => writer.write(rowOrdinal, CodedInputStream.decodeZigZag32(input.readRawVarint32()))
+      case SINT64 => writer.write(rowOrdinal, CodedInputStream.decodeZigZag64(input.readRawVarint64()))
+      case BOOL => writer.write(rowOrdinal, input.readRawVarint64() != 0)
       case BYTES | STRING =>
         writer.writeBytes(rowOrdinal, input.readByteArray())
-      // case BYTES =>
-      //   writer.writeBytes(rowOrdinal, input.readByteArray())
       case MESSAGE =>
         writeNestedMessage(input, fieldNumber, writer)
       case _ =>
