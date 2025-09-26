@@ -48,6 +48,7 @@ class WireFormatParser(
   // Primitive arrays for hot path data - better cache locality
   private val rowOrdinals = new Array[Int](maxFieldNumber + 1)
   private val fieldTypes = new Array[Type](maxFieldNumber + 1)
+  private val fieldWireTypes = new Array[Byte](maxFieldNumber + 1)
   private val isRepeatedFlags = new Array[Boolean](maxFieldNumber + 1)
   private val fieldDescriptors = new Array[FieldDescriptor](maxFieldNumber + 1)
 
@@ -86,6 +87,7 @@ class WireFormatParser(
         // Populate primitive arrays
         rowOrdinals(fieldNum) = ordinal
         fieldTypes(fieldNum) = field.getType
+        fieldWireTypes(fieldNum) = getExpectedWireType(field.getType).toByte
         isRepeatedFlags(fieldNum) = field.isRepeated
         fieldDescriptors(fieldNum) = field
       }
@@ -141,21 +143,19 @@ class WireFormatParser(
       writer: RowWriter,
       state: ParseState): Unit = {
 
-    val fieldType = fieldTypes(fieldNumber)
-
-    // Validate wire type matches expected type for this field
-    val expectedWireType = getExpectedWireType(fieldType)
-    if (wireType != expectedWireType && !isValidWireTypeForField(wireType, fieldType, isRepeatedFlags(fieldNumber))) {
-      // Wire type mismatch - skip this field to avoid parsing errors
-      input.skipField(tag)
-      return
-    }
-
-    // JIT friendly: split repeated and single field parsing into separate methods to reduce bytecode size
+    val expect = fieldWireTypes(fieldNumber)
     if (isRepeatedFlags(fieldNumber)) {
-      parseRepeatedFieldWithState(input, wireType, fieldNumber, state)
+      if (wireType == expect || (wireType == WireFormat.WIRETYPE_LENGTH_DELIMITED && isPackable(fieldTypes(fieldNumber)))) {
+        parseRepeatedFieldWithState(input, wireType, fieldNumber, state)
+      } else {
+        input.skipField(tag)
+      }
     } else {
-      parseSingleField(input, fieldNumber, writer)
+      if (wireType == expect) {
+        parseSingleField(input, fieldNumber, writer)
+      } else {
+        input.skipField(tag)
+      }
     }
   }
 
@@ -437,26 +437,9 @@ class WireFormatParser(
       case SINT32 => WireFormat.WIRETYPE_VARINT
       case SINT64 => WireFormat.WIRETYPE_VARINT
       case MESSAGE => WireFormat.WIRETYPE_LENGTH_DELIMITED
-      case GROUP => throw new UnsupportedOperationException("GROUP type is deprecated and not supported")
+      // case GROUP => throw new UnsupportedOperationException("GROUP type is deprecated and not supported")
+      case _ => -1
     }
-  }
-
-  /**
-   * Checks if a wire type is valid for a field type, considering repeated fields and packed encoding.
-   */
-  private def isValidWireTypeForField(wireType: Int, fieldType: FieldDescriptor.Type, isRepeated: Boolean): Boolean = {
-    val expectedWireType = getExpectedWireType(fieldType)
-
-    if (wireType == expectedWireType) {
-      return true
-    }
-
-    // For repeated fields, also allow LENGTH_DELIMITED for packed encoding
-    if (isRepeated && wireType == WireFormat.WIRETYPE_LENGTH_DELIMITED && isPackable(fieldType)) {
-      return true
-    }
-
-    false
   }
 
   private def isPackable(fieldType: FieldDescriptor.Type): Boolean = {
@@ -517,7 +500,7 @@ object WireFormatParser {
    * enabling efficient cycle detection and parser reuse for recursive message structures.
    *
    * @param descriptor the protobuf message descriptor
-   * @param schema the corresponding Spark SQL schema
+   * @param schema     the corresponding Spark SQL schema
    * @return optimized WireFormatParser with recursion detection
    */
   def apply(descriptor: Descriptor, schema: StructType): WireFormatParser =
@@ -612,7 +595,9 @@ object WireFormatParser {
     parsersArray
   }
 
-
-
   case class ParserRef(var parser: WireFormatParser)
+
+  private val TAG_TYPE_BITS = 3
+  private val TAG_TYPE_MASK = (1 << TAG_TYPE_BITS) - 1
+
 }
