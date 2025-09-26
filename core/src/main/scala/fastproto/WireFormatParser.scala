@@ -283,7 +283,7 @@ class WireFormatParser(
     while (fieldNumber < fieldMappingArray.length) {
       val mapping = fieldMappingArray(fieldNumber)
       if (mapping != null && mapping.isRepeated) {
-        val accumulator = state.getAccumulator(fieldNumber, mapping.accumulatorType)
+        val accumulator = state.getAccumulator(fieldNumber)
         if (accumulator != null) {
           accumulator match {
             case list: IntList if list.count > 0 =>
@@ -436,7 +436,7 @@ object WireFormatParser {
       lists(fieldNumber)
     }
 
-    def getAccumulator(fieldNumber: Int, fieldType: FieldDescriptor.Type): Any = {
+    def getAccumulator(fieldNumber: Int): Any = {
       lists(fieldNumber)
     }
 
@@ -511,7 +511,6 @@ object WireFormatParser {
       val mapping = fieldMappingArray(i)
       if (mapping != null && mapping.fieldDescriptor.getType == FieldDescriptor.Type.MESSAGE) {
         val nestedDescriptor = mapping.fieldDescriptor.getMessageType
-        val nestedKey = nestedDescriptor.getFullName
 
         val nestedSchema = mapping.sparkDataType match {
           case struct: StructType => struct
