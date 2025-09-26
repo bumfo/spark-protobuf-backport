@@ -316,14 +316,18 @@ class WireFormatParser(
 
     // Convert raw values based on field type
     fieldType match {
-      case INT32 | UINT32 | ENUM =>
-        writer.write(rowOrdinal, input.readRawVarint32())
+      case DOUBLE =>
+        writer.write(rowOrdinal, input.readDouble())
+      case FLOAT =>
+        writer.write(rowOrdinal, input.readFloat())
       case INT64 | UINT64 =>
         writer.write(rowOrdinal, input.readRawVarint64())
-      case FIXED32 | SFIXED32 | FLOAT =>
-        writer.write(rowOrdinal, input.readRawLittleEndian32())
-      case FIXED64 | SFIXED64 | DOUBLE =>
+      case INT32 | UINT32 | ENUM =>
+        writer.write(rowOrdinal, input.readRawVarint32())
+      case FIXED64 | SFIXED64 =>
         writer.write(rowOrdinal, input.readRawLittleEndian64())
+      case FIXED32 | SFIXED32 =>
+        writer.write(rowOrdinal, input.readRawLittleEndian32())
       case SINT32 =>
         writer.write(rowOrdinal, CodedInputStream.decodeZigZag32(input.readRawVarint32()))
       case SINT64 =>
