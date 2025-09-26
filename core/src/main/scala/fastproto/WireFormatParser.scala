@@ -141,8 +141,7 @@ class WireFormatParser(
       writer: RowWriter,
       state: ParseState): Unit = {
 
-    val fieldDescriptor = fieldDescriptors(fieldNumber)
-    val fieldType = fieldDescriptor.getType
+    val fieldType = fieldTypes(fieldNumber)
 
     // Validate wire type matches expected type for this field
     val expectedWireType = getExpectedWireType(fieldType)
@@ -166,8 +165,7 @@ class WireFormatParser(
       fieldNumber: Int,
       state: ParseState): Unit = {
     import FieldDescriptor.Type._
-    val fieldDescriptor = fieldDescriptors(fieldNumber)
-    val fieldType = fieldDescriptor.getType
+    val fieldType = fieldTypes(fieldNumber)
 
     // For repeated fields, accumulate values using type-specific accumulators
     fieldType match {
@@ -290,7 +288,7 @@ class WireFormatParser(
     import FieldDescriptor.Type._
 
     val rowOrdinal = rowOrdinals(fieldNumber)
-    val fieldType = fieldDescriptors(fieldNumber).getType
+    val fieldType = fieldTypes(fieldNumber)
 
     // Single field - write directly to the row
     fieldType match {
@@ -351,8 +349,7 @@ class WireFormatParser(
         val accumulator = state.getAccumulator(fieldNumber)
         if (accumulator ne null) {
           val rowOrdinal = rowOrdinals(fieldNumber)
-          val fieldDescriptor = fieldDescriptors(fieldNumber)
-          val fieldType = fieldDescriptor.getType
+          val fieldType = fieldTypes(fieldNumber)
 
           accumulator match {
             case list: IntList if list.count > 0 =>
