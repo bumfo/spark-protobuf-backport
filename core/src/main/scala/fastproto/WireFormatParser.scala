@@ -311,38 +311,57 @@ class WireFormatParser(
     import FieldDescriptor.Type._
 
     val rowOrdinal = rowOrdinals(fieldNumber)
+    val wireType = fieldWireTypes(fieldNumber)
     val fieldType = fieldTypes(fieldNumber)
 
-    // Single field - write directly to the row
+    // Initialize raw values and read based on wire type, then switch on field type
+    var raw64 = 0L
+    var raw32 = 0
+
+    wireType match {
+      case WireFormat.WIRETYPE_VARINT =>
+        fieldType match {
+          case INT64 | UINT64 | SINT64 | BOOL =>
+            raw64 = input.readRawVarint64()
+          case INT32 | UINT32 | ENUM | SINT32 =>
+            raw32 = input.readRawVarint32()
+          case _ =>
+            throw new IllegalStateException(s"Field type $fieldType incompatible with WIRETYPE_VARINT")
+        }
+      case WireFormat.WIRETYPE_FIXED64 =>
+        raw64 = input.readRawLittleEndian64()
+      case WireFormat.WIRETYPE_FIXED32 =>
+        raw32 = input.readRawLittleEndian32()
+      case WireFormat.WIRETYPE_LENGTH_DELIMITED =>
+        // Handle length-delimited types separately since they don't use raw32/raw64
+        fieldType match {
+          case BYTES | STRING =>
+            writer.writeBytes(rowOrdinal, input.readByteArray())
+          // case BYTES =>
+          //   writer.writeBytes(rowOrdinal, input.readByteArray())
+          case MESSAGE =>
+            writeNestedMessage(input, fieldNumber, writer)
+          case _ =>
+            throw new IllegalStateException(s"Field type $fieldType incompatible with WIRETYPE_LENGTH_DELIMITED")
+        }
+        return
+      case _ =>
+        throw new UnsupportedOperationException(s"Unsupported wire type: $wireType")
+    }
+
+    // Convert raw values based on field type
     fieldType match {
-      case DOUBLE =>
-        writer.write(rowOrdinal, input.readDouble())
-      case FLOAT =>
-        writer.write(rowOrdinal, input.readFloat())
-      case INT64 | UINT64 =>
-        writer.write(rowOrdinal, input.readRawVarint64())
-      case INT32 | UINT32 =>
-        writer.write(rowOrdinal, input.readRawVarint32())
-      case FIXED64 | SFIXED64 =>
-        writer.write(rowOrdinal, input.readRawLittleEndian64())
-      case FIXED32 | SFIXED32 =>
-        writer.write(rowOrdinal, input.readRawLittleEndian32())
-      case BOOL =>
-        writer.write(rowOrdinal, input.readBool())
-      case STRING =>
-        writer.writeBytes(rowOrdinal, input.readByteArray())
-      case BYTES =>
-        writer.writeBytes(rowOrdinal, input.readByteArray())
-      case ENUM =>
-        writer.write(rowOrdinal, input.readEnum())
-      case SINT32 =>
-        writer.write(rowOrdinal, input.readSInt32())
-      case SINT64 =>
-        writer.write(rowOrdinal, input.readSInt64())
-      case MESSAGE =>
-        writeNestedMessage(input, fieldNumber, writer)
-      case GROUP =>
-        throw new UnsupportedOperationException("GROUP type is deprecated and not supported")
+      case INT64 | UINT64 => writer.write(rowOrdinal, raw64)
+      case SINT64 => writer.write(rowOrdinal, CodedInputStream.decodeZigZag64(raw64))
+      case BOOL => writer.write(rowOrdinal, raw64 != 0)
+      case DOUBLE => writer.write(rowOrdinal, java.lang.Double.longBitsToDouble(raw64))
+      case FIXED64 | SFIXED64 => writer.write(rowOrdinal, raw64)
+      case INT32 | UINT32 | ENUM => writer.write(rowOrdinal, raw32)
+      case SINT32 => writer.write(rowOrdinal, CodedInputStream.decodeZigZag32(raw32))
+      case FLOAT => writer.write(rowOrdinal, java.lang.Float.intBitsToFloat(raw32))
+      case FIXED32 | SFIXED32 => writer.write(rowOrdinal, raw32)
+      case _ =>
+        throw new IllegalStateException(s"Unexpected field type: $fieldType")
     }
   }
 
