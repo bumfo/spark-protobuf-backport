@@ -361,6 +361,8 @@ class WireFormatParser(
   }
 
   private def writeAccumulatedRepeatedFields(writer: RowWriter, state: ParseState): Unit = {
+    import FieldDescriptor.Type._
+
     var fieldNumber = 0
     while (fieldNumber <= maxFieldNumber) {
       if (rowOrdinals(fieldNumber) >= 0 && isRepeatedFlags(fieldNumber)) {
@@ -372,7 +374,7 @@ class WireFormatParser(
           accumulator match {
             case list: IntList if list.count > 0 =>
               // Handle enum conversion for ENUM fields
-              // if (fieldType == FieldDescriptor.Type.ENUM) {
+              // if (fieldType == ENUM) {
               //   writeEnumArray(list, fieldNumber, writer)
               // } else {
               writeIntArray(list.array, list.count, rowOrdinal, writer)
@@ -392,9 +394,9 @@ class WireFormatParser(
 
             case list: BytesList if list.count > 0 =>
               fieldType match {
-                case FieldDescriptor.Type.STRING =>
-                  writeStringArray(list.array, list.count, rowOrdinal, writer)
-                case FieldDescriptor.Type.BYTES =>
+                // case STRING =>
+                //   writeStringArray(list.array, list.count, rowOrdinal, writer)
+                case BYTES | STRING =>
                   writeBytesArray(list.array, list.count, rowOrdinal, writer)
                 case _ =>
                   throw new IllegalStateException(s"Unexpected field type $fieldType for BytesList")
