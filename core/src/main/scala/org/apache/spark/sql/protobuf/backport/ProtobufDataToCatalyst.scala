@@ -72,7 +72,7 @@ private[backport] case class ProtobufDataToCatalyst(
       parserKind: ParserKind,
       compiledClassName: Option[String])
 
-  private sealed trait ParserKind
+  private sealed trait ParserKind extends Serializable
 
   private object ParserKind {
     case object Generated extends ParserKind
