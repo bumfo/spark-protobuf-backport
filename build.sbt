@@ -149,10 +149,8 @@ lazy val tests = project
     // Make sure protobuf compilation happens before regular compilation
     Compile / compile := (Compile / compile).dependsOn(Compile / PB.generate).value,
 
-    // Test tier configuration
+    // Test tier configuration - exclude property tests by default (ScalaCheck Properties)
     Test / testOptions += Tests.Argument(TestFrameworks.ScalaTest, "-l", "org.scalatest.tags.Slow"),
-    Test / testOptions += Tests.Argument(TestFrameworks.ScalaTest, "-l", "Property"),
-    Test / testOptions += Tests.Argument(TestFrameworks.ScalaTest, "-l", "Integration"),
 
     libraryDependencies ++= commonDependencies ++ Seq(
       "com.google.protobuf" % "protobuf-java" % protobufVersion,
@@ -176,7 +174,7 @@ propertyTests := {
 
 lazy val integrationTests = taskKey[Unit]("Run Tier 3 integration tests (<60s)")
 integrationTests := {
-  (tests / Test / testOnly).toTask(" integration.* -- -n Integration").value
+  (tests / Test / testOnly).toTask(" integration.*").value
 }
 
 lazy val allTestTiers = taskKey[Unit]("Run all test tiers sequentially")
