@@ -89,6 +89,21 @@ public final class NullDefaultRowWriter extends AbstractRowWriter implements Row
         }
     }
 
+    /**
+     * Clears the fixed-length data region (excluding null bits) by zeroing it out.
+     * This ensures null fields contain 0L as required by UnsafeRow semantics and prevents
+     * data from previous parses from leaking into subsequent parses.
+     *
+     * This method writes 0L to each 8-byte field slot in the fixed-length region.
+     */
+    @Override
+    public void clearFixedDataRegion() {
+        final int numFields = (fixedSize - nullBitsSize) / 8;
+        for (int i = 0; i < numFields; i++) {
+            Platform.putLong(getBuffer(), startingOffset + nullBitsSize + (i * 8L), 0L);
+        }
+    }
+
     public boolean isNullAt(int ordinal) {
         return BitSetMethods.isSet(getBuffer(), startingOffset, ordinal);
     }

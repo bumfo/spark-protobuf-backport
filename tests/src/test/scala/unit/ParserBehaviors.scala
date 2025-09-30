@@ -125,6 +125,36 @@ trait ParserBehaviors extends InternalRowMatchers { this: AnyFlatSpec with Match
       }
     }
 
+    it should "zero out null field values in UnsafeRow" in {
+      import org.apache.spark.sql.catalyst.expressions.UnsafeRow
+
+      val message = TestData.createEmptyPrimitives() // All fields are defaults
+      val binary = message.toByteArray
+      val descriptor = message.getDescriptorForType
+      val schema = RecursiveSchemaConverters.toSqlTypeWithTrueRecursion(descriptor, enumAsInt = true)
+      val parser = createParser(descriptor, schema, Some(classOf[AllPrimitiveTypes]))
+
+      val row = parser.parse(binary)
+
+      // UnsafeRow.setNullAt() zeros out the 8-byte word for null fields "to preserve row equality"
+      // This test verifies that null fields have getLong return 0L
+      row shouldBe a[UnsafeRow]
+      val unsafeRow = row.asInstanceOf[UnsafeRow]
+
+      // For each field, if it's null, the underlying long value should be 0L
+      // Field ordinals: 0=int32, 1=int64, 2=uint32, 3=uint64, 4=sint32, 5=sint64,
+      //                 6=fixed32, 7=fixed64, 8=sfixed32, 9=sfixed64,
+      //                 10=float, 11=double, 12=bool, 15=enum
+      // Fields 13-14 (string, bytes) are variable-length, so not tested here
+
+      val fixedLengthFields = Seq(0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 15)
+      fixedLengthFields.foreach { ordinal =>
+        if (unsafeRow.isNullAt(ordinal)) {
+          unsafeRow.getLong(ordinal) shouldBe 0L
+        }
+      }
+    }
+
     it should "handle sparse messages with mixed null and present fields" in {
       val message = TestData.createSparsePrimitives() // Only 2 fields set
       val binary = message.toByteArray
