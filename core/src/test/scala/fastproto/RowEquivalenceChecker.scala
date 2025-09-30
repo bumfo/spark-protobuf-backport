@@ -459,6 +459,41 @@ object RowEquivalenceChecker {
             fail(s"Array int mismatch at $path: $int1 != $int2")
           }
 
+        case _: org.apache.spark.sql.types.LongType =>
+          val long1 = array1.getLong(index)
+          val long2 = array2.getLong(index)
+          if (long1 != long2) {
+            fail(s"Array long mismatch at $path: $long1 != $long2")
+          }
+
+        case _: org.apache.spark.sql.types.FloatType =>
+          val float1 = array1.getFloat(index)
+          val float2 = array2.getFloat(index)
+          if (math.abs(float1 - float2) > 1e-6f) {
+            fail(s"Array float mismatch at $path: $float1 != $float2")
+          }
+
+        case _: org.apache.spark.sql.types.DoubleType =>
+          val double1 = array1.getDouble(index)
+          val double2 = array2.getDouble(index)
+          if (math.abs(double1 - double2) > 1e-9) {
+            fail(s"Array double mismatch at $path: $double1 != $double2")
+          }
+
+        case _: org.apache.spark.sql.types.BooleanType =>
+          val bool1 = array1.getBoolean(index)
+          val bool2 = array2.getBoolean(index)
+          if (bool1 != bool2) {
+            fail(s"Array boolean mismatch at $path: $bool1 != $bool2")
+          }
+
+        case _: org.apache.spark.sql.types.BinaryType =>
+          val bin1 = array1.getBinary(index)
+          val bin2 = array2.getBinary(index)
+          if (!java.util.Arrays.equals(bin1, bin2)) {
+            fail(s"Array binary mismatch at $path")
+          }
+
         // StructType case is handled above to allow for enum type differences
 
         case other =>
