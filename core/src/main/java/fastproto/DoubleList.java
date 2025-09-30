@@ -4,11 +4,8 @@ package fastproto;
  * Efficient growable double array for packed repeated field parsing.
  * Uses public fields for performance and direct access in generated code.
  */
-public class DoubleList {
+public class DoubleList extends FastList {
     public double[] array;
-    public int count;
-
-    private static final int DEFAULT_CAPACITY = 10;
 
     public DoubleList() {
         this.array = new double[DEFAULT_CAPACITY];

@@ -1,21 +1,25 @@
 package fastproto;
 
 /**
- * Efficient growable byte array list for repeated string/bytes/message field parsing.
+ * Efficient growable object list for repeated field parsing.
  * Uses public fields for performance and direct access in generated code.
- * Each element is a byte array representing a string, bytes field, or serialized message.
  */
-public abstract class ObjectList<T> {
+public abstract class ObjectList<T> extends FastList {
     public T[] array;
-    public int count;
-
-    private static final int DEFAULT_CAPACITY = 10;
 
     protected abstract T[] newArray(int len);
 
     public ObjectList() {
         this.array = newArray(DEFAULT_CAPACITY);
         this.count = 0;
+    }
+
+    protected ObjectList(boolean initialize) {
+        if (initialize) {
+            this.array = newArray(DEFAULT_CAPACITY);
+            this.count = 0;
+        }
+        // Otherwise, subclass will initialize manually
     }
 
     /**
@@ -43,8 +47,8 @@ public abstract class ObjectList<T> {
     }
 
     /**
-     * Add a single byte array to the list, growing if necessary.
-     * Used for repeated string/bytes/message field values.
+     * Add a single object to the list, growing if necessary.
+     * Used for repeated field values.
      */
     public void add(T value) {
         if (count >= array.length) {

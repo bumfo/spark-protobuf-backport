@@ -1,7 +1,7 @@
 package benchmark
 
 import benchmark.DomBenchmarkProtos.DomDocument
-import fastproto.{EquivalenceOptions, ProtoToRowGenerator, RecursiveSchemaConverters, RowEquivalenceChecker, WireFormatToRowGenerator}
+import fastproto.{EquivalenceOptions, ProtoToRowGenerator, RecursiveSchemaConverters, RowEquivalenceChecker, WireFormatParser, WireFormatToRowGenerator}
 import org.apache.spark.sql.types.{ArrayType, StructType}
 import org.scalatest.funsuite.AnyFunSuite
 import org.scalatest.matchers.should.Matchers
@@ -30,22 +30,36 @@ class DomParserEquivalenceTest extends AnyFunSuite with Matchers {
   // WireFormatParser stores enum values as integers - schema should reflect this
   private val wireFormatSchema = RecursiveSchemaConverters.toSqlTypeWithTrueRecursion(descriptor, enumAsInt = true)
 
-  ignore("ProtoToRowGenerator and WireFormatToRowGenerator should produce equivalent results for shallow DOM") {
+  test("WireFormatParser and WireFormatToRowGenerator should produce equivalent results for shallow DOM") {
     val wireFormatParser = WireFormatToRowGenerator.generateParser(descriptor, wireFormatSchema)
-    val protoToRowParser = ProtoToRowGenerator.generateParser(descriptor, classOf[DomDocument], protoToRowSchema)
+    // val protoToRowParser = ProtoToRowGenerator.generateParser(descriptor, classOf[DomDocument], protoToRowSchema)
+    val directWireParser = new WireFormatParser(descriptor, wireFormatSchema)
 
     val wireFormatRow = wireFormatParser.parse(binaryData)
-    val protoToRowRow = protoToRowParser.parse(binaryData)
+    // val protoToRowRow = protoToRowParser.parse(binaryData)
+    val directWireRow = directWireParser.parse(binaryData)
 
     // Both should produce the same number of fields
-    wireFormatRow.numFields shouldBe protoToRowRow.numFields
+    // wireFormatRow.numFields shouldBe protoToRowRow.numFields
+    wireFormatRow.numFields shouldBe directWireRow.numFields
+
+    // // Compare all fields systematically using the equivalence checker
+    // RowEquivalenceChecker.assertRowsEquivalent(
+    //   wireFormatRow,
+    //   wireFormatSchema,
+    //   protoToRowRow,
+    //   protoToRowSchema,
+    //   Some(descriptor),
+    //   EquivalenceOptions.default,
+    //   "root"
+    // )
 
     // Compare all fields systematically using the equivalence checker
     RowEquivalenceChecker.assertRowsEquivalent(
       wireFormatRow,
       wireFormatSchema,
-      protoToRowRow,
-      protoToRowSchema,
+      directWireRow,
+      wireFormatSchema,
       Some(descriptor),
       EquivalenceOptions.default,
       "root"

@@ -4,11 +4,8 @@ package fastproto;
  * Efficient growable int array for packed repeated field parsing.
  * Uses public fields for performance and direct access in generated code.
  */
-public class IntList {
+public class IntList extends FastList {
     public int[] array;
-    public int count;
-
-    private static final int DEFAULT_CAPACITY = 10;
 
     public IntList() {
         this.array = new int[DEFAULT_CAPACITY];

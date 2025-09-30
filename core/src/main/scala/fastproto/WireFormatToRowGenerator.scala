@@ -100,7 +100,7 @@ object WireFormatToRowGenerator {
       case FLOAT => "readFloat"
       case DOUBLE => "readDouble"
       case BOOL => "readBool"
-      case STRING | BYTES | MESSAGE => "readByteArray"
+      case STRING | BYTES | MESSAGE => "readByteBuffer"
       case ENUM => "readEnum"
     }
   }
@@ -150,7 +150,7 @@ object WireFormatToRowGenerator {
       case FLOAT => "resizeFloatArray"
       case DOUBLE => "resizeDoubleArray"
       case BOOL => "resizeBooleanArray"
-      case t if isLengthDelimited(t) => "resizeByteArrayArray"
+      case t if isLengthDelimited(t) => "resizeByteBufferArray"
       case ENUM => "resizeIntArray"
       case _ => throw new IllegalArgumentException(s"Unknown type: $fieldType")
     }
@@ -167,9 +167,9 @@ object WireFormatToRowGenerator {
       case FLOAT => "writeFloatArray"
       case DOUBLE => "writeDoubleArray"
       case BOOL => "writeBooleanArray"
-      case STRING => "writeStringArray"
-      case BYTES => "writeBytesArray"
-      case MESSAGE => "writeMessageArray"
+      case STRING => "writeStringArrayFromBuffers"
+      case BYTES => "writeBytesArrayFromBuffers"
+      case MESSAGE => "writeMessageArrayFromBuffers"
       case ENUM => "writeIntArray"
       case _ => throw new IllegalArgumentException(s"Unsupported array type: $fieldType")
     }
@@ -371,6 +371,7 @@ object WireFormatToRowGenerator {
     code ++= "import org.apache.spark.unsafe.types.UTF8String;\n"
     code ++= "import fastproto.StreamWireParser;\n"
     code ++= "import java.io.IOException;\n"
+    code ++= "import java.nio.ByteBuffer;\n"
     code ++= "import fastproto.IntList;\n"
     code ++= "import fastproto.LongList;\n\n"
 
@@ -520,7 +521,8 @@ object WireFormatToRowGenerator {
             val javaType = getJavaElementType(field.getType)
             val initialCapacity = getInitialCapacity(field.getType)
             // For primitive types, javaType is "int", "long", etc. -> new int[8]
-            // For byte array types, javaType is "byte[]" -> new byte[8][]
+            // For ByteBuffer types, javaType is "ByteBuffer" -> new ByteBuffer[8]
+            // For byte array types (old code), javaType was "byte[]" -> new byte[8][]
             if (javaType.endsWith("[]")) {
               val baseType = javaType.dropRight(2)
               code ++= s"    field${field.getNumber}_values = new $baseType[$initialCapacity][];\n"
@@ -556,9 +558,11 @@ object WireFormatToRowGenerator {
           } else {
             val javaType = getJavaElementType(field.getType)
             val initialCapacity = getInitialCapacity(field.getType)
+            // For primitive types, javaType is "int", "long", etc. -> int[] field_values = new int[8]
+            // For ByteBuffer types, javaType is "ByteBuffer" -> ByteBuffer[] field_values = new ByteBuffer[8]
+            // For byte array types (old code), javaType was "byte[]" -> byte[][] field_values = new byte[8][]
             if (javaType.endsWith("[]")) {
-              // For byte array types: javaType is "byte[]", we want "byte[][]" for the variable
-              val baseType = javaType.dropRight(2)  // "byte"
+              val baseType = javaType.dropRight(2)
               code ++= s"    $javaType[] field${fieldNum}_values = new $baseType[$initialCapacity][];\n"
             } else {
               code ++= s"    $javaType[] field${fieldNum}_values = new $javaType[$initialCapacity];\n"
@@ -572,7 +576,7 @@ object WireFormatToRowGenerator {
         repeatedFields.foreach { field =>
           val fieldNum = field.getNumber
           if (isVarint32(field.getType) || isVarint64(field.getType)) {
-            code ++= s"    field${fieldNum}_list.count = 0;\n"
+            code ++= s"    field${fieldNum}_list.reset();\n"
           } else {
             code ++= s"    field${fieldNum}_count = 0;\n"
           }
@@ -672,9 +676,9 @@ object WireFormatToRowGenerator {
       case FieldDescriptor.Type.BOOL =>
         code ++= s"            writer.write($ordinal, input.readBool());\n"
       case FieldDescriptor.Type.STRING =>
-        code ++= s"            writer.writeBytes($ordinal, input.readByteArray());\n"
+        code ++= s"            writer.writeBytes($ordinal, input.readByteBuffer());\n"
       case FieldDescriptor.Type.BYTES =>
-        code ++= s"            writer.writeBytes($ordinal, input.readByteArray());\n"
+        code ++= s"            writer.writeBytes($ordinal, input.readByteBuffer());\n"
       case FieldDescriptor.Type.ENUM =>
         // Check schema to determine if enum should be written as integer or string
         val enumField = schema.fields(ordinal)
@@ -687,12 +691,12 @@ object WireFormatToRowGenerator {
             throw new IllegalArgumentException(s"Unsupported enum target type: $other")
         }
       case FieldDescriptor.Type.MESSAGE =>
-        code ++= s"            byte[] messageBytes${fieldNum} = input.readByteArray();\n"
+        code ++= s"            ByteBuffer messageBuffer${fieldNum} = input.readByteBuffer();\n"
         code ++= s"            if (nestedConv${fieldNum} != null) {\n"
         code ++= s"              int offset = writer.cursor();\n"
         code ++= s"              RowWriter nestedWriter = nestedConv${fieldNum}.acquireNestedWriter(writer);\n"
         code ++= s"              nestedWriter.resetRowWriter();\n"
-        code ++= s"              nestedConv${fieldNum}.parseInto(messageBytes${fieldNum}, nestedWriter);\n"
+        code ++= s"              nestedConv${fieldNum}.parseInto(messageBuffer${fieldNum}, nestedWriter);\n"
         code ++= s"              writer.writeVariableField($ordinal, offset);\n"
         code ++= s"            }\n"
       case _ =>
@@ -866,7 +870,7 @@ object WireFormatToRowGenerator {
       case FLOAT => "float"
       case DOUBLE => "double"
       case BOOL => "boolean"
-      case STRING | BYTES | MESSAGE => "byte[]"
+      case STRING | BYTES | MESSAGE => "ByteBuffer"
       case _ => throw new UnsupportedOperationException(s"Unsupported array type: $fieldType")
     }
   }

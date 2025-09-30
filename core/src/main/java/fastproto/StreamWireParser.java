@@ -7,6 +7,7 @@ import org.apache.spark.sql.catalyst.expressions.codegen.UnsafeWriter;
 import org.apache.spark.sql.types.StructType;
 
 import java.io.IOException;
+import java.nio.ByteBuffer;
 
 /**
  * Base class for stream-based wire format parsers that use CodedInputStream to parse protobuf wire format
@@ -41,6 +42,18 @@ public abstract class StreamWireParser extends BufferSharingParser {
     @Override
     public final void parseInto(byte[] binary, int offset, int length, RowWriter writer) {
         CodedInputStream input = CodedInputStream.newInstance(binary, offset, length);
+        input.enableAliasing(true);
+
+        parseInto(input, writer);
+    }
+
+    /**
+     * Convenience method that creates a CodedInputStream from a ByteBuffer and delegates
+     * to the abstract parseInto(CodedInputStream, RowWriter) method.
+     * ByteBuffer views can avoid data copying when aliasing is enabled.
+     */
+    public final void parseInto(ByteBuffer buffer, RowWriter writer) {
+        CodedInputStream input = CodedInputStream.newInstance(buffer);
         input.enableAliasing(true);
 
         parseInto(input, writer);
@@ -117,6 +130,16 @@ public abstract class StreamWireParser extends BufferSharingParser {
         return newArray;
     }
 
+    /**
+     * Resize ByteBuffer array when capacity is exceeded.
+     */
+    protected static ByteBuffer[] resizeByteBufferArray(ByteBuffer[] array, int currentCount, int minSize) {
+        int newSize = Math.max(array.length * 2, minSize);
+        ByteBuffer[] newArray = new ByteBuffer[newSize];
+        System.arraycopy(array, 0, newArray, 0, currentCount);
+        return newArray;
+    }
+
     // ========== String Array Methods ==========
 
     /**
@@ -173,6 +196,65 @@ public abstract class StreamWireParser extends BufferSharingParser {
 
         writer.writeVariableField(ordinal, offset);
     }
+
+    // ========== ByteBuffer Array Methods (Zero-Copy) ==========
+
+    /**
+     * Write a repeated string field from ByteBuffer array to the UnsafeRow.
+     * Uses zero-copy ByteBuffer views from CodedInputStream aliasing.
+     */
+    protected void writeStringArrayFromBuffers(ByteBuffer[] buffers, int size, int ordinal, RowWriter writer) {
+        assert size <= buffers.length;
+
+        int offset = writer.cursor();
+        UnsafeArrayWriter arrayWriter = new UnsafeArrayWriter(writer.toUnsafeWriter(), 8);
+        arrayWriter.initialize(size);
+
+        for (int i = 0; i < size; i++) {
+            // Write directly from ByteBuffer view without copying
+            ByteBuffer buffer = buffers[i];
+            if (buffer.hasArray()) {
+                // Direct array access for heap ByteBuffers
+                arrayWriter.write(i, buffer.array(), buffer.arrayOffset() + buffer.position(), buffer.remaining());
+            } else {
+                // Copy for direct ByteBuffers (less common case)
+                byte[] bytes = new byte[buffer.remaining()];
+                buffer.duplicate().get(bytes);
+                arrayWriter.write(i, bytes);
+            }
+        }
+
+        writer.writeVariableField(ordinal, offset);
+    }
+
+    /**
+     * Write a repeated bytes field from ByteBuffer array to the UnsafeRow.
+     * Uses zero-copy ByteBuffer views from CodedInputStream aliasing.
+     */
+    protected void writeBytesArrayFromBuffers(ByteBuffer[] buffers, int size, int ordinal, RowWriter writer) {
+        assert size <= buffers.length;
+
+        int offset = writer.cursor();
+        UnsafeArrayWriter arrayWriter = new UnsafeArrayWriter(writer.toUnsafeWriter(), 8);
+        arrayWriter.initialize(size);
+
+        for (int i = 0; i < size; i++) {
+            // Write directly from ByteBuffer view without copying
+            ByteBuffer buffer = buffers[i];
+            if (buffer.hasArray()) {
+                // Direct array access for heap ByteBuffers
+                arrayWriter.write(i, buffer.array(), buffer.arrayOffset() + buffer.position(), buffer.remaining());
+            } else {
+                // Copy for direct ByteBuffers (less common case)
+                byte[] bytes = new byte[buffer.remaining()];
+                buffer.duplicate().get(bytes);
+                arrayWriter.write(i, bytes);
+            }
+        }
+
+        writer.writeVariableField(ordinal, offset);
+    }
+
 
     // ========== Primitive Array Methods ==========
 
@@ -594,5 +676,37 @@ public abstract class StreamWireParser extends BufferSharingParser {
         list.count = count;
 
         input.popLimit(oldLimit);
+    }
+
+    /**
+     * Write a repeated message field as an array to the UnsafeRow from ByteBuffer array.
+     * Uses nested parser with writer sharing for optimal performance.
+     * ByteBuffers avoid data copying for nested message parsing.
+     */
+    protected void writeMessageArrayFromBuffers(ByteBuffer[] messageBuffers, int size, int ordinal, StreamWireParser parser, RowWriter writer) {
+        assert size <= messageBuffers.length;
+
+        int offset = writer.cursor();
+        UnsafeArrayWriter arrayWriter = new UnsafeArrayWriter(writer.toUnsafeWriter(), 8);
+        arrayWriter.initialize(size);
+
+        // Lift writer acquisition outside loop for O(1) allocations instead of O(n)
+        RowWriter nestedWriter = parser.acquireNestedWriter(writer);
+        for (int i = 0; i < size; i++) {
+            int elemOffset = arrayWriter.cursor();
+            parseNestedMessageFromBuffer(messageBuffers[i], parser, nestedWriter, writer.toUnsafeWriter());
+            arrayWriter.setOffsetAndSizeFromPreviousCursor(i, elemOffset);
+        }
+
+        writer.writeVariableField(ordinal, offset);
+    }
+
+    /**
+     * Parse a nested message from a ByteBuffer view.
+     * Uses the parseInto(ByteBuffer) method which handles aliasing correctly.
+     */
+    protected void parseNestedMessageFromBuffer(ByteBuffer buffer, StreamWireParser parser, RowWriter nestedWriter, UnsafeWriter writer) {
+        nestedWriter.resetRowWriter();  // resetRowWriter automatically calls setAllNullBytes()
+        parser.parseInto(buffer, nestedWriter);
     }
 }

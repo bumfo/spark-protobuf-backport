@@ -259,6 +259,7 @@ public final class NullDefaultRowWriter extends AbstractRowWriter implements Row
         // clearNullBit(ordinal); // this is not needed
     }
 
+
     /**
      * Writes a UTF8String and automatically clears the null bit.
      * This wraps the final write(int, UTF8String) method from parent class with automatic null bit clearing
@@ -289,4 +290,5 @@ public final class NullDefaultRowWriter extends AbstractRowWriter implements Row
         setOffsetAndSizeFromPreviousCursor(ordinal, previousCursor);
         // clearNullBit(ordinal); // this is not needed
     }
+
 }
