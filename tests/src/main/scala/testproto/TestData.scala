@@ -85,6 +85,39 @@ object TestData {
     AllRepeatedTypes.newBuilder().build()
   }
 
+  // ===== Unpacked Repeated Fields (proto3 [packed = false]) =====
+
+  def createFullUnpackedRepeated(): AllUnpackedRepeatedTypes = {
+    AllUnpackedRepeatedTypes.newBuilder()
+      .addAllInt32List(List(1, 2, 3, 4, 5).map(Int.box).asJava)
+      .addAllInt64List(List(10L, 20L, 30L).map(Long.box).asJava)
+      .addAllUint32List(List(-1, -2).map(Int.box).asJava) // Max uint32 values as signed
+      .addAllUint64List(List(Long.MaxValue, Long.MaxValue - 1).map(Long.box).asJava)
+      .addAllSint32List(List(-1, -2, -3).map(Int.box).asJava) // CRITICAL: ZigZag unpacked
+      .addAllSint64List(List(-10L, -20L, -30L).map(Long.box).asJava) // CRITICAL: ZigZag unpacked
+      .addAllFixed32List(List(100, 200).map(Int.box).asJava)
+      .addAllFixed64List(List(1000L, 2000L).map(Long.box).asJava)
+      .addAllSfixed32List(List(-100, -200).map(Int.box).asJava)
+      .addAllSfixed64List(List(-1000L, -2000L).map(Long.box).asJava)
+      .addAllFloatList(List(1.1f, 2.2f, 3.3f, 4.4f).map(Float.box).asJava)
+      .addAllDoubleList(List(1.11, 2.22).map(Double.box).asJava)
+      .addAllBoolList(List(true, false, true).map(Boolean.box).asJava)
+      .addAllStringList(List("a", "b", "c").asJava)
+      .addAllBytesList(List(
+        ByteString.copyFrom(Array[Byte](1, 2)),
+        ByteString.copyFrom(Array[Byte](3, 4))
+      ).asJava)
+      .addAllStatusList(List(
+        AllPrimitiveTypes.Status.ACTIVE,
+        AllPrimitiveTypes.Status.INACTIVE
+      ).asJava)
+      .build()
+  }
+
+  def createEmptyUnpackedRepeated(): AllUnpackedRepeatedTypes = {
+    AllUnpackedRepeatedTypes.newBuilder().build()
+  }
+
   // ===== Complete Message =====
 
   def createCompleteMessage(): CompleteMessage = {
