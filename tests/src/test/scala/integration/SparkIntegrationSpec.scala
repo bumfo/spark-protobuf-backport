@@ -1,15 +1,14 @@
 package integration
 
 import com.google.protobuf.DescriptorProtos
-import org.apache.spark.sql.SparkSession
-import org.apache.spark.sql.catalyst.expressions.codegen.UnsafeRowWriter
 import org.apache.spark.sql.protobuf.backport.functions._
+import org.apache.spark.sql.{Column, SparkSession}
 import org.scalatest.flatspec.AnyFlatSpec
 import org.scalatest.matchers.should.Matchers
 import org.scalatest.{BeforeAndAfterAll, Tag}
 import testproto.AllTypesProtos._
 import testproto.EdgeCasesProtos._
-import testproto.TestData
+import testproto.{ExistingRow, TestData}
 
 /**
  * Tier 3 integration tests with multi-executor Spark cluster.
@@ -269,68 +268,8 @@ class SparkIntegrationSpec extends AnyFlatSpec with Matchers with BeforeAndAfter
     unpackRow.getInt(0) shouldBe 3
   }
 
-  ignore should "handle corrupted row" in {
-    import org.apache.spark.sql.catalyst.expressions.UnsafeRow
-    import org.apache.spark.sql.types.{IntegerType, StringType, StructField, StructType}
-    val row = new UnsafeRow(3)
-    val buf = new Array[Byte](64)
-    row.pointTo(buf, 32)
-    var i = 0
-    while (i < 64) {
-      buf(i) = 0xff.toByte
-      i += 1
-    }
-    row.setNotNullAt(0)
-    row.setLong(1, 0L)
-    row.setNullAt(1)
-    println(row)
-    println(row.isNullAt(0))
-    println(row.isNullAt(1))
-    println(row.isNullAt(2))
-    println(row.getLong(0))
-    println(row.getLong(1))
-    println(row.getLong(2))
-    val struct = row.getStruct(1, 2)
-    println(struct)
-    if (struct ne null) {
-      println(struct.isNullAt(0))
-      println(struct.getLong(0))
-      println(struct.isNullAt(1))
-      println(struct.getLong(1))
-    }
-
-    val writer = new UnsafeRowWriter(1)
-    writer.reset()
-    writer.write(0, row)
-    val row2 = writer.getRow
-    println(row2, row2.getBaseOffset, row2.getSizeInBytes)
-    val row3Ptr = row2.getLong(0)
-    val row3 = row2.getStruct(0, 3)
-    val offset = (row3Ptr >> 32).toInt
-    val size = row3Ptr.toInt
-    println(row3Ptr, offset, size, row3, row3.getBaseOffset, row3.getSizeInBytes)
-    val row4Ptr = row3.getLong(1)
-    val row4 = row3.getStruct(1, 2)
-    println(row4Ptr, row4)
-
-    import org.apache.spark.sql.hack.Hack
-    val df = Hack.internalCreateDataFrame(spark, spark.sparkContext.parallelize(Seq(row, row, row, row), 4), StructType(Array(
-      StructField("a", IntegerType),
-      StructField("b", StructType(Array(
-        StructField("foo", StringType),
-        StructField("foo1", StringType),
-      ))),
-      StructField("c", StructType(Array(
-        StructField("bar", StringType)
-      ))),
-    )))
-
-    df.show()
-  }
-
   it should "handle empty binaries and missing nested/repeated fields in distributed mode" in {
     val sparkImplicits = spark.implicits
-    import org.apache.spark.sql.functions.isnull
     import sparkImplicits._
 
     // Create completely empty binaries (empty byte arrays) to test parser robustness
@@ -352,19 +291,6 @@ class SparkIntegrationSpec extends AnyFlatSpec with Matchers with BeforeAndAfter
     val parsedDf = df.select(
       from_protobuf($"data", "CompleteMessage", descBytes).as("proto")
     )
-
-    // parsedDf.show(false)
-    // parsedDf.select(
-    //   isnull($"proto.primitives"),
-    //   isnull($"proto.repeated"),
-    //   isnull($"proto.id"),
-    //   isnull($"proto.version"),
-    // ).show(false)
-    //
-    // val fields = parsedDf.rdd.map { row =>
-    //   row.getStruct(0).getInt(0)
-    // }.collect()
-    // println(fields.mkString("Array(", ", ", ")"))
 
     val rows = parsedDf.select(
       "proto.primitives", // Missing nested struct
