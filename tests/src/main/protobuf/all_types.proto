@@ -1,0 +1,74 @@
+syntax = "proto3";
+
+package testproto;
+
+option java_package = "testproto";
+option java_outer_classname = "AllTypesProtos";
+
+// Message covering ALL primitive types including sint32/sint64
+message AllPrimitiveTypes {
+  // Variable-length integers
+  int32 int32_field = 1;
+  int64 int64_field = 2;
+  uint32 uint32_field = 3;
+  uint64 uint64_field = 4;
+
+  // ZigZag encoded signed integers (IMPORTANT - often missed in tests!)
+  sint32 sint32_field = 5;
+  sint64 sint64_field = 6;
+
+  // Fixed-width integers
+  fixed32 fixed32_field = 7;
+  fixed64 fixed64_field = 8;
+  sfixed32 sfixed32_field = 9;
+  sfixed64 sfixed64_field = 10;
+
+  // Floating point
+  float float_field = 11;
+  double double_field = 12;
+
+  // Other primitives
+  bool bool_field = 13;
+  string string_field = 14;
+  bytes bytes_field = 15;
+
+  // Enum
+  enum Status {
+    UNKNOWN = 0;
+    ACTIVE = 1;
+    INACTIVE = 2;
+    PENDING = 3;
+  }
+  Status status_field = 16;
+}
+
+// All repeated types (proto3 default packing)
+message AllRepeatedTypes {
+  // Packed by default in proto3
+  repeated int32 int32_list = 1;
+  repeated int64 int64_list = 2;
+  repeated uint32 uint32_list = 3;
+  repeated uint64 uint64_list = 4;
+  repeated sint32 sint32_list = 5;      // CRITICAL: Test sint32 packing
+  repeated sint64 sint64_list = 6;      // CRITICAL: Test sint64 packing
+  repeated fixed32 fixed32_list = 7;
+  repeated fixed64 fixed64_list = 8;
+  repeated sfixed32 sfixed32_list = 9;
+  repeated sfixed64 sfixed64_list = 10;
+  repeated float float_list = 11;
+  repeated double double_list = 12;
+  repeated bool bool_list = 13;
+
+  // Not packable (always length-delimited)
+  repeated string string_list = 14;
+  repeated bytes bytes_list = 15;
+  repeated AllPrimitiveTypes.Status status_list = 16;
+}
+
+// Complete message with all fields populated for testing
+message CompleteMessage {
+  AllPrimitiveTypes primitives = 1;
+  AllRepeatedTypes repeated = 2;
+  string id = 3;
+  int32 version = 4;
+}

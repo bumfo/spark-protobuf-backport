@@ -134,9 +134,61 @@ lazy val shaded = project
     Compile / packageBin := (uberJar / assembly).value
   )
 
+// Dedicated testing project with comprehensive protobuf feature coverage
+lazy val tests = project
+  .dependsOn(core, core % "test->test")
+  .settings(commonSettings)
+  .settings(
+    name := "spark-protobuf-backport-tests",
+    publish / skip := true,
+
+    // Protocol buffers compilation (same as bench module)
+    Compile / PB.targets := Seq(
+      PB.gens.java -> (Compile / sourceManaged).value
+    ),
+    // Make sure protobuf compilation happens before regular compilation
+    Compile / compile := (Compile / compile).dependsOn(Compile / PB.generate).value,
+
+    // Test tier configuration
+    Test / testOptions += Tests.Argument(TestFrameworks.ScalaTest, "-l", "org.scalatest.tags.Slow"),
+    Test / testOptions += Tests.Argument(TestFrameworks.ScalaTest, "-l", "Property"),
+    Test / testOptions += Tests.Argument(TestFrameworks.ScalaTest, "-l", "Integration"),
+
+    libraryDependencies ++= commonDependencies ++ Seq(
+      "com.google.protobuf" % "protobuf-java" % protobufVersion,
+      "org.apache.spark" %% "spark-sql" % sparkVersion % "test",
+      "org.apache.spark" %% "spark-core" % sparkVersion % "test",
+      "org.scalacheck" %% "scalacheck" % "1.17.0" % Test,
+      "org.scalatestplus" %% "scalacheck-1-17" % "3.2.17.0" % Test
+    )
+  )
+
+// Test execution tasks
+lazy val unitTests = taskKey[Unit]("Run Tier 1 unit tests (<5s)")
+unitTests := {
+  (tests / Test / testOnly).toTask(" unit.*").value
+}
+
+lazy val propertyTests = taskKey[Unit]("Run Tier 2 property tests (<30s)")
+propertyTests := {
+  (tests / Test / testOnly).toTask(" properties.* -- -n Property").value
+}
+
+lazy val integrationTests = taskKey[Unit]("Run Tier 3 integration tests (<60s)")
+integrationTests := {
+  (tests / Test / testOnly).toTask(" integration.* -- -n Integration").value
+}
+
+lazy val allTestTiers = taskKey[Unit]("Run all test tiers sequentially")
+allTestTiers := Def.sequential(
+  unitTests,
+  propertyTests,
+  integrationTests
+).value
+
 lazy val root = (project in file("."))
   .disablePlugins(AssemblyPlugin)
-  .aggregate(core, bench, uberJar, shaded)
+  .aggregate(core, bench, tests, uberJar, shaded)
   .settings(
     name := "spark-protobuf",
     publish / skip := true,

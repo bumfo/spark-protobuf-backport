@@ -1,0 +1,25 @@
+syntax = "proto3";
+
+package testproto;
+
+option java_package = "testproto";
+option java_outer_classname = "MapsProtos";
+
+// Map fields with various key/value combinations
+message WithMaps {
+  map<string, int32> string_to_int = 1;
+  map<int32, string> int_to_string = 2;
+  map<string, double> string_to_double = 3;
+  map<int64, bool> int64_to_bool = 4;
+  map<int32, bytes> int_to_bytes = 5;
+
+  message Value {
+    string data = 1;
+    int32 count = 2;
+    repeated string tags = 3;
+  }
+
+  map<string, Value> string_to_message = 6;
+  map<int32, Value> int_to_message = 7;
+  map<int64, Value> int64_to_message = 8;
+}
