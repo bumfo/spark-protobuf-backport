@@ -72,7 +72,7 @@ private[backport] case class ProtobufDataToCatalyst(
       parserKind: ParserKind,
       compiledClassName: Option[String])
 
-  private sealed trait ParserKind
+  private sealed trait ParserKind extends Serializable
 
   private object ParserKind {
     case object Generated extends ParserKind
@@ -196,14 +196,16 @@ private[backport] case class ProtobufDataToCatalyst(
       ProtoToRowGenerator.generateParser(descriptor(), cls, plan.schema)
 
     case ParserKind.WireFormat =>
-      try {
-        WireFormatToRowGenerator.generateParser(descriptor(), plan.schema)
-      } catch {
-        case NonFatal(e) if parseMode == PermissiveMode =>
-          logWarning(
-            s"Failed to generate wire format parser for message $messageName, falling back to DynamicMessage parsing: ${e.getMessage}")
-          new DynamicMessageParser(descriptor(), plan.schema)
-      }
+      WireFormatParser(descriptor(), plan.schema)
+
+      // try {
+      //   WireFormatToRowGenerator.generateParser(descriptor(), plan.schema)
+      // } catch {
+      //   case NonFatal(e) if parseMode == PermissiveMode =>
+      //     logWarning(
+      //       s"Failed to generate wire format parser for message $messageName, falling back to DynamicMessage parsing: ${e.getMessage}")
+      //     new DynamicMessageParser(descriptor(), plan.schema)
+      // }
 
     case ParserKind.Dynamic =>
       new DynamicMessageParser(descriptor(), plan.schema)

@@ -145,10 +145,10 @@ class WireFormatParser(
 
     val expect = fieldWireTypes(fieldNumber)
     if (isRepeatedFlags(fieldNumber)) {
-      if (wireType == WireFormat.WIRETYPE_LENGTH_DELIMITED && isPackable(fieldTypes(fieldNumber))) {
-        parsePackedRepeatedField(input, fieldNumber, state)
-      } else if (wireType == expect) {
+      if (wireType == expect) {
         parseUnpackedRepeatedField(input, fieldNumber, state)
+      } else if (wireType == WireFormat.WIRETYPE_LENGTH_DELIMITED && isPackable(fieldTypes(fieldNumber))) {
+        parsePackedRepeatedField(input, fieldNumber, state)
       } else {
         input.skipField(tag)
       }
@@ -313,34 +313,30 @@ class WireFormatParser(
     val rowOrdinal = rowOrdinals(fieldNumber)
     val fieldType = fieldTypes(fieldNumber)
 
-    // Single field - write directly to the row
+    // Convert raw values based on field type
     fieldType match {
-      case DOUBLE =>
-        writer.write(rowOrdinal, input.readDouble())
-      case FLOAT =>
-        writer.write(rowOrdinal, input.readFloat())
       case INT64 | UINT64 =>
-        writer.write(rowOrdinal, input.readRawVarint64())
-      case INT32 | UINT32 =>
-        writer.write(rowOrdinal, input.readRawVarint32())
+        writer.write(rowOrdinal, input.readRawVarint64)
+      case INT32 | UINT32 | ENUM =>
+        writer.write(rowOrdinal, input.readRawVarint32)
+      case DOUBLE =>
+        writer.write(rowOrdinal, java.lang.Double.longBitsToDouble(input.readRawLittleEndian64))
+      case FLOAT =>
+        writer.write(rowOrdinal, java.lang.Float.intBitsToFloat(input.readRawLittleEndian32()))
       case FIXED64 | SFIXED64 =>
-        writer.write(rowOrdinal, input.readRawLittleEndian64())
+        writer.write(rowOrdinal, input.readRawLittleEndian64)
       case FIXED32 | SFIXED32 =>
-        writer.write(rowOrdinal, input.readRawLittleEndian32())
+        writer.write(rowOrdinal, input.readRawLittleEndian32)
       case BOOL =>
-        writer.write(rowOrdinal, input.readBool())
-      case STRING =>
-        writer.writeBytes(rowOrdinal, input.readByteArray())
-      case BYTES =>
-        writer.writeBytes(rowOrdinal, input.readByteArray())
-      case ENUM =>
-        writer.write(rowOrdinal, input.readEnum())
-      case SINT32 =>
-        writer.write(rowOrdinal, input.readSInt32())
-      case SINT64 =>
-        writer.write(rowOrdinal, input.readSInt64())
+        writer.write(rowOrdinal, input.readRawVarint64 != 0)
+      case BYTES | STRING =>
+        writer.writeBytes(rowOrdinal, input.readByteArray)
       case MESSAGE =>
         writeNestedMessage(input, fieldNumber, writer)
+      case SINT32 =>
+        writer.write(rowOrdinal, CodedInputStream.decodeZigZag32(input.readRawVarint32))
+      case SINT64 =>
+        writer.write(rowOrdinal, CodedInputStream.decodeZigZag64(input.readRawVarint64))
       case GROUP =>
         throw new UnsupportedOperationException("GROUP type is deprecated and not supported")
     }
@@ -365,6 +361,8 @@ class WireFormatParser(
   }
 
   private def writeAccumulatedRepeatedFields(writer: RowWriter, state: ParseState): Unit = {
+    import FieldDescriptor.Type._
+
     var fieldNumber = 0
     while (fieldNumber <= maxFieldNumber) {
       if (rowOrdinals(fieldNumber) >= 0 && isRepeatedFlags(fieldNumber)) {
@@ -376,7 +374,7 @@ class WireFormatParser(
           accumulator match {
             case list: IntList if list.count > 0 =>
               // Handle enum conversion for ENUM fields
-              // if (fieldType == FieldDescriptor.Type.ENUM) {
+              // if (fieldType == ENUM) {
               //   writeEnumArray(list, fieldNumber, writer)
               // } else {
               writeIntArray(list.array, list.count, rowOrdinal, writer)
@@ -396,9 +394,9 @@ class WireFormatParser(
 
             case list: BytesList if list.count > 0 =>
               fieldType match {
-                case FieldDescriptor.Type.STRING =>
-                  writeStringArray(list.array, list.count, rowOrdinal, writer)
-                case FieldDescriptor.Type.BYTES =>
+                // case STRING =>
+                //   writeStringArray(list.array, list.count, rowOrdinal, writer)
+                case BYTES | STRING =>
                   writeBytesArray(list.array, list.count, rowOrdinal, writer)
                 case _ =>
                   throw new IllegalStateException(s"Unexpected field type $fieldType for BytesList")
