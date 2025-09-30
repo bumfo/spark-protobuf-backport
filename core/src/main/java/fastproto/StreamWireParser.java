@@ -1,7 +1,9 @@
 package fastproto;
 
 import com.google.protobuf.CodedInputStream;
+import com.google.protobuf.InvalidProtocolBufferException;
 import org.apache.spark.sql.catalyst.expressions.codegen.UnsafeArrayWriter;
+import org.apache.spark.sql.catalyst.expressions.codegen.UnsafeWriter;
 import org.apache.spark.sql.types.StructType;
 
 import java.io.IOException;
@@ -334,17 +336,38 @@ public abstract class StreamWireParser extends BufferSharingParser {
 
     // ========== Single Message Methods ==========
 
-    /**
-     * Write a single nested message field to the UnsafeRow.
-     * Uses nested parser with writer sharing.
-     */
-    protected void writeMessage(byte[] messageBytes, int ordinal, StreamWireParser parser, RowWriter writer) {
-        int offset = writer.cursor();
-        // Use acquireNestedWriter directly for nested message parsing
+    // /**
+    //  * Write a single nested message field to the UnsafeRow.
+    //  * Uses nested parser with writer sharing.
+    //  */
+    // protected void writeMessage(CodedInputStream input, int ordinal, StreamWireParser parser, RowWriter writer) {
+    //     int offset = writer.cursor();
+    //     // Use acquireNestedWriter directly for nested message parsing
+    //     RowWriter nestedWriter = parser.acquireNestedWriter(writer);
+    //     nestedWriter.resetRowWriter();  // resetRowWriter automatically calls setAllNullBytes()
+    //     parser.parseInto(input, nestedWriter);
+    //     writer.writeVariableField(ordinal, offset);
+    // }
+
+    protected void parseNestedMessage(CodedInputStream input, StreamWireParser parser, UnsafeWriter writer) throws IOException {
         RowWriter nestedWriter = parser.acquireNestedWriter(writer);
         nestedWriter.resetRowWriter();  // resetRowWriter automatically calls setAllNullBytes()
-        parser.parseInto(messageBytes, nestedWriter);
-        writer.writeVariableField(ordinal, offset);
+
+        final int length = input.readRawVarint32();
+        int oldLimit = input.pushLimit(length);
+        try {
+            parser.parseInto(input, nestedWriter);
+            // input.checkLastTagWas(0); // TODO fix test with this
+            if (input.getBytesUntilLimit() != 0) {
+                throw new InvalidProtocolBufferException(
+                        "While parsing a protocol message, the input ended unexpectedly "
+                                + "in the middle of a field.  This could mean either that the "
+                                + "input has been truncated or that an embedded message "
+                                + "misreported its own length.");
+            }
+        } finally {
+            input.popLimit(oldLimit);
+        }
     }
 
     // ========== Packed Field Parsing Methods ==========

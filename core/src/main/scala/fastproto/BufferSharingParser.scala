@@ -5,7 +5,7 @@ import org.apache.spark.sql.catalyst.expressions.codegen.UnsafeWriter
 import org.apache.spark.sql.types.StructType
 
 abstract class BufferSharingParser(val schema: StructType) extends Parser {
-  protected val instanceWriter: RowWriter = new NullDefaultRowWriter(schema.length)
+  private val instanceWriter: RowWriter = new NullDefaultRowWriter(schema.length)
 
   private def acquireWriter(parentWriter: UnsafeWriter): RowWriter = {
     if (parentWriter == null) {
@@ -18,11 +18,11 @@ abstract class BufferSharingParser(val schema: StructType) extends Parser {
     }
   }
 
-  private def acquireNestedWriter(parentWriter: UnsafeWriter): RowWriter = new NullDefaultRowWriter(parentWriter, schema.length)
+  def acquireNestedWriter(parentWriter: UnsafeWriter): RowWriter = new NullDefaultRowWriter(parentWriter, schema.length)
 
-  def acquireWriter(parentWriter: RowWriter): RowWriter = acquireWriter(parentWriter.toUnsafeWriter)
+  def acquireWriter(parentWriter: RowWriter): RowWriter = acquireWriter(parentWriter.unsafeWriterOrNull)
 
-  def acquireNestedWriter(parentWriter: RowWriter): RowWriter = acquireNestedWriter(parentWriter.toUnsafeWriter)
+  def acquireNestedWriter(parentWriter: RowWriter): RowWriter = acquireNestedWriter(parentWriter.unsafeWriterOrNull)
 
   /**
    * Core parsing method that implementations must override to write protobuf data to row writer.

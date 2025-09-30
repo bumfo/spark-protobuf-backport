@@ -5,14 +5,16 @@ package fastproto;
  * Uses public fields for performance and direct access in generated code.
  * Each element is a byte array representing a string, bytes field, or serialized message.
  */
-public class ByteArrayList {
-    public byte[][] array;
+public abstract class ObjectList<T> {
+    public T[] array;
     public int count;
 
     private static final int DEFAULT_CAPACITY = 10;
 
-    public ByteArrayList() {
-        this.array = new byte[DEFAULT_CAPACITY][];
+    protected abstract T[] newArray(int len);
+
+    public ObjectList() {
+        this.array = newArray(DEFAULT_CAPACITY);
         this.count = 0;
     }
 
@@ -23,7 +25,7 @@ public class ByteArrayList {
     public void sizeHint(int minCapacity) {
         if (array.length < minCapacity) {
             int newCapacity = Math.max(array.length * 2, minCapacity);
-            byte[][] newArray = new byte[newCapacity][];
+            T[] newArray = newArray(newCapacity);
             System.arraycopy(array, 0, newArray, 0, count);
             array = newArray;
         }
@@ -35,7 +37,7 @@ public class ByteArrayList {
      */
     public void grow(int currentCount) {
         int newCapacity = array.length * 2;
-        byte[][] newArray = new byte[newCapacity][];
+        T[] newArray = newArray(newCapacity);
         System.arraycopy(array, 0, newArray, 0, currentCount);
         array = newArray;
     }
@@ -44,7 +46,7 @@ public class ByteArrayList {
      * Add a single byte array to the list, growing if necessary.
      * Used for repeated string/bytes/message field values.
      */
-    public void add(byte[] value) {
+    public void add(T value) {
         if (count >= array.length) {
             grow(count);
         }

@@ -5,6 +5,8 @@ import org.apache.spark.sql.catalyst.expressions.codegen.UnsafeWriter
 import org.apache.spark.sql.types.Decimal
 import org.apache.spark.unsafe.types.UTF8String
 
+import java.nio.ByteBuffer
+
 /**
  * Trait for row writers that manage null bits automatically.
  * Requires extending UnsafeWriter but encapsulates it from the public interface.
@@ -65,7 +67,11 @@ trait RowWriter {
   def cursor: Int
 
   // Type System Bridge
-  /** Cast this RowWriter to UnsafeWriter for accessing base class methods */
+
+  /**
+   * Cast this RowWriter to UnsafeWriter for accessing base class methods
+   * prefer unsafeWriterOrNull in scala for null-safety
+   */
   def toUnsafeWriter: UnsafeWriter = this
 
   // Null Management
@@ -88,6 +94,7 @@ trait RowWriter {
 
   // Variable-Length Writers (auto-clear null bits)
   def writeBytes(ordinal: Int, value: Array[Byte]): Unit
+  def writeBytes(ordinal: Int, value: ByteBuffer): Unit
 
   /**
    * Note: For UTF8 strings from byte arrays, prefer writeBytes(ordinal, bytes) over
@@ -96,4 +103,11 @@ trait RowWriter {
   def writeUTF8String(ordinal: Int, value: UTF8String): Unit
 
   def writeVariableField(ordinal: Int, previousCursor: Int): Unit
+}
+
+object RowWriter {
+  implicit class ToUnsafeWriter(val writer: RowWriter) extends AnyVal {
+    // noinspection ScalaDeprecation
+    @inline def unsafeWriterOrNull: UnsafeWriter = if (writer ne null) writer.toUnsafeWriter else null
+  }
 }

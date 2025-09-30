@@ -62,7 +62,11 @@ lazy val core = project
     libraryDependencies ++= commonDependencies ++ Seq(
       // Protobuf as provided for compilation
       "com.google.protobuf" % "protobuf-java" % protobufVersion % Provided
-    )
+    ),
+    // Compile / scalacOptions ++= Seq(
+    //   "-opt:l:inline",
+    //   "-opt-inline-from:fastproto**",
+    // )
   )
 
 // Dedicated benchmark project
