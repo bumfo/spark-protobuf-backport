@@ -149,6 +149,11 @@ lazy val tests = project
     // Make sure protobuf compilation happens before regular compilation
     Compile / compile := (Compile / compile).dependsOn(Compile / PB.generate).value,
 
+    // Additional JVM options for Java module system access (Spark serialization needs these)
+    Test / javaOptions ++= Seq(
+      "--add-exports", "java.base/sun.security.action=ALL-UNNAMED"
+    ),
+
     // Test tier configuration - exclude property tests by default (ScalaCheck Properties)
     Test / testOptions += Tests.Argument(TestFrameworks.ScalaTest, "-l", "org.scalatest.tags.Slow"),
 
