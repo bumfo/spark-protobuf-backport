@@ -90,8 +90,13 @@ message AllUnpackedRepeatedTypes {
 
 // Complete message with all fields populated for testing
 message CompleteMessage {
-  AllPrimitiveTypes primitives = 1;
-  AllRepeatedTypes repeated = 2;
-  string id = 3;
-  int32 version = 4;
+  enum Type {
+    DEFAULT = 0;
+    EDGE_CASE = 1;
+  }
+  Type type = 1;
+  AllPrimitiveTypes primitives = 2;
+  AllRepeatedTypes repeated = 3;
+  string id = 4;
+  int32 version = 5;
 }
