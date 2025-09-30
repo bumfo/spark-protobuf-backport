@@ -104,7 +104,7 @@ object Generators {
   }
 
   /**
-   * Generate AllRepeatedTypes with populated lists.
+   * Generate AllRepeatedTypes with populated lists (packed encoding).
    */
   def genFullRepeated: Gen[AllRepeatedTypes] = for {
     int32List <- Gen.listOfN(5, genInt32)
@@ -113,6 +113,23 @@ object Generators {
     floatList <- Gen.listOfN(4, genFloat)
     stringList <- Gen.listOfN(3, genString)
   } yield AllRepeatedTypes.newBuilder()
+    .addAllInt32List(int32List.map(Int.box).asJava)
+    .addAllSint32List(sint32List.map(Int.box).asJava)
+    .addAllSint64List(sint64List.map(Long.box).asJava)
+    .addAllFloatList(floatList.map(Float.box).asJava)
+    .addAllStringList(stringList.asJava)
+    .build()
+
+  /**
+   * Generate AllUnpackedRepeatedTypes with populated lists (unpacked encoding).
+   */
+  def genFullUnpackedRepeated: Gen[AllUnpackedRepeatedTypes] = for {
+    int32List <- Gen.listOfN(5, genInt32)
+    sint32List <- Gen.listOfN(3, genSint32)
+    sint64List <- Gen.listOfN(3, genSint64)
+    floatList <- Gen.listOfN(4, genFloat)
+    stringList <- Gen.listOfN(3, genString)
+  } yield AllUnpackedRepeatedTypes.newBuilder()
     .addAllInt32List(int32List.map(Int.box).asJava)
     .addAllSint32List(sint32List.map(Int.box).asJava)
     .addAllSint64List(sint64List.map(Long.box).asJava)
