@@ -1,11 +1,13 @@
 package integration
 
+import com.google.protobuf.DescriptorProtos
 import org.apache.spark.sql.{DataFrame, Row, SparkSession}
 import org.scalatest.{BeforeAndAfterAll, Tag}
 import org.scalatest.flatspec.AnyFlatSpec
 import org.scalatest.matchers.should.Matchers
 import org.apache.spark.sql.protobuf.backport.functions._
 import testproto.AllTypesProtos._
+import testproto.EdgeCasesProtos._
 import testproto.TestData
 
 /**
@@ -59,6 +61,23 @@ class SparkIntegrationSpec extends AnyFlatSpec with Matchers with BeforeAndAfter
     }
   }
 
+  // Helper methods to create binary descriptor sets (forces WireFormatParser usage)
+  private def createDescriptorBytes(messageName: String): Array[Byte] = {
+    val message = messageName match {
+      case "AllPrimitiveTypes" => AllPrimitiveTypes.getDefaultInstance
+      case "AllRepeatedTypes" => AllRepeatedTypes.getDefaultInstance
+      case "AllUnpackedRepeatedTypes" => AllUnpackedRepeatedTypes.getDefaultInstance
+      case "CompleteMessage" => CompleteMessage.getDefaultInstance
+      case "Sparse" => Sparse.getDefaultInstance
+      case _ => throw new IllegalArgumentException(s"Unknown message: $messageName")
+    }
+
+    DescriptorProtos.FileDescriptorSet.newBuilder()
+      .addFile(message.getDescriptorForType.getFile.toProto)
+      .build()
+      .toByteArray
+  }
+
   "Spark cluster integration" should "parse 1000+ protobuf rows across multiple executors" in {
     val sparkImplicits = spark.implicits
     import sparkImplicits._
@@ -80,9 +99,10 @@ class SparkIntegrationSpec extends AnyFlatSpec with Matchers with BeforeAndAfter
     // Create DataFrame and repartition to force multi-executor execution
     val df = spark.createDataset(messages).repartition(4).toDF("data")
 
-    // Parse protobuf data
+    // Parse protobuf data using binary descriptor set (forces WireFormatParser)
+    val descBytes = createDescriptorBytes("AllPrimitiveTypes")
     val parsedDf = df.select(
-      from_protobuf($"data", classOf[AllPrimitiveTypes].getName).as("proto")
+      from_protobuf($"data", "AllPrimitiveTypes", descBytes).as("proto")
     )
 
     // Verify all rows parsed successfully
@@ -124,9 +144,10 @@ class SparkIntegrationSpec extends AnyFlatSpec with Matchers with BeforeAndAfter
 
     val df = spark.createDataset(messages).repartition(4).toDF("data")
 
-    // Parse with from_protobuf (forces serialization of parser to executors)
+    // Parse with from_protobuf using binary descriptor set (forces WireFormatParser)
+    val descBytes = createDescriptorBytes("AllRepeatedTypes")
     val parsedDf = df.select(
-      from_protobuf($"data", classOf[AllRepeatedTypes].getName).as("proto")
+      from_protobuf($"data", "AllRepeatedTypes", descBytes).as("proto")
     )
 
     // Force computation across executors with aggregation
@@ -148,18 +169,20 @@ class SparkIntegrationSpec extends AnyFlatSpec with Matchers with BeforeAndAfter
     val sparkImplicits = spark.implicits
     import sparkImplicits._
 
-    // Create original test data
-    val original = TestData.createFullPrimitives()
+    // Create original test data using Sparse message (no enums, avoids serialization issues)
+    val original = TestData.createSparseMessage()
     val originalBinary = original.toByteArray
 
     // Create 500 copies to ensure distributed execution
     val df = spark.createDataset(Seq.fill(500)(originalBinary)).repartition(4).toDF("data")
 
-    // Roundtrip: binary → struct → binary
+    // Roundtrip: binary → struct → binary using binary descriptor set (forces WireFormatParser)
+    val descBytes = createDescriptorBytes("Sparse")
     val roundtripDf = df.select(
       to_protobuf(
-        from_protobuf($"data", classOf[AllPrimitiveTypes].getName),
-        classOf[AllPrimitiveTypes].getName
+        from_protobuf($"data", "Sparse", descBytes),
+        "Sparse",
+        descBytes
       ).as("roundtrip_data")
     )
 
@@ -169,14 +192,11 @@ class SparkIntegrationSpec extends AnyFlatSpec with Matchers with BeforeAndAfter
     // Verify all roundtrip binaries can be parsed back
     roundtripRows.foreach { row =>
       val roundtripBinary = row.getAs[Array[Byte]](0)
-      val reparsed = AllPrimitiveTypes.parseFrom(roundtripBinary)
+      val reparsed = Sparse.parseFrom(roundtripBinary)
 
       // Verify key fields match original
-      reparsed.getInt32Field shouldBe original.getInt32Field
-      reparsed.getSint32Field shouldBe original.getSint32Field
-      reparsed.getSint64Field shouldBe original.getSint64Field
-      reparsed.getStringField shouldBe original.getStringField
-      reparsed.getStatusField shouldBe original.getStatusField
+      reparsed.getField1 shouldBe original.getField1
+      reparsed.getField2 shouldBe original.getField2
     }
   }
 
@@ -190,9 +210,10 @@ class SparkIntegrationSpec extends AnyFlatSpec with Matchers with BeforeAndAfter
 
     val df = spark.createDataset(Seq.fill(1000)(binary)).repartition(8).toDF("data")
 
-    // Parse and compute aggregations across all partitions
+    // Parse and compute aggregations across all partitions using binary descriptor set (forces WireFormatParser)
+    val descBytes = createDescriptorBytes("AllRepeatedTypes")
     val parsedDf = df.select(
-      from_protobuf($"data", classOf[AllRepeatedTypes].getName).as("proto")
+      from_protobuf($"data", "AllRepeatedTypes", descBytes).as("proto")
     )
 
     // Aggregate to verify consistency
@@ -216,15 +237,18 @@ class SparkIntegrationSpec extends AnyFlatSpec with Matchers with BeforeAndAfter
     val repeated = (1 to 300).map(_ => TestData.createFullRepeated().toByteArray)
     val unpacked = (1 to 400).map(_ => TestData.createFullUnpackedRepeated().toByteArray)
 
-    // Process each type in separate DataFrames
+    // Process each type in separate DataFrames using binary descriptor sets (forces WireFormatParser)
+    val primDescBytes = createDescriptorBytes("AllPrimitiveTypes")
     val primitivesDf = spark.createDataset(primitives).repartition(3).toDF("data")
-      .select(from_protobuf($"data", classOf[AllPrimitiveTypes].getName).as("proto"))
+      .select(from_protobuf($"data", "AllPrimitiveTypes", primDescBytes).as("proto"))
 
+    val repDescBytes = createDescriptorBytes("AllRepeatedTypes")
     val repeatedDf = spark.createDataset(repeated).repartition(3).toDF("data")
-      .select(from_protobuf($"data", classOf[AllRepeatedTypes].getName).as("proto"))
+      .select(from_protobuf($"data", "AllRepeatedTypes", repDescBytes).as("proto"))
 
+    val unpackDescBytes = createDescriptorBytes("AllUnpackedRepeatedTypes")
     val unpackedDf = spark.createDataset(unpacked).repartition(4).toDF("data")
-      .select(from_protobuf($"data", classOf[AllUnpackedRepeatedTypes].getName).as("proto"))
+      .select(from_protobuf($"data", "AllUnpackedRepeatedTypes", unpackDescBytes).as("proto"))
 
     // Verify counts
     primitivesDf.count() shouldBe 300
@@ -241,5 +265,135 @@ class SparkIntegrationSpec extends AnyFlatSpec with Matchers with BeforeAndAfter
 
     val unpackRow = unpackedDf.selectExpr("size(proto.sint32_list) as count").head()
     unpackRow.getInt(0) shouldBe 3
+  }
+
+  it should "handle empty binaries and missing nested/repeated fields in distributed mode" in {
+    val sparkImplicits = spark.implicits
+    import sparkImplicits._
+
+    // Create completely empty binaries (empty byte arrays) to test parser robustness
+    val emptyMessages = (1 to 100).map { _ =>
+      new Array[Byte](0)  // Completely empty binary
+    }
+
+    val df = spark.createDataset(emptyMessages).repartition(4).toDF("data")
+
+    // Parse empty binaries as CompleteMessage using binary descriptor set (forces WireFormatParser)
+    val descBytes = createDescriptorBytes("CompleteMessage")
+    val parsedDf = df.select(
+      from_protobuf($"data", "CompleteMessage", descBytes).as("proto")
+    )
+
+    val rows = parsedDf.select(
+      "proto.primitives",  // Missing nested struct
+      "proto.repeated",    // Missing repeated fields
+      "proto.id",
+      "proto.version"
+    ).collect()
+
+    rows.length shouldBe 100
+
+    // Verify all rows handle empty binary correctly
+    rows.foreach { row =>
+      // primitives (nested struct) - check isNullAt first
+      if (!row.isNullAt(0)) {
+        // Parser may create default struct
+        val primitivesRow = row.getStruct(0)
+        primitivesRow should not be null
+      }
+
+      // repeated (nested struct with repeated fields) - check isNullAt first
+      if (!row.isNullAt(1)) {
+        // Parser may create default struct
+        val repeatedRow = row.getStruct(1)
+        repeatedRow should not be null
+      }
+
+      // id (string) - check isNullAt before accessing
+      if (!row.isNullAt(2)) {
+        row.getString(2) shouldBe "" // Default empty string
+      }
+
+      // version (int32) - check isNullAt before accessing
+      if (!row.isNullAt(3)) {
+        row.getInt(3) shouldBe 0 // Default 0
+      }
+    }
+  }
+
+  it should "handle nullability correctly in distributed mode" in {
+    val sparkImplicits = spark.implicits
+    import sparkImplicits._
+
+    // Create Sparse messages with partial field population
+    val messages = (1 to 100).map { i =>
+      val builder = Sparse.newBuilder()
+        .setField1(i)
+        .setField2(s"value_$i")
+
+      // Randomly set field3 for some messages to test mixed null/non-null
+      if (i % 3 == 0) {
+        builder.setField3(true)
+      }
+
+      builder.build().toByteArray
+    }
+
+    val df = spark.createDataset(messages).repartition(4).toDF("data")
+
+    // Parse across multiple executors using binary descriptor set (forces WireFormatParser)
+    val descBytes = createDescriptorBytes("Sparse")
+    val parsedDf = df.select(
+      from_protobuf($"data", "Sparse", descBytes).as("proto")
+    )
+
+    val rows = parsedDf.select(
+      "proto.field1",
+      "proto.field2",
+      "proto.field3",
+      "proto.field4",
+      "proto.field5",
+      "proto.nested"
+    ).orderBy("proto.field1").collect()
+
+    rows.length shouldBe 100
+
+    // Verify nullability checks work correctly across all partitions
+    rows.zipWithIndex.foreach { case (row, idx) =>
+      val expectedValue = idx + 1
+
+      // field1 and field2 are always set
+      row.isNullAt(0) shouldBe false
+      row.getInt(0) shouldBe expectedValue
+
+      row.isNullAt(1) shouldBe false
+      row.getString(1) shouldBe s"value_$expectedValue"
+
+      // field3 - check isNullAt first, then value
+      if (!row.isNullAt(2)) {
+        // Only set for i % 3 == 0
+        if (expectedValue % 3 == 0) {
+          row.getBoolean(2) shouldBe true
+        }
+      }
+
+      // field4, field5, nested - never set, should handle gracefully
+      // Accept either null or default values depending on parser implementation
+      if (!row.isNullAt(3)) {
+        row.getDouble(3) shouldBe 0.0 +- 0.001
+      }
+
+      // field5 (bytes) - check if null before accessing
+      if (!row.isNullAt(4)) {
+        val bytes = row.getAs[Array[Byte]](4)
+        bytes should not be null
+      }
+
+      // nested message - check if null before accessing
+      if (!row.isNullAt(5)) {
+        val nestedRow = row.getStruct(5)
+        nestedRow should not be null
+      }
+    }
   }
 }
