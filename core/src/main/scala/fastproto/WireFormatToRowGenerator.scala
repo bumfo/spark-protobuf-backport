@@ -513,9 +513,9 @@ object WireFormatToRowGenerator {
     if (repeatedFields.nonEmpty && !isDirectlyRecursive(descriptor)) {
       repeatedFields.foreach { field =>
         field.getType match {
-          case FieldDescriptor.Type.INT32 | FieldDescriptor.Type.SINT32 =>
+          case FieldDescriptor.Type.INT32 | FieldDescriptor.Type.SINT32 | FieldDescriptor.Type.UINT32 | FieldDescriptor.Type.ENUM =>
           // IntList is initialized in field declaration, no initialization needed
-          case FieldDescriptor.Type.INT64 | FieldDescriptor.Type.SINT64 =>
+          case FieldDescriptor.Type.INT64 | FieldDescriptor.Type.SINT64 | FieldDescriptor.Type.UINT64 =>
           // LongList is initialized in field declaration, no initialization needed
           case _ =>
             val javaType = getJavaElementType(field.getType)

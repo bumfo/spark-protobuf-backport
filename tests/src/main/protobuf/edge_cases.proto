@@ -1,0 +1,59 @@
+syntax = "proto3";
+
+package testproto;
+
+option java_package = "testproto";
+option java_outer_classname = "EdgeCasesProtos";
+
+// Empty message
+message EmptyMessage {}
+
+// Single field message
+message SingleField {
+  string only_field = 1;
+}
+
+// All fields optional (test nullability)
+message Sparse {
+  int32 field1 = 1;
+  string field2 = 2;
+  bool field3 = 3;
+  double field4 = 4;
+  bytes field5 = 5;
+  repeated int32 field6 = 6;
+  Nested nested = 7;
+
+  message Nested {
+    string inner = 1;
+  }
+}
+
+// Default values testing
+message Defaults {
+  int32 int_default = 1;      // 0
+  string string_default = 2;  // ""
+  bool bool_default = 3;      // false
+
+  enum DefaultEnum {
+    DEFAULT_UNKNOWN = 0;
+    DEFAULT_VALUE = 1;
+  }
+  DefaultEnum enum_default = 4; // DEFAULT_UNKNOWN
+
+  repeated int32 empty_list = 5; // []
+}
+
+// Oneof testing
+message WithOneof {
+  string name = 1;
+
+  oneof test_oneof {
+    string string_choice = 2;
+    int32 int_choice = 3;
+    SubMessage message_choice = 4;
+  }
+
+  message SubMessage {
+    string value = 1;
+  }
+}

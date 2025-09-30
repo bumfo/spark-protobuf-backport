@@ -34,14 +34,15 @@ See `core/CLAUDE.md` for detailed interface documentation and usage examples.
 # Compile the project
 sbt compile
 
-# Run tests
-sbt --error test
-
-# Run performance benchmarks (excluded from regular tests)
-sbt "core/testOnly benchmark.ProtobufConversionBenchmark -- -n benchmark.Benchmark"
+# Run tests (3-tier testing system, see tests/CLAUDE.md)
+sbt unitTests           # Tier 1: Fast unit tests (<5s)
+sbt propertyTests       # Tier 2: Property-based tests (<30s)
+sbt integrationTests    # Tier 3: Spark integration tests (<60s)
+sbt allTestTiers        # All tiers sequentially
 
 # Run JMH benchmarks
-sbt "bench/Jmh/run"
+sbt jmh                 # Full JMH benchmark suite
+sbt jmhQuick            # Quick benchmark (fewer iterations)
 
 # Build shaded JAR with all dependencies
 sbt assembly
@@ -98,6 +99,7 @@ git diff --cached    # Review staged changes
 For detailed implementation and development information:
 
 - **Core Scala Implementation**: See `core/CLAUDE.md` for architecture, performance benchmarks, and development notes
+- **Testing Framework**: See `tests/CLAUDE.md` for 3-tier testing strategy and developer notes
 - **PySpark Support**: See `python/CLAUDE.md` for Python wrapper implementation and testing
 
 ## Usage Patterns
