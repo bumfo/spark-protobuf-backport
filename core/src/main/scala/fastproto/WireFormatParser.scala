@@ -1,12 +1,11 @@
 package fastproto
 
+import com.google.protobuf.Descriptors.FieldDescriptor.Type
 import com.google.protobuf.Descriptors.{Descriptor, FieldDescriptor}
 import com.google.protobuf.{CodedInputStream, WireFormat}
 import fastproto.StreamWireParser._
 import org.apache.spark.sql.types.{ArrayType, StructType}
 
-import java.nio.ByteBuffer
-import scala.collection.JavaConverters._
 import scala.collection.mutable
 
 /**
@@ -33,16 +32,77 @@ class WireFormatParser(
 
   import WireFormatParser._
 
-  // Build field number → row ordinal mapping during construction - use arrays for better performance
-  private val (fieldMappingArray, maxFieldNumber, fieldTypesArray) = buildFieldMappingArray()
+  // Build field mappings using primitive arrays for better cache locality
+  private val maxFieldNumber = if (descriptor.getFields.isEmpty) 0 else {
+    var max = 0
+    val fields = descriptor.getFields
+    var i = 0
+    while (i < fields.size()) {
+      val fieldNum = fields.get(i).getNumber
+      if (fieldNum > max) max = fieldNum
+      i += 1
+    }
+    max
+  }
+
+  // Primitive arrays for hot path data - better cache locality
+  private val rowOrdinals = new Array[Int](maxFieldNumber + 1)
+  private val fieldTypes = new Array[Type](maxFieldNumber + 1)
+  private val fieldWireTypes = new Array[Byte](maxFieldNumber + 1)
+  private val isRepeatedFlags = new Array[Boolean](maxFieldNumber + 1)
+  private val fieldDescriptors = new Array[FieldDescriptor](maxFieldNumber + 1)
+
+  // Initialize arrays to -1 for unset fields
+  java.util.Arrays.fill(rowOrdinals, -1)
+
+  // Build field mappings in single pass
+  locally {
+    buildFieldMappings(descriptor, schema)
+  }
+
+  private def buildFieldMappings(descriptor: Descriptor, schema: StructType): Unit = {
+    // Pre-compute schema field name to ordinal mapping for O(1) lookups
+    val schemaFieldMap = {
+      val map = new java.util.HashMap[String, Integer]()
+      var i = 0
+      while (i < schema.fields.length) {
+        map.put(schema.fields(i).name, i)
+        i += 1
+      }
+      map
+    }
+
+    // Single pass through descriptor fields
+    val fields = descriptor.getFields
+    var i = 0
+    while (i < fields.size()) {
+      val field = fields.get(i)
+      val fieldNum = field.getNumber
+
+      // Find corresponding field in Spark schema by name
+      val ordinalObj = schemaFieldMap.get(field.getName)
+      if (ordinalObj ne null) {
+        val ordinal = ordinalObj.intValue()
+
+        // Populate primitive arrays
+        rowOrdinals(fieldNum) = ordinal
+        fieldTypes(fieldNum) = field.getType
+        fieldWireTypes(fieldNum) = getExpectedWireType(field.getType).toByte
+        isRepeatedFlags(fieldNum) = field.isRepeated
+        fieldDescriptors(fieldNum) = field
+      }
+      // Field exists in protobuf but not in Spark schema - skip it
+      i += 1
+    }
+  }
 
   // Cache nested parsers for message fields - use array for O(1) lookup
   private val nestedParsersArray: Array[ParserRef] =
-    nestedParsersArrayOpt.getOrElse(buildNestedParsersArray())
+    nestedParsersArrayOpt.getOrElse(buildOptimizedNestedParsers(descriptor, schema))
 
   // Instance-level ParseState - reuse to avoid allocation on each parse (only for non-recursive types)
   private val instanceParseState: ParseState =
-    if (!isRecursive) new ParseState(maxFieldNumber, fieldTypesArray) else null
+    if (!isRecursive) new ParseState(maxFieldNumber) else null
 
 
   override protected def parseInto(input: CodedInputStream, writer: RowWriter): Unit = {
@@ -50,7 +110,7 @@ class WireFormatParser(
       instanceParseState.reset()
       instanceParseState
     } else {
-      new ParseState(maxFieldNumber, fieldTypesArray)
+      new ParseState(maxFieldNumber)
     }
     parseIntoWithState(input, writer, state)
   }
@@ -62,8 +122,8 @@ class WireFormatParser(
       val fieldNumber = WireFormat.getTagFieldNumber(tag)
       val wireType = WireFormat.getTagWireType(tag)
 
-      if (fieldNumber <= maxFieldNumber && fieldMappingArray(fieldNumber) != null) {
-        parseFieldWithState(input, tag, wireType, fieldMappingArray(fieldNumber), writer, state)
+      if (fieldNumber <= maxFieldNumber && rowOrdinals(fieldNumber) >= 0) {
+        parseFieldWithState(input, tag, wireType, fieldNumber, writer, state)
       } else {
         // Skip unknown fields
         input.skipField(tag)
@@ -74,212 +134,166 @@ class WireFormatParser(
     writeAccumulatedRepeatedFields(writer, state)
   }
 
-  private def buildFieldMappingArray(): (Array[FieldMapping], Int, Array[FieldDescriptor.Type]) = {
-    val tempMapping = scala.collection.mutable.Map[Int, FieldMapping]()
-    val tempTypes = scala.collection.mutable.Map[Int, FieldDescriptor.Type]()
-    var maxFieldNum = 0
-
-    descriptor.getFields.asScala.foreach { field =>
-      val fieldNum = field.getNumber
-      maxFieldNum = Math.max(maxFieldNum, fieldNum)
-
-      // Find corresponding field in Spark schema by name
-      schema.fields.zipWithIndex.find(_._1.name == field.getName) match {
-        case Some((sparkField, ordinal)) =>
-          tempMapping(fieldNum) = FieldMapping(
-            fieldDescriptor = field,
-            rowOrdinal = ordinal,
-            sparkDataType = sparkField.dataType,
-            isRepeated = field.isRepeated,
-            accumulatorType = field.getType
-          )
-          if (field.isRepeated) {
-            tempTypes(fieldNum) = field.getType
-          }
-        case None =>
-        // Field exists in protobuf but not in Spark schema - skip it
-      }
-    }
-
-    // Create arrays and populate them
-    val mappingArray = new Array[FieldMapping](maxFieldNum + 1)
-    val typesArray = new Array[FieldDescriptor.Type](maxFieldNum + 1)
-    tempMapping.foreach { case (fieldNum, mapping) =>
-      mappingArray(fieldNum) = mapping
-    }
-    tempTypes.foreach { case (fieldNum, fieldType) =>
-      typesArray(fieldNum) = fieldType
-    }
-
-    (mappingArray, maxFieldNum, typesArray)
-  }
-
-
-  private def buildNestedParsersArray(): Array[ParserRef] = {
-    val parsersArray = new Array[ParserRef](maxFieldNumber + 1)
-
-    var i = 0
-    while (i < fieldMappingArray.length) {
-      val mapping = fieldMappingArray(i)
-      if (mapping != null && mapping.fieldDescriptor.getType == FieldDescriptor.Type.MESSAGE) {
-        val nestedDescriptor = mapping.fieldDescriptor.getMessageType
-
-        val nestedSchema = mapping.sparkDataType match {
-          case struct: StructType => struct
-          case arrayType: ArrayType =>
-            arrayType.elementType.asInstanceOf[StructType]
-          case _ => throw new IllegalArgumentException(s"Expected StructType or ArrayType[StructType] for message field ${mapping.fieldDescriptor.getName}")
-        }
-
-        // Each child uses smart mode (WireFormatParser.apply)
-        val childParser = WireFormatParser(nestedDescriptor, nestedSchema)
-        parsersArray(i) = ParserRef(childParser)
-      }
-      i += 1
-    }
-
-    parsersArray
-  }
-
 
   private def parseFieldWithState(
       input: CodedInputStream,
       tag: Int,
       wireType: Int,
-      mapping: FieldMapping,
+      fieldNumber: Int,
       writer: RowWriter,
       state: ParseState): Unit = {
 
-    // Validate wire type matches expected type for this field
-    val expectedWireType = getExpectedWireType(mapping.fieldDescriptor.getType)
-    if (wireType != expectedWireType && !isValidWireTypeForField(wireType, mapping.fieldDescriptor.getType, mapping.isRepeated)) {
-      // Wire type mismatch - skip this field to avoid parsing errors
-      input.skipField(tag)
-      return
-    }
-
-    // JIT friendly: split repeated and single field parsing into separate methods to reduce bytecode size
-    if (mapping.isRepeated) {
-      parseRepeatedFieldWithState(input, wireType, mapping, state)
+    val expect = fieldWireTypes(fieldNumber)
+    if (isRepeatedFlags(fieldNumber)) {
+      if (wireType == WireFormat.WIRETYPE_LENGTH_DELIMITED && isPackable(fieldTypes(fieldNumber))) {
+        parsePackedRepeatedField(input, fieldNumber, state)
+      } else if (wireType == expect) {
+        parseUnpackedRepeatedField(input, fieldNumber, state)
+      } else {
+        input.skipField(tag)
+      }
     } else {
-      parseSingleField(input, mapping, writer)
+      if (wireType == expect) {
+        parseSingleField(input, fieldNumber, writer)
+      } else {
+        input.skipField(tag)
+      }
     }
   }
 
-  private def parseRepeatedFieldWithState(
+  private def parsePackedRepeatedField(
       input: CodedInputStream,
-      wireType: Int,
-      mapping: FieldMapping,
+      fieldNumber: Int,
       state: ParseState): Unit = {
     import FieldDescriptor.Type._
-    val fieldNumber = mapping.fieldDescriptor.getNumber
-    val fieldType = mapping.fieldDescriptor.getType
+    val fieldType = fieldTypes(fieldNumber)
 
-    // For repeated fields, accumulate values using type-specific accumulators
+    // Packed repeated fields - wire type is always LENGTH_DELIMITED
     fieldType match {
       // Variable-length int32 types
       case INT32 | UINT32 =>
         val list = state.getOrCreateAccumulator(fieldNumber, fieldType).asInstanceOf[IntList]
-        if (wireType == WireFormat.WIRETYPE_LENGTH_DELIMITED) {
-          parsePackedVarint32s(input, list)
-        } else {
-          list.add(input.readRawVarint32())
-        }
+        parsePackedVarint32s(input, list)
 
       case ENUM =>
         val list = state.getOrCreateAccumulator(fieldNumber, fieldType).asInstanceOf[IntList]
-        if (wireType == WireFormat.WIRETYPE_LENGTH_DELIMITED) {
-          parsePackedVarint32s(input, list)
-        } else {
-          list.add(input.readEnum())
-        }
+        parsePackedVarint32s(input, list)
 
       case SINT32 =>
         val list = state.getOrCreateAccumulator(fieldNumber, fieldType).asInstanceOf[IntList]
-        if (wireType == WireFormat.WIRETYPE_LENGTH_DELIMITED) {
-          parsePackedSInt32s(input, list)
-        } else {
-          list.add(input.readSInt32())
-        }
+        parsePackedSInt32s(input, list)
 
       // Variable-length int64 types
       case INT64 | UINT64 =>
         val list = state.getOrCreateAccumulator(fieldNumber, fieldType).asInstanceOf[LongList]
-        if (wireType == WireFormat.WIRETYPE_LENGTH_DELIMITED) {
-          parsePackedVarint64s(input, list)
-        } else {
-          list.add(input.readRawVarint64())
-        }
+        parsePackedVarint64s(input, list)
 
       case SINT64 =>
         val list = state.getOrCreateAccumulator(fieldNumber, fieldType).asInstanceOf[LongList]
-        if (wireType == WireFormat.WIRETYPE_LENGTH_DELIMITED) {
-          parsePackedSInt64s(input, list)
-        } else {
-          list.add(input.readSInt64())
-        }
+        parsePackedSInt64s(input, list)
 
       // Fixed-size int32 types
       case FIXED32 | SFIXED32 =>
         val list = state.getOrCreateAccumulator(fieldNumber, fieldType).asInstanceOf[IntList]
-        if (wireType == WireFormat.WIRETYPE_LENGTH_DELIMITED) {
-          val packedLength = input.readRawVarint32()
-          list.array = parsePackedFixed32s(input, list.array, list.count, packedLength)
-          list.count += packedLength / 4
-        } else {
-          list.add(input.readRawLittleEndian32())
-        }
+        val packedLength = input.readRawVarint32()
+        list.array = parsePackedFixed32s(input, list.array, list.count, packedLength)
+        list.count += packedLength / 4
 
       // Fixed-size int64 types
       case FIXED64 | SFIXED64 =>
         val list = state.getOrCreateAccumulator(fieldNumber, fieldType).asInstanceOf[LongList]
-        if (wireType == WireFormat.WIRETYPE_LENGTH_DELIMITED) {
-          val packedLength = input.readRawVarint32()
-          list.array = parsePackedFixed64s(input, list.array, list.count, packedLength)
-          list.count += packedLength / 8
-        } else {
-          list.add(input.readRawLittleEndian64())
-        }
+        val packedLength = input.readRawVarint32()
+        list.array = parsePackedFixed64s(input, list.array, list.count, packedLength)
+        list.count += packedLength / 8
 
       // Float type
       case FLOAT =>
         val list = state.getOrCreateAccumulator(fieldNumber, fieldType).asInstanceOf[FloatList]
-        if (wireType == WireFormat.WIRETYPE_LENGTH_DELIMITED) {
-          val packedLength = input.readRawVarint32()
-          list.array = parsePackedFloats(input, list.array, list.count, packedLength)
-          list.count += packedLength / 4
-        } else {
-          list.add(input.readFloat())
-        }
+        val packedLength = input.readRawVarint32()
+        list.array = parsePackedFloats(input, list.array, list.count, packedLength)
+        list.count += packedLength / 4
 
       // Double type
       case DOUBLE =>
         val list = state.getOrCreateAccumulator(fieldNumber, fieldType).asInstanceOf[DoubleList]
-        if (wireType == WireFormat.WIRETYPE_LENGTH_DELIMITED) {
-          val packedLength = input.readRawVarint32()
-          list.array = parsePackedDoubles(input, list.array, list.count, packedLength)
-          list.count += packedLength / 8
-        } else {
-          list.add(input.readDouble())
-        }
+        val packedLength = input.readRawVarint32()
+        list.array = parsePackedDoubles(input, list.array, list.count, packedLength)
+        list.count += packedLength / 8
 
       // Boolean type
       case BOOL =>
         val list = state.getOrCreateAccumulator(fieldNumber, fieldType).asInstanceOf[BooleanList]
-        if (wireType == WireFormat.WIRETYPE_LENGTH_DELIMITED) {
-          val packedLength = input.readRawVarint32()
-          list.array = parsePackedBooleans(input, list.array, list.count, packedLength)
-          list.count += packedLength
-        } else {
-          list.add(input.readBool())
-        }
+        val packedLength = input.readRawVarint32()
+        list.array = parsePackedBooleans(input, list.array, list.count, packedLength)
+        list.count += packedLength
 
-      // String/Bytes types
+      case _ =>
+        throw new UnsupportedOperationException(s"Field type $fieldType is not packable")
+    }
+  }
+
+  private def parseUnpackedRepeatedField(
+      input: CodedInputStream,
+      fieldNumber: Int,
+      state: ParseState): Unit = {
+    import FieldDescriptor.Type._
+    val fieldType = fieldTypes(fieldNumber)
+
+    // Unpacked repeated fields - individual values with expected wire types
+    fieldType match {
+      // Variable-length int32 types
+      case INT32 | UINT32 =>
+        val list = state.getOrCreateAccumulator(fieldNumber, fieldType).asInstanceOf[IntList]
+        list.add(input.readRawVarint32())
+
+      case ENUM =>
+        val list = state.getOrCreateAccumulator(fieldNumber, fieldType).asInstanceOf[IntList]
+        list.add(input.readEnum())
+
+      case SINT32 =>
+        val list = state.getOrCreateAccumulator(fieldNumber, fieldType).asInstanceOf[IntList]
+        list.add(input.readSInt32())
+
+      // Variable-length int64 types
+      case INT64 | UINT64 =>
+        val list = state.getOrCreateAccumulator(fieldNumber, fieldType).asInstanceOf[LongList]
+        list.add(input.readRawVarint64())
+
+      case SINT64 =>
+        val list = state.getOrCreateAccumulator(fieldNumber, fieldType).asInstanceOf[LongList]
+        list.add(input.readSInt64())
+
+      // Fixed-size int32 types
+      case FIXED32 | SFIXED32 =>
+        val list = state.getOrCreateAccumulator(fieldNumber, fieldType).asInstanceOf[IntList]
+        list.add(input.readRawLittleEndian32())
+
+      // Fixed-size int64 types
+      case FIXED64 | SFIXED64 =>
+        val list = state.getOrCreateAccumulator(fieldNumber, fieldType).asInstanceOf[LongList]
+        list.add(input.readRawLittleEndian64())
+
+      // Float type
+      case FLOAT =>
+        val list = state.getOrCreateAccumulator(fieldNumber, fieldType).asInstanceOf[FloatList]
+        list.add(input.readFloat())
+
+      // Double type
+      case DOUBLE =>
+        val list = state.getOrCreateAccumulator(fieldNumber, fieldType).asInstanceOf[DoubleList]
+        list.add(input.readDouble())
+
+      // Boolean type
+      case BOOL =>
+        val list = state.getOrCreateAccumulator(fieldNumber, fieldType).asInstanceOf[BooleanList]
+        list.add(input.readBool())
+
+      // String/Bytes types - not packable, only appear in unpacked form
       case STRING | BYTES =>
         val list = state.getOrCreateAccumulator(fieldNumber, fieldType).asInstanceOf[BytesList]
         list.add(input.readByteArray())
 
-      // Message types use ByteBuffer to avoid copying
+      // Message types - not packable, only appear in unpacked form
       case MESSAGE =>
         val list = state.getOrCreateAccumulator(fieldNumber, fieldType).asInstanceOf[BufferList]
         list.add(input.readByteBuffer())
@@ -289,40 +303,44 @@ class WireFormatParser(
     }
   }
 
+
   private def parseSingleField(
       input: CodedInputStream,
-      mapping: FieldMapping,
+      fieldNumber: Int,
       writer: RowWriter): Unit = {
     import FieldDescriptor.Type._
 
+    val rowOrdinal = rowOrdinals(fieldNumber)
+    val fieldType = fieldTypes(fieldNumber)
+
     // Single field - write directly to the row
-    mapping.fieldDescriptor.getType match {
+    fieldType match {
       case DOUBLE =>
-        writer.write(mapping.rowOrdinal, input.readDouble())
+        writer.write(rowOrdinal, input.readDouble())
       case FLOAT =>
-        writer.write(mapping.rowOrdinal, input.readFloat())
+        writer.write(rowOrdinal, input.readFloat())
       case INT64 | UINT64 =>
-        writer.write(mapping.rowOrdinal, input.readRawVarint64())
+        writer.write(rowOrdinal, input.readRawVarint64())
       case INT32 | UINT32 =>
-        writer.write(mapping.rowOrdinal, input.readRawVarint32())
+        writer.write(rowOrdinal, input.readRawVarint32())
       case FIXED64 | SFIXED64 =>
-        writer.write(mapping.rowOrdinal, input.readRawLittleEndian64())
+        writer.write(rowOrdinal, input.readRawLittleEndian64())
       case FIXED32 | SFIXED32 =>
-        writer.write(mapping.rowOrdinal, input.readRawLittleEndian32())
+        writer.write(rowOrdinal, input.readRawLittleEndian32())
       case BOOL =>
-        writer.write(mapping.rowOrdinal, input.readBool())
+        writer.write(rowOrdinal, input.readBool())
       case STRING =>
-        writer.writeBytes(mapping.rowOrdinal, input.readByteArray())
+        writer.writeBytes(rowOrdinal, input.readByteArray())
       case BYTES =>
-        writer.writeBytes(mapping.rowOrdinal, input.readByteArray())
+        writer.writeBytes(rowOrdinal, input.readByteArray())
       case ENUM =>
-        writer.write(mapping.rowOrdinal, input.readEnum())
+        writer.write(rowOrdinal, input.readEnum())
       case SINT32 =>
-        writer.write(mapping.rowOrdinal, input.readSInt32())
+        writer.write(rowOrdinal, input.readSInt32())
       case SINT64 =>
-        writer.write(mapping.rowOrdinal, input.readSInt64())
+        writer.write(rowOrdinal, input.readSInt64())
       case MESSAGE =>
-        writeNestedMessage(input, mapping, writer)
+        writeNestedMessage(input, fieldNumber, writer)
       case GROUP =>
         throw new UnsupportedOperationException("GROUP type is deprecated and not supported")
     }
@@ -330,57 +348,68 @@ class WireFormatParser(
 
   private def writeNestedMessage(
       input: CodedInputStream,
-      mapping: FieldMapping,
+      fieldNumber: Int,
       writer: RowWriter): Unit = {
-    val fieldNumber = mapping.fieldDescriptor.getNumber
-    val parser = nestedParsersArray(fieldNumber).parser
+    val parserRef = nestedParsersArray(fieldNumber)
+    if ((parserRef ne null) && (parserRef.parser ne null)) {
+      val parser = parserRef.parser
+      val rowOrdinal = rowOrdinals(fieldNumber)
 
-    val offset = writer.cursor
-    parseNestedMessage(input, parser, writer.toUnsafeWriter)
-    writer.writeVariableField(mapping.rowOrdinal, offset)
+      val offset = writer.cursor
+      parseNestedMessage(input, parser, writer.toUnsafeWriter)
+      writer.writeVariableField(rowOrdinal, offset)
+    } else {
+      // Skip the message if no parser is available (field not in schema)
+      input.skipRawBytes(input.readRawVarint32)
+    }
   }
 
   private def writeAccumulatedRepeatedFields(writer: RowWriter, state: ParseState): Unit = {
     var fieldNumber = 0
-    while (fieldNumber < fieldMappingArray.length) {
-      val mapping = fieldMappingArray(fieldNumber)
-      if (mapping != null && mapping.isRepeated) {
-        val accumulator = state.getAccumulator(fieldNumber, mapping.accumulatorType)
-        if (accumulator != null) {
+    while (fieldNumber <= maxFieldNumber) {
+      if (rowOrdinals(fieldNumber) >= 0 && isRepeatedFlags(fieldNumber)) {
+        val accumulator = state.getAccumulator(fieldNumber)
+        if (accumulator ne null) {
+          val rowOrdinal = rowOrdinals(fieldNumber)
+          val fieldType = fieldTypes(fieldNumber)
+
           accumulator match {
             case list: IntList if list.count > 0 =>
               // Handle enum conversion for ENUM fields
-              if (mapping.fieldDescriptor.getType == FieldDescriptor.Type.ENUM) {
-                writeEnumArray(list, mapping, writer)
-              } else {
-                writeIntArray(list.array, list.count, mapping.rowOrdinal, writer)
-              }
+              // if (fieldType == FieldDescriptor.Type.ENUM) {
+              //   writeEnumArray(list, fieldNumber, writer)
+              // } else {
+              writeIntArray(list.array, list.count, rowOrdinal, writer)
+            // }
 
             case list: LongList if list.count > 0 =>
-              writeLongArray(list.array, list.count, mapping.rowOrdinal, writer)
+              writeLongArray(list.array, list.count, rowOrdinal, writer)
 
             case list: FloatList if list.count > 0 =>
-              writeFloatArray(list.array, list.count, mapping.rowOrdinal, writer)
+              writeFloatArray(list.array, list.count, rowOrdinal, writer)
 
             case list: DoubleList if list.count > 0 =>
-              writeDoubleArray(list.array, list.count, mapping.rowOrdinal, writer)
+              writeDoubleArray(list.array, list.count, rowOrdinal, writer)
 
             case list: BooleanList if list.count > 0 =>
-              writeBooleanArray(list.array, list.count, mapping.rowOrdinal, writer)
+              writeBooleanArray(list.array, list.count, rowOrdinal, writer)
 
             case list: BytesList if list.count > 0 =>
-              mapping.fieldDescriptor.getType match {
+              fieldType match {
                 case FieldDescriptor.Type.STRING =>
-                  writeStringArray(list.array, list.count, mapping.rowOrdinal, writer)
+                  writeStringArray(list.array, list.count, rowOrdinal, writer)
                 case FieldDescriptor.Type.BYTES =>
-                  writeBytesArray(list.array, list.count, mapping.rowOrdinal, writer)
+                  writeBytesArray(list.array, list.count, rowOrdinal, writer)
                 case _ =>
-                  throw new IllegalStateException(s"Unexpected field type ${mapping.fieldDescriptor.getType} for BytesList")
+                  throw new IllegalStateException(s"Unexpected field type $fieldType for BytesList")
               }
 
             case list: BufferList if list.count > 0 =>
-              val parser = nestedParsersArray(fieldNumber).parser
-              writeMessageArrayFromBuffers(list.array, list.count, mapping.rowOrdinal, parser, writer)
+              val parserRef = nestedParsersArray(fieldNumber)
+              if ((parserRef ne null) && (parserRef.parser ne null)) {
+                val parser = parserRef.parser
+                writeMessageArrayFromBuffers(list.array, list.count, rowOrdinal, parser, writer)
+              }
 
             case _ => // Empty lists or null - skip
           }
@@ -390,21 +419,22 @@ class WireFormatParser(
     }
   }
 
-  private def writeEnumArray(list: IntList, mapping: FieldMapping, writer: RowWriter): Unit = {
+  private def writeEnumArray(list: IntList, fieldNumber: Int, writer: RowWriter): Unit = {
     // Convert enum values to string array
-    val enumDescriptor = mapping.fieldDescriptor.getEnumType
+    val enumDescriptor = fieldDescriptors(fieldNumber).getEnumType
+    val rowOrdinal = rowOrdinals(fieldNumber)
     val stringBytes = new Array[Array[Byte]](list.count)
 
     var i = 0
     while (i < list.count) {
       val enumValue = list.array(i)
       val enumValueDescriptor = enumDescriptor.findValueByNumber(enumValue)
-      val enumName = if (enumValueDescriptor != null) enumValueDescriptor.getName else enumValue.toString
+      val enumName = if (enumValueDescriptor ne null) enumValueDescriptor.getName else enumValue.toString
       stringBytes(i) = enumName.getBytes("UTF-8")
       i += 1
     }
 
-    writeStringArray(stringBytes, list.count, mapping.rowOrdinal, writer)
+    writeStringArray(stringBytes, list.count, rowOrdinal, writer)
   }
 
   /**
@@ -430,26 +460,9 @@ class WireFormatParser(
       case SINT32 => WireFormat.WIRETYPE_VARINT
       case SINT64 => WireFormat.WIRETYPE_VARINT
       case MESSAGE => WireFormat.WIRETYPE_LENGTH_DELIMITED
-      case GROUP => throw new UnsupportedOperationException("GROUP type is deprecated and not supported")
+      // case GROUP => throw new UnsupportedOperationException("GROUP type is deprecated and not supported")
+      case _ => -1
     }
-  }
-
-  /**
-   * Checks if a wire type is valid for a field type, considering repeated fields and packed encoding.
-   */
-  private def isValidWireTypeForField(wireType: Int, fieldType: FieldDescriptor.Type, isRepeated: Boolean): Boolean = {
-    val expectedWireType = getExpectedWireType(fieldType)
-
-    if (wireType == expectedWireType) {
-      return true
-    }
-
-    // For repeated fields, also allow LENGTH_DELIMITED for packed encoding
-    if (isRepeated && wireType == WireFormat.WIRETYPE_LENGTH_DELIMITED && isPackable(fieldType)) {
-      return true
-    }
-
-    false
   }
 
   private def isPackable(fieldType: FieldDescriptor.Type): Boolean = {
@@ -463,27 +476,18 @@ class WireFormatParser(
 }
 
 object WireFormatParser {
-  /**
-   * Mapping information for a protobuf field to its corresponding Spark row position.
-   */
-  private case class FieldMapping(
-      fieldDescriptor: FieldDescriptor,
-      rowOrdinal: Int,
-      sparkDataType: org.apache.spark.sql.types.DataType,
-      isRepeated: Boolean,
-      accumulatorType: FieldDescriptor.Type) // Type of accumulator needed, not instance
 
   /**
    * Parse state that holds all accumulators for a single parse operation.
    * This ensures thread-safe recursive parsing by isolating state per call.
    */
-  private class ParseState(maxFieldNumber: Int, fieldTypes: Array[FieldDescriptor.Type]) {
+  private class ParseState(maxFieldNumber: Int) {
     // Single array of FastList for all field types - cast to specific subtype when needed
     private val lists = new Array[FastList](maxFieldNumber + 1)
 
-    def getOrCreateAccumulator(fieldNumber: Int, fieldType: FieldDescriptor.Type): Any = {
+    def getOrCreateAccumulator(fieldNumber: Int, fieldType: FieldDescriptor.Type): AnyRef = {
       import FieldDescriptor.Type._
-      if (lists(fieldNumber) == null) {
+      if (lists(fieldNumber) eq null) {
         lists(fieldNumber) = fieldType match {
           case INT32 | SINT32 | UINT32 | ENUM | FIXED32 | SFIXED32 => new IntList()
           case INT64 | SINT64 | UINT64 | FIXED64 | SFIXED64 => new LongList()
@@ -498,24 +502,32 @@ object WireFormatParser {
       lists(fieldNumber)
     }
 
-    def getAccumulator(fieldNumber: Int, fieldType: FieldDescriptor.Type): Any = {
+    def getAccumulator(fieldNumber: Int): AnyRef = {
       lists(fieldNumber)
     }
 
     def reset(): Unit = {
       var i = 0
       while (i <= maxFieldNumber) {
-        if (lists(i) != null) lists(i).reset()
+        if (lists(i) ne null) lists(i).reset()
         i += 1
       }
     }
   }
 
-  // Smart construction that detects recursion and optimizes entire tree
-  def apply(descriptor: Descriptor, schema: StructType): WireFormatParser = {
-    val visited = mutable.HashMap[(String, Boolean), ParserRef]()
-    buildOptimizedParser(descriptor, schema, isRecursive = false, visited).parser
-  }
+  private val threadVisited = ThreadLocal.withInitial(() => mutable.HashMap[(String, Boolean), ParserRef]())
+
+  /**
+   * Smart construction that detects recursion and optimizes entire parser tree.
+   * Uses ThreadLocal caching to reuse visited parser references within the same thread,
+   * enabling efficient cycle detection and parser reuse for recursive message structures.
+   *
+   * @param descriptor the protobuf message descriptor
+   * @param schema     the corresponding Spark SQL schema
+   * @return optimized WireFormatParser with recursion detection
+   */
+  def apply(descriptor: Descriptor, schema: StructType): WireFormatParser =
+    buildOptimizedParser(descriptor, schema, isRecursive = false, threadVisited.get()).parser
 
   private def buildOptimizedParser(
       descriptor: Descriptor,
@@ -553,28 +565,52 @@ object WireFormatParser {
   private def buildOptimizedNestedParsers(
       descriptor: Descriptor,
       schema: StructType,
-      isRecursive: Boolean,
-      visited: mutable.HashMap[(String, Boolean), ParserRef]): Array[ParserRef] = {
+      isRecursive: Boolean = false,
+      visited: mutable.HashMap[(String, Boolean), ParserRef] = mutable.HashMap()): Array[ParserRef] = {
 
-    val fieldMappingArray = buildFieldMappingArrayForDescriptor(descriptor, schema)
-    val maxFieldNumber = if (fieldMappingArray.nonEmpty) fieldMappingArray.indices.max else 0
-    val parsersArray = new Array[ParserRef](maxFieldNumber + 1)
-
+    // Calculate max field number
+    var maxFieldNum = 0
+    val fields = descriptor.getFields
     var i = 0
-    while (i < fieldMappingArray.length) {
-      val mapping = fieldMappingArray(i)
-      if (mapping != null && mapping.fieldDescriptor.getType == FieldDescriptor.Type.MESSAGE) {
-        val nestedDescriptor = mapping.fieldDescriptor.getMessageType
-        val nestedKey = nestedDescriptor.getFullName
+    while (i < fields.size()) {
+      val fieldNum = fields.get(i).getNumber
+      if (fieldNum > maxFieldNum) maxFieldNum = fieldNum
+      i += 1
+    }
 
-        val nestedSchema = mapping.sparkDataType match {
-          case struct: StructType => struct
-          case arrayType: ArrayType =>
-            arrayType.elementType.asInstanceOf[StructType]
-          case _ => throw new IllegalArgumentException(s"Expected StructType or ArrayType[StructType] for message field ${mapping.fieldDescriptor.getName}")
+    val parsersArray = new Array[ParserRef](maxFieldNum + 1)
+
+    // Pre-compute schema field name to index mapping
+    val schemaFieldMap = {
+      val map = new java.util.HashMap[String, (org.apache.spark.sql.types.DataType, Int)]()
+      var idx = 0
+      while (idx < schema.fields.length) {
+        val field = schema.fields(idx)
+        map.put(field.name, (field.dataType, idx))
+        idx += 1
+      }
+      map
+    }
+
+    // Build parsers for message fields
+    i = 0
+    while (i < fields.size()) {
+      val field = fields.get(i)
+      if (field.getType == FieldDescriptor.Type.MESSAGE) {
+        val fieldMapping = schemaFieldMap.get(field.getName)
+        if (fieldMapping ne null) {
+          val (sparkDataType, _) = fieldMapping
+          val nestedDescriptor = field.getMessageType
+
+          val nestedSchema = sparkDataType match {
+            case struct: StructType => struct
+            case arrayType: ArrayType =>
+              arrayType.elementType.asInstanceOf[StructType]
+            case _ => throw new IllegalArgumentException(s"Expected StructType or ArrayType[StructType] for message field ${field.getName}")
+          }
+
+          parsersArray(field.getNumber) = buildOptimizedParser(nestedDescriptor, nestedSchema, isRecursive, visited)
         }
-
-        parsersArray(i) = buildOptimizedParser(nestedDescriptor, nestedSchema, isRecursive, visited)
       }
       i += 1
     }
@@ -582,38 +618,9 @@ object WireFormatParser {
     parsersArray
   }
 
-
-  private def buildFieldMappingArrayForDescriptor(descriptor: Descriptor, schema: StructType): Array[FieldMapping] = {
-    val tempMapping = scala.collection.mutable.Map[Int, FieldMapping]()
-    var maxFieldNum = 0
-
-    descriptor.getFields.asScala.foreach { field =>
-      val fieldNum = field.getNumber
-      maxFieldNum = Math.max(maxFieldNum, fieldNum)
-
-      // Find corresponding field in Spark schema by name
-      schema.fields.zipWithIndex.find(_._1.name == field.getName) match {
-        case Some((sparkField, ordinal)) =>
-          tempMapping(fieldNum) = FieldMapping(
-            fieldDescriptor = field,
-            rowOrdinal = ordinal,
-            sparkDataType = sparkField.dataType,
-            isRepeated = field.isRepeated,
-            accumulatorType = field.getType
-          )
-        case None =>
-        // Field exists in protobuf but not in Spark schema - skip it
-      }
-    }
-
-    // Create array and populate it
-    val mappingArray = new Array[FieldMapping](maxFieldNum + 1)
-    tempMapping.foreach { case (fieldNum, mapping) =>
-      mappingArray(fieldNum) = mapping
-    }
-
-    mappingArray
-  }
-
   case class ParserRef(var parser: WireFormatParser)
+
+  private val TAG_TYPE_BITS = 3
+  private val TAG_TYPE_MASK = (1 << TAG_TYPE_BITS) - 1
+
 }
