@@ -65,6 +65,29 @@ message AllRepeatedTypes {
   repeated AllPrimitiveTypes.Status status_list = 16;
 }
 
+// All repeated types with UNPACKED encoding (proto3 [packed = false] option)
+// Critical: Parsers must handle both packed and unpacked wire formats
+message AllUnpackedRepeatedTypes {
+  repeated int32 int32_list = 1 [packed = false];
+  repeated int64 int64_list = 2 [packed = false];
+  repeated uint32 uint32_list = 3 [packed = false];
+  repeated uint64 uint64_list = 4 [packed = false];
+  repeated sint32 sint32_list = 5 [packed = false];  // CRITICAL: Unpacked ZigZag
+  repeated sint64 sint64_list = 6 [packed = false];  // CRITICAL: Unpacked ZigZag
+  repeated fixed32 fixed32_list = 7 [packed = false];
+  repeated fixed64 fixed64_list = 8 [packed = false];
+  repeated sfixed32 sfixed32_list = 9 [packed = false];
+  repeated sfixed64 sfixed64_list = 10 [packed = false];
+  repeated float float_list = 11 [packed = false];
+  repeated double double_list = 12 [packed = false];
+  repeated bool bool_list = 13 [packed = false];
+
+  // Not packable (always length-delimited) - same as packed version
+  repeated string string_list = 14;
+  repeated bytes bytes_list = 15;
+  repeated AllPrimitiveTypes.Status status_list = 16 [packed = false];
+}
+
 // Complete message with all fields populated for testing
 message CompleteMessage {
   AllPrimitiveTypes primitives = 1;

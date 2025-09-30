@@ -213,6 +213,77 @@ trait ParserBehaviors extends InternalRowMatchers { this: AnyFlatSpec with Match
     }
   }
 
+  // ========== Unpacked Repeated Fields Behavior ==========
+
+  def unpackedRepeatedFieldParser(createParser: ParserFactory): Unit = {
+    it should "parse unpacked repeated fields correctly" in {
+      val message = TestData.createFullUnpackedRepeated()
+      val binary = message.toByteArray
+      val descriptor = message.getDescriptorForType
+      val schema = RecursiveSchemaConverters.toSqlTypeWithTrueRecursion(descriptor, enumAsInt = true)
+      val parser = createParser(descriptor, schema, Some(classOf[AllUnpackedRepeatedTypes]))
+
+      val row = parser.parse(binary)
+
+      // int32_list
+      row.isNullAt(0) shouldBe false
+      val int32Array = row.getArray(0)
+      int32Array.numElements() shouldBe 5
+      int32Array.getInt(0) shouldBe 1
+      int32Array.getInt(4) shouldBe 5
+
+      // sint32_list (CRITICAL: ZigZag encoded UNPACKED)
+      row.isNullAt(4) shouldBe false
+      val sint32Array = row.getArray(4)
+      sint32Array.numElements() shouldBe 3
+      sint32Array.getInt(0) shouldBe -1
+      sint32Array.getInt(1) shouldBe -2
+      sint32Array.getInt(2) shouldBe -3
+
+      // sint64_list (CRITICAL: ZigZag encoded UNPACKED)
+      row.isNullAt(5) shouldBe false
+      val sint64Array = row.getArray(5)
+      sint64Array.numElements() shouldBe 3
+      sint64Array.getLong(0) shouldBe -10L
+      sint64Array.getLong(1) shouldBe -20L
+      sint64Array.getLong(2) shouldBe -30L
+
+      // float_list
+      row.isNullAt(10) shouldBe false
+      val floatArray = row.getArray(10)
+      floatArray.numElements() shouldBe 4
+      floatArray.getFloat(0) shouldBe 1.1f +- 0.01f
+
+      // string_list (not packable - always length-delimited)
+      row.isNullAt(13) shouldBe false
+      val stringArray = row.getArray(13)
+      stringArray.numElements() shouldBe 3
+      stringArray.getUTF8String(0).toString shouldBe "a"
+      stringArray.getUTF8String(1).toString shouldBe "b"
+      stringArray.getUTF8String(2).toString shouldBe "c"
+    }
+
+    it should "handle empty unpacked repeated fields" in {
+      val message = TestData.createEmptyUnpackedRepeated()
+      val binary = message.toByteArray
+      val descriptor = message.getDescriptorForType
+      val schema = RecursiveSchemaConverters.toSqlTypeWithTrueRecursion(descriptor, enumAsInt = true)
+      val parser = createParser(descriptor, schema, Some(classOf[AllUnpackedRepeatedTypes]))
+
+      val row = parser.parse(binary)
+
+      // Empty repeated fields should be either null or empty arrays
+      // Both are acceptable depending on parser implementation
+      if (!row.isNullAt(0)) {
+        row.getArray(0).numElements() shouldBe 0
+      }
+
+      if (!row.isNullAt(4)) {
+        row.getArray(4).numElements() shouldBe 0
+      }
+    }
+  }
+
   // ========== Nested Messages Behavior ==========
 
   def nestedMessageParser(createParser: ParserFactory): Unit = {
