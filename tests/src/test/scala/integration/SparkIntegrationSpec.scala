@@ -1,11 +1,12 @@
 package integration
 
 import com.google.protobuf.DescriptorProtos
-import org.apache.spark.sql.{DataFrame, Row, SparkSession}
-import org.scalatest.{BeforeAndAfterAll, Tag}
+import org.apache.spark.sql.SparkSession
+import org.apache.spark.sql.catalyst.expressions.codegen.UnsafeRowWriter
+import org.apache.spark.sql.protobuf.backport.functions._
 import org.scalatest.flatspec.AnyFlatSpec
 import org.scalatest.matchers.should.Matchers
-import org.apache.spark.sql.protobuf.backport.functions._
+import org.scalatest.{BeforeAndAfterAll, Tag}
 import testproto.AllTypesProtos._
 import testproto.EdgeCasesProtos._
 import testproto.TestData
@@ -35,12 +36,13 @@ class SparkIntegrationSpec extends AnyFlatSpec with Matchers with BeforeAndAfter
     org.apache.log4j.Logger.getLogger("org.spark_project").setLevel(org.apache.log4j.Level.ERROR)
 
     spark = SparkSession.builder()
-      .master("local[2]")  // 2 threads for parallel execution
+      .master("local[2]") // 2 threads for parallel execution
       .appName("SparkIntegrationSpec")
       .config("spark.ui.enabled", "false")
       .config("spark.sql.adaptive.enabled", "false")
-      .config("spark.sql.shuffle.partitions", "4")  // Force shuffling for distributed-like behavior
-      .config("spark.serializer", "org.apache.spark.serializer.JavaSerializer")  // Use JavaSerializer to avoid Kryo Java module issues
+      .config("spark.sql.shuffle.partitions", "4") // Force shuffling for distributed-like behavior
+      .config("spark.sql.codegen.wholeStage", "true") // Force whole-stage code generation
+      .config("spark.serializer", "org.apache.spark.serializer.JavaSerializer") // Use JavaSerializer to avoid Kryo Java module issues
       .config("spark.hadoop.fs.defaultFS", "file:///")
       .config("spark.sql.warehouse.dir", s"file://${System.getProperty("java.io.tmpdir")}/spark-warehouse")
       .config("spark.hadoop.yarn.timeline-service.enabled", "false")
@@ -111,13 +113,13 @@ class SparkIntegrationSpec extends AnyFlatSpec with Matchers with BeforeAndAfter
 
     // Sample rows to verify correctness (order not guaranteed after repartition)
     val rows = parsedDf.select("proto.int32_field", "proto.sint32_field", "proto.string_field")
-      .orderBy("proto.int32_field")  // Order by int32_field for deterministic results
+      .orderBy("proto.int32_field") // Order by int32_field for deterministic results
       .collect()
     rows.length shouldBe rowCount
 
     // Verify specific rows after ordering
     val firstRow = rows.head
-    firstRow.getInt(0) shouldBe 1  // int32_field
+    firstRow.getInt(0) shouldBe 1 // int32_field
     firstRow.getInt(1) shouldBe -1 // sint32_field
     firstRow.getString(2) shouldBe "row_1"
 
@@ -159,9 +161,9 @@ class SparkIntegrationSpec extends AnyFlatSpec with Matchers with BeforeAndAfter
 
     result.length shouldBe 100
     result.foreach { row =>
-      row.getInt(0) shouldBe 5  // int32_list has 5 elements
-      row.getInt(1) shouldBe 3  // sint32_list has 3 elements
-      row.getInt(2) shouldBe 2  // string_list has 2 elements
+      row.getInt(0) shouldBe 5 // int32_list has 5 elements
+      row.getInt(1) shouldBe 3 // sint32_list has 3 elements
+      row.getInt(2) shouldBe 2 // string_list has 2 elements
     }
   }
 
@@ -223,9 +225,9 @@ class SparkIntegrationSpec extends AnyFlatSpec with Matchers with BeforeAndAfter
       "COUNT(DISTINCT proto.sint32_list) as distinct_sint32_lists"
     ).collect().head
 
-    stats.getLong(0) shouldBe 1000  // All rows processed
-    stats.getLong(1) shouldBe 1     // All int32_lists identical
-    stats.getLong(2) shouldBe 1     // All sint32_lists identical
+    stats.getLong(0) shouldBe 1000 // All rows processed
+    stats.getLong(1) shouldBe 1 // All int32_lists identical
+    stats.getLong(2) shouldBe 1 // All sint32_lists identical
   }
 
   it should "handle mixed message types in distributed mode" in {
@@ -267,13 +269,80 @@ class SparkIntegrationSpec extends AnyFlatSpec with Matchers with BeforeAndAfter
     unpackRow.getInt(0) shouldBe 3
   }
 
+  ignore should "handle corrupted row" in {
+    import org.apache.spark.sql.catalyst.expressions.UnsafeRow
+    import org.apache.spark.sql.types.{IntegerType, StringType, StructField, StructType}
+    val row = new UnsafeRow(3)
+    val buf = new Array[Byte](64)
+    row.pointTo(buf, 32)
+    var i = 0
+    while (i < 64) {
+      buf(i) = 0xff.toByte
+      i += 1
+    }
+    row.setNotNullAt(0)
+    row.setLong(1, 0L)
+    row.setNullAt(1)
+    println(row)
+    println(row.isNullAt(0))
+    println(row.isNullAt(1))
+    println(row.isNullAt(2))
+    println(row.getLong(0))
+    println(row.getLong(1))
+    println(row.getLong(2))
+    val struct = row.getStruct(1, 2)
+    println(struct)
+    if (struct ne null) {
+      println(struct.isNullAt(0))
+      println(struct.getLong(0))
+      println(struct.isNullAt(1))
+      println(struct.getLong(1))
+    }
+
+    val writer = new UnsafeRowWriter(1)
+    writer.reset()
+    writer.write(0, row)
+    val row2 = writer.getRow
+    println(row2, row2.getBaseOffset, row2.getSizeInBytes)
+    val row3Ptr = row2.getLong(0)
+    val row3 = row2.getStruct(0, 3)
+    val offset = (row3Ptr >> 32).toInt
+    val size = row3Ptr.toInt
+    println(row3Ptr, offset, size, row3, row3.getBaseOffset, row3.getSizeInBytes)
+    val row4Ptr = row3.getLong(1)
+    val row4 = row3.getStruct(1, 2)
+    println(row4Ptr, row4)
+
+    import org.apache.spark.sql.hack.Hack
+    val df = Hack.internalCreateDataFrame(spark, spark.sparkContext.parallelize(Seq(row, row, row, row), 4), StructType(Array(
+      StructField("a", IntegerType),
+      StructField("b", StructType(Array(
+        StructField("foo", StringType),
+        StructField("foo1", StringType),
+      ))),
+      StructField("c", StructType(Array(
+        StructField("bar", StringType)
+      ))),
+    )))
+
+    df.show()
+  }
+
   it should "handle empty binaries and missing nested/repeated fields in distributed mode" in {
     val sparkImplicits = spark.implicits
+    import org.apache.spark.sql.functions.isnull
     import sparkImplicits._
 
     // Create completely empty binaries (empty byte arrays) to test parser robustness
-    val emptyMessages = (1 to 100).map { _ =>
-      new Array[Byte](0)  // Completely empty binary
+
+    val messageA = CompleteMessage.newBuilder()
+      .setType(CompleteMessage.Type.EDGE_CASE)
+      .build()
+
+    val messageB = Array.emptyByteArray
+
+    val emptyMessages = (1 to 10).map { i =>
+      if (i % 2 == 0) messageA.toByteArray else messageB
     }
 
     val df = spark.createDataset(emptyMessages).repartition(4).toDF("data")
@@ -284,17 +353,32 @@ class SparkIntegrationSpec extends AnyFlatSpec with Matchers with BeforeAndAfter
       from_protobuf($"data", "CompleteMessage", descBytes).as("proto")
     )
 
+    // parsedDf.show(false)
+    // parsedDf.select(
+    //   isnull($"proto.primitives"),
+    //   isnull($"proto.repeated"),
+    //   isnull($"proto.id"),
+    //   isnull($"proto.version"),
+    // ).show(false)
+    //
+    // val fields = parsedDf.rdd.map { row =>
+    //   row.getStruct(0).getInt(0)
+    // }.collect()
+    // println(fields.mkString("Array(", ", ", ")"))
+
     val rows = parsedDf.select(
-      "proto.primitives",  // Missing nested struct
-      "proto.repeated",    // Missing repeated fields
+      "proto.primitives", // Missing nested struct
+      "proto.repeated", // Missing repeated fields
       "proto.id",
-      "proto.version"
+      "proto.version",
+      "proto.type",
     ).collect()
 
-    rows.length shouldBe 100
+    rows.length shouldBe 10
 
     // Verify all rows handle empty binary correctly
     rows.foreach { row =>
+
       // primitives (nested struct) - check isNullAt first
       if (!row.isNullAt(0)) {
         // Parser may create default struct
