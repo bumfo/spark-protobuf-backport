@@ -1,6 +1,6 @@
 package org.apache.spark.sql.protobuf.backport.jmh
 
-import benchmark.TestDataGenerator
+import benchmark.{ComplexBenchmarkProtos, TestDataGenerator}
 import com.google.protobuf.{DescriptorProtos, Descriptors}
 import fastproto.{StreamWireParser, WireFormatParser, WireFormatToRowGenerator}
 import org.apache.spark.sql.protobuf.backport.DynamicMessageParser
@@ -86,6 +86,11 @@ class ProtobufConversionJmhBenchmarkComplex {
   @Benchmark
   def complexDirectWireFormatParser(bh: Blackhole): Unit = {
     bh.consume(complexDirectParser.parse(complexBinary))
+  }
+
+  @Benchmark
+  def complexProtoParsing(bh: Blackhole): Unit = {
+    bh.consume(ComplexBenchmarkProtos.ComplexMessageA.parseFrom(complexBinary))
   }
 
   // @Benchmark
