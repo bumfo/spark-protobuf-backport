@@ -333,4 +333,35 @@ class SchemaPruningSpec extends AnyFlatSpec with Matchers with BeforeAndAfterAll
     result.length shouldBe 1
     result(0).getString(0) shouldBe "test"
   }
+
+  it should "handle nested struct field access with correct ordinals" taggedAs SchemaPruningTest in {
+    val sparkImplicits = spark.implicits
+    import sparkImplicits._
+
+    // Create test data with nested structure
+    // Nested.Inner has fields: value (ordinal 0), description (ordinal 1), deep (ordinal 2)
+    val message = CompleteMessage.newBuilder()
+      .setPrimitives(AllPrimitiveTypes.newBuilder()
+        .setInt32Field(42)
+        .setStringField("first_string")  // ordinal 13 in AllPrimitiveTypes
+        .setBoolField(true)               // ordinal 12 in AllPrimitiveTypes
+        .build())
+      .build()
+
+    val binary = message.toByteArray
+    val df = spark.sparkContext.parallelize(Seq(binary)).toDF("data")
+
+    // Select only primitives.string_field
+    // This should prune the primitives struct to only contain string_field
+    // If ordinals are not updated correctly, accessing string_field (originally ordinal 13)
+    // from the pruned schema will fail
+    val descBytes = createDescriptorBytes("CompleteMessage")
+    val result = df
+      .select(from_protobuf($"data", "CompleteMessage", descBytes).as("proto"))
+      .select($"proto.primitives.string_field")
+      .collect()
+
+    result.length shouldBe 1
+    result(0).getString(0) shouldBe "first_string"
+  }
 }

@@ -68,17 +68,13 @@ private[backport] object ProtobufSchemaPruning extends Rule[LogicalPlan] {
     }
 
     // Build pruned schemas and ordinal mappings for each ProtobufDataToCatalyst
-    val prunedInfo = scala.collection.mutable.Map[ProtobufDataToCatalyst, (ProtobufDataToCatalyst, Map[String, Int])]()
+    val prunedInfo = scala.collection.mutable.Map[ProtobufDataToCatalyst, ProtobufDataToCatalyst]()
     requiredFields.foreach { case (proto, paths) =>
       if (canPrune(proto) && paths.nonEmpty) {
         val prunedSchema = SchemaUtils.pruneSchema(proto.dataType, paths)
         if (prunedSchema.fields.length < proto.dataType.fields.length) {
           val prunedProto = proto.withPrunedSchema(prunedSchema)
-          // Build field name -> new ordinal mapping
-          val ordinalMap = prunedSchema.fields.zipWithIndex.map { case (field, idx) =>
-            field.name -> idx
-          }.toMap
-          prunedInfo(proto) = (prunedProto, ordinalMap)
+          prunedInfo(proto) = prunedProto
         }
       }
     }
@@ -87,21 +83,32 @@ private[backport] object ProtobufSchemaPruning extends Rule[LogicalPlan] {
       return projectList
     }
 
-    // Rewrite expressions - use transformDown to handle parent before children
+    // Rewrite expressions - use transformUp to handle children before parents
     projectList.map {
       case a @ Alias(child, name) =>
-        val newChild = child.transformDown {
-          // Match GetStructField wrapping ProtobufDataToCatalyst
-          case g @ GetStructField(p: ProtobufDataToCatalyst, ordinal, fieldName) =>
-            prunedInfo.get(p) match {
-              case Some((prunedProto, ordinalMap)) =>
-                // Update ordinal to match pruned schema
-                val newOrdinal = fieldName.flatMap(ordinalMap.get).getOrElse(0)
-                GetStructField(prunedProto, newOrdinal, fieldName)
-              case None =>
-                g
+        val newChild = child.transformUp {
+          // First, replace ProtobufDataToCatalyst with pruned version
+          case p: ProtobufDataToCatalyst =>
+            prunedInfo.getOrElse(p, p)
+
+          // Then, update GetStructField ordinals based on child schema
+          case g @ GetStructField(child, ordinal, fieldName) =>
+            val childSchema = child.dataType match {
+              case st: StructType => Some(st)
+              case _ => None
             }
-          // Don't separately match ProtobufDataToCatalyst - it's handled above
+
+            (childSchema, fieldName) match {
+              case (Some(schema), Some(name)) =>
+                // Find the new ordinal in the (possibly pruned) child schema
+                val newOrdinal = schema.fields.indexWhere(_.name == name)
+                if (newOrdinal >= 0 && newOrdinal != ordinal) {
+                  GetStructField(child, newOrdinal, fieldName)
+                } else {
+                  g
+                }
+              case _ => g
+            }
         }
         if (newChild ne child) {
           Alias(newChild, name)(a.exprId, a.qualifier, a.explicitMetadata)
