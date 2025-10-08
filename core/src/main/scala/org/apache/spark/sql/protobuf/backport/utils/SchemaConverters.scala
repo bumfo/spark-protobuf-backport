@@ -57,6 +57,10 @@ object SchemaConverters extends Logging {
       existingRecordNames: Map[String, Int],
       protobufOptions: ProtobufOptions): Option[StructField] = {
     import com.google.protobuf.Descriptors.FieldDescriptor.JavaType._
+    // Filter out deprecated GROUP fields
+    if (fd.getType == com.google.protobuf.Descriptors.FieldDescriptor.Type.GROUP) {
+      return None
+    }
     val dataType: Option[DataType] = fd.getJavaType match {
       case INT => Some(IntegerType)
       case LONG => Some(LongType)

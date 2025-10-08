@@ -31,6 +31,9 @@ object ProtoToRowGenerator {
   private val instanceCache: ThreadLocal[scala.collection.mutable.Map[String, Parser]] =
     ThreadLocal.withInitial(() => scala.collection.mutable.Map.empty[String, Parser])
 
+  /** Helper to get supported fields from descriptor (excludes deprecated GROUP fields) */
+  private def supportedFields(descriptor: Descriptor) =
+    descriptor.getFields.asScala.filter(_.getType != FieldDescriptor.Type.GROUP)
 
   /**
    * Compute the accessor method suffix for a given field descriptor.  This
@@ -112,7 +115,7 @@ object ProtoToRowGenerator {
 
     // Collect all nested message fields (per-field approach for now)
     // Exclude map fields since they don't need nested parsers - they're handled as Maps
-    val nestedFields = descriptor.getFields.asScala.filter { fd =>
+    val nestedFields = supportedFields(descriptor).filter { fd =>
       fd.getJavaType == FieldDescriptor.JavaType.MESSAGE &&
       !(fd.isRepeated && fd.getMessageType.getOptions.hasMapEntry)
     }.toList
@@ -283,7 +286,7 @@ object ProtoToRowGenerator {
     }
 
     // Generate field-specific methods for complex fields
-    descriptor.getFields.asScala.zipWithIndex.foreach { case (fd, idx) =>
+    supportedFields(descriptor).zipWithIndex.foreach { case (fd, idx) =>
       val fieldName = fd.getName
       val accessor = accessorName(fd)
       val countMethodName = s"get${accessor}Count"
@@ -527,7 +530,7 @@ object ProtoToRowGenerator {
     code ++= "  public void parseInto(" + messageClass.getName + " msg, RowWriter writer) {\n"
 
     // Generate per‑field extraction and writing logic using writer
-    descriptor.getFields.asScala.zipWithIndex.foreach { case (fd, idx) =>
+    supportedFields(descriptor).zipWithIndex.foreach { case (fd, idx) =>
       // Insert a comment into the generated Java code to aid debugging.  This
       // comment identifies the Protobuf field being processed along with
       // whether it is repeated.  Because Janino reports compilation errors

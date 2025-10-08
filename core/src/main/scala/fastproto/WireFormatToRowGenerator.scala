@@ -33,6 +33,12 @@ object WireFormatToRowGenerator {
   private val instanceCache: ThreadLocal[scala.collection.mutable.Map[String, StreamWireParser]] =
     ThreadLocal.withInitial(() => scala.collection.mutable.Map.empty[String, StreamWireParser])
 
+  // ========== Helper Methods ==========
+
+  /** Helper to get supported fields from descriptor (excludes deprecated GROUP fields) */
+  private def supportedFields(descriptor: Descriptor) =
+    descriptor.getFields.asScala.filter(_.getType != FieldDescriptor.Type.GROUP)
+
   // ========== Wire Format Type Categorization ==========
 
   /**
@@ -235,7 +241,7 @@ object WireFormatToRowGenerator {
     localParsers(key) = parser
 
     // Generate nested parsers - only for fields that exist in both descriptor and schema
-    val messageFields = descriptor.getFields.asScala.filter { field =>
+    val messageFields = supportedFields(descriptor).filter { field =>
       field.getType == FieldDescriptor.Type.MESSAGE && schema.fieldNames.contains(field.getName)
     }
     messageFields.foreach { field =>
@@ -278,7 +284,7 @@ object WireFormatToRowGenerator {
     val parser = localParsers(key)
 
     // Set nested parsers - only for fields that exist in both descriptor and schema
-    val messageFields = descriptor.getFields.asScala.filter { field =>
+    val messageFields = supportedFields(descriptor).filter { field =>
       field.getType == FieldDescriptor.Type.MESSAGE && schema.fieldNames.contains(field.getName)
     }
     messageFields.foreach { field =>
@@ -410,7 +416,7 @@ object WireFormatToRowGenerator {
    * Generate nested parser field declarations.
    */
   private def generateNestedParserFields(code: StringBuilder, descriptor: Descriptor, schema: StructType): Unit = {
-    val messageFields = descriptor.getFields.asScala.filter { field =>
+    val messageFields = supportedFields(descriptor).filter { field =>
       field.getType == FieldDescriptor.Type.MESSAGE && schema.fieldNames.contains(field.getName)
     }
 
@@ -427,7 +433,7 @@ object WireFormatToRowGenerator {
    * Generate setter methods for nested parsers.
    */
   private def generateNestedParserSetters(code: StringBuilder, descriptor: Descriptor, schema: StructType): Unit = {
-    val messageFields = descriptor.getFields.asScala.filter { field =>
+    val messageFields = supportedFields(descriptor).filter { field =>
       field.getType == FieldDescriptor.Type.MESSAGE && schema.fieldNames.contains(field.getName)
     }
 
@@ -445,7 +451,7 @@ object WireFormatToRowGenerator {
    */
   private def generateFieldConstants(code: StringBuilder, descriptor: Descriptor, schema: StructType): Unit = {
     code ++= "  // Tag constants for direct switch (field_number << 3 | wire_type)\n"
-    descriptor.getFields.asScala.foreach { field =>
+    supportedFields(descriptor).foreach { field =>
       try {
         schema.fieldIndex(field.getName) // Check field exists in schema
         val expectedWireType = getExpectedWireType(field.getType)
@@ -476,7 +482,7 @@ object WireFormatToRowGenerator {
    * Uses hybrid approach: instance fields for non-recursive messages, local variables for recursive messages.
    */
   private def generateRepeatedFieldAccumulators(code: StringBuilder, descriptor: Descriptor, schema: StructType): Unit = {
-    val repeatedFields = descriptor.getFields.asScala.filter(field =>
+    val repeatedFields = supportedFields(descriptor).filter(field =>
       field.isRepeated && schema.fieldNames.contains(field.getName)
     )
 
@@ -505,7 +511,7 @@ object WireFormatToRowGenerator {
    * Only needed for non-recursive messages that use instance fields.
    */
   private def generateRepeatedFieldInitialization(code: StringBuilder, descriptor: Descriptor, schema: StructType): Unit = {
-    val repeatedFields = descriptor.getFields.asScala.filter(field =>
+    val repeatedFields = supportedFields(descriptor).filter(field =>
       field.isRepeated && schema.fieldNames.contains(field.getName)
     )
 
@@ -542,7 +548,7 @@ object WireFormatToRowGenerator {
     code ++= "  protected void parseInto(CodedInputStream input, RowWriter writer) {\n\n"
 
     // Handle repeated field accumulators based on recursion
-    val repeatedFields = descriptor.getFields.asScala.filter(field =>
+    val repeatedFields = supportedFields(descriptor).filter(field =>
       field.isRepeated && schema.fieldNames.contains(field.getName)
     )
     if (repeatedFields.nonEmpty) {
@@ -590,7 +596,7 @@ object WireFormatToRowGenerator {
     code ++= "        int tag = input.readTag();\n\n"
 
     // Generate direct tag switch for maximum performance
-    val schemaFields = descriptor.getFields.asScala
+    val schemaFields = supportedFields(descriptor)
       .filter(field => schema.fieldNames.contains(field.getName))
       .sortBy(_.getNumber) // Natural order for better branch prediction
 
@@ -879,7 +885,7 @@ object WireFormatToRowGenerator {
    * Generate enum helper methods for fields that need string conversion.
    */
   private def generateEnumHelperMethods(code: StringBuilder, descriptor: Descriptor, schema: StructType): Unit = {
-    val enumFields = descriptor.getFields.asScala.filter { field =>
+    val enumFields = supportedFields(descriptor).filter { field =>
       field.getType == FieldDescriptor.Type.ENUM &&
       schema.fieldNames.contains(field.getName) &&
       schema.fields(schema.fieldIndex(field.getName)).dataType == StringType
