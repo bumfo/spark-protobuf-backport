@@ -233,7 +233,7 @@ object ProtoToRowGenerator {
       messageClass: Class[_ <: Message],
       numNestedTypes: Int): StringBuilder = {
     // Create per-field parser indices for message fields (excluding maps)
-    val messageFields = descriptor.getFields.asScala.filter { fd =>
+    val messageFields = supportedFields(descriptor).filter { fd =>
       fd.getJavaType == FieldDescriptor.JavaType.MESSAGE &&
       !(fd.isRepeated && fd.getMessageType.getOptions.hasMapEntry)
     }.toList
