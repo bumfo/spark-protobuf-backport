@@ -513,7 +513,7 @@ object WireFormatParser {
     }
   }
 
-  private val threadVisited = ThreadLocal.withInitial(() => mutable.HashMap[(String, Boolean, Int), ParserRef]())
+  private val threadVisited = ThreadLocal.withInitial(() => mutable.HashMap[(String, Boolean, StructType), ParserRef]())
 
   /**
    * Smart construction that detects recursion and optimizes entire parser tree.
@@ -531,9 +531,9 @@ object WireFormatParser {
       descriptor: Descriptor,
       schema: StructType,
       isRecursive: Boolean,
-      visited: mutable.HashMap[(String, Boolean, Int), ParserRef]): ParserRef = {
+      visited: mutable.HashMap[(String, Boolean, StructType), ParserRef]): ParserRef = {
 
-    val key = (descriptor.getFullName, isRecursive, schema.hashCode())
+    val key = (descriptor.getFullName, isRecursive, schema)
 
     // Return existing ParserRef if already built (handles cycles)
     visited.get(key) match {
@@ -564,7 +564,7 @@ object WireFormatParser {
       descriptor: Descriptor,
       schema: StructType,
       isRecursive: Boolean = false,
-      visited: mutable.HashMap[(String, Boolean, Int), ParserRef] = mutable.HashMap()): Array[ParserRef] = {
+      visited: mutable.HashMap[(String, Boolean, StructType), ParserRef] = mutable.HashMap()): Array[ParserRef] = {
 
     // Calculate max field number
     var maxFieldNum = 0
