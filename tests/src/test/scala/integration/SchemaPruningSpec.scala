@@ -270,10 +270,16 @@ class SchemaPruningSpec extends AnyFlatSpec with Matchers with BeforeAndAfterAll
     // If ordinals are not preserved, this will fail with IndexOutOfBoundsException
     // because the pruned schema would have string_field at ordinal 0
     val descBytes = createDescriptorBytes("AllPrimitiveTypes")
-    val result = df
+    val query = df
       .select(from_protobuf($"data", "AllPrimitiveTypes", descBytes).as("proto"))
       .select($"proto.string_field")
-      .collect()
+
+    // Debug: print the logical plan to understand what's happening
+    println("=== LOGICAL PLAN ===")
+    query.explain(true)
+    println("=== END LOGICAL PLAN ===")
+
+    val result = query.collect()
 
     result.length shouldBe 1
     result(0).getString(0) shouldBe "test_string"
