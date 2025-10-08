@@ -39,12 +39,76 @@ private[backport] object ProtobufSchemaPruning extends Rule[LogicalPlan] {
 
     plan.transformDown {
       case p @ Project(projectList, child) =>
+        // Handle two cases:
+        // 1. Pre-collapse: child has Alias(ProtobufDataToCatalyst)
+        // 2. Post-collapse: projectList has expressions directly accessing ProtobufDataToCatalyst
         val newChild = pruneProtobufInChild(projectList, child)
-        if (newChild ne child) {
-          p.copy(child = newChild)
+        val newProjectList = pruneProtobufInProjectList(projectList)
+
+        if ((newChild ne child) || (newProjectList ne projectList)) {
+          p.copy(projectList = newProjectList, child = newChild)
         } else {
           p
         }
+    }
+  }
+
+  /**
+   * Prune ProtobufDataToCatalyst expressions directly in the project list.
+   * This handles the post-collapse case where Projects have been merged.
+   */
+  private def pruneProtobufInProjectList(
+      projectList: Seq[NamedExpression]): Seq[NamedExpression] = {
+
+    // Collect required field paths for each ProtobufDataToCatalyst expression
+    val requiredFields = collectRequiredFieldsForProtobuf(projectList)
+
+    if (requiredFields.isEmpty) {
+      return projectList
+    }
+
+    // Build pruned schemas and ordinal mappings for each ProtobufDataToCatalyst
+    val prunedInfo = scala.collection.mutable.Map[ProtobufDataToCatalyst, (ProtobufDataToCatalyst, Map[String, Int])]()
+    requiredFields.foreach { case (proto, paths) =>
+      if (canPrune(proto) && paths.nonEmpty) {
+        val prunedSchema = SchemaUtils.pruneSchema(proto.dataType, paths)
+        if (prunedSchema.fields.length < proto.dataType.fields.length) {
+          val prunedProto = proto.withPrunedSchema(prunedSchema)
+          // Build field name -> new ordinal mapping
+          val ordinalMap = prunedSchema.fields.zipWithIndex.map { case (field, idx) =>
+            field.name -> idx
+          }.toMap
+          prunedInfo(proto) = (prunedProto, ordinalMap)
+        }
+      }
+    }
+
+    if (prunedInfo.isEmpty) {
+      return projectList
+    }
+
+    // Rewrite expressions - use transformDown to handle parent before children
+    projectList.map {
+      case a @ Alias(child, name) =>
+        val newChild = child.transformDown {
+          // Match GetStructField wrapping ProtobufDataToCatalyst
+          case g @ GetStructField(p: ProtobufDataToCatalyst, ordinal, fieldName) =>
+            prunedInfo.get(p) match {
+              case Some((prunedProto, ordinalMap)) =>
+                // Update ordinal to match pruned schema
+                val newOrdinal = fieldName.flatMap(ordinalMap.get).getOrElse(0)
+                GetStructField(prunedProto, newOrdinal, fieldName)
+              case None =>
+                g
+            }
+          // Don't separately match ProtobufDataToCatalyst - it's handled above
+        }
+        if (newChild ne child) {
+          Alias(newChild, name)(a.exprId, a.qualifier, a.explicitMetadata)
+        } else {
+          a
+        }
+      case other => other
     }
   }
 
@@ -84,6 +148,69 @@ private[backport] object ProtobufSchemaPruning extends Rule[LogicalPlan] {
             }
           case _ => a
         }
+    }
+  }
+
+  /**
+   * Collect required field paths for each ProtobufDataToCatalyst in expressions.
+   * Returns a map from ProtobufDataToCatalyst instance to its required field paths.
+   */
+  private def collectRequiredFieldsForProtobuf(
+      expressions: Seq[Expression]): Map[ProtobufDataToCatalyst, Set[Seq[String]]] = {
+
+    val fieldsMap = scala.collection.mutable.Map[ProtobufDataToCatalyst, Set[Seq[String]]]()
+
+    expressions.foreach { expr =>
+      collectProtobufFieldAccess(expr, fieldsMap)
+    }
+
+    fieldsMap.toMap
+  }
+
+  /**
+   * Recursively collect field access patterns for ProtobufDataToCatalyst expressions.
+   */
+  private def collectProtobufFieldAccess(
+      expr: Expression,
+      fieldsMap: scala.collection.mutable.Map[ProtobufDataToCatalyst, Set[Seq[String]]]): Unit = {
+
+    expr match {
+      case GetStructField(child, _, Some(name)) =>
+        val pathOpt = collectProtobufFieldPath(child, Seq(name))
+        pathOpt.foreach { case (proto, path) =>
+          fieldsMap(proto) = fieldsMap.getOrElse(proto, Set.empty) + path
+        }
+
+      case p: ProtobufDataToCatalyst =>
+        // Entire protobuf used, mark as requiring all fields
+        fieldsMap(p) = fieldsMap.getOrElse(p, Set.empty) + Seq.empty
+
+      case _ =>
+        // Recurse into children
+        expr.children.foreach(collectProtobufFieldAccess(_, fieldsMap))
+    }
+  }
+
+  /**
+   * Build field path by traversing GetStructField to ProtobufDataToCatalyst.
+   * Returns Some((protobuf, fieldPath)) if found, None otherwise.
+   */
+  private def collectProtobufFieldPath(
+      expr: Expression,
+      currentPath: Seq[String]): Option[(ProtobufDataToCatalyst, Seq[String])] = {
+
+    expr match {
+      case p: ProtobufDataToCatalyst =>
+        Some((p, currentPath))
+
+      case GetStructField(child, _, Some(name)) =>
+        collectProtobufFieldPath(child, name +: currentPath)
+
+      case GetArrayItem(child, _, _) =>
+        collectProtobufFieldPath(child, currentPath)
+
+      case _ =>
+        None
     }
   }
 

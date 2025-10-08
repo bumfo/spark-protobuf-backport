@@ -33,6 +33,7 @@ class SchemaPruningSpec extends AnyFlatSpec with Matchers with BeforeAndAfterAll
       .config("spark.sql.adaptive.enabled", "false")
       .config("spark.sql.shuffle.partitions", "4")
       .config("spark.serializer", "org.apache.spark.serializer.JavaSerializer")
+      .config("spark.sql.extensions", "org.apache.spark.sql.protobuf.backport.ProtobufExtensions")
       .config("spark.sql.protobuf.nestedSchemaPruning.enabled", "true")
       .getOrCreate()
 
@@ -273,9 +274,13 @@ class SchemaPruningSpec extends AnyFlatSpec with Matchers with BeforeAndAfterAll
     // If ordinals are not preserved, this will fail with IndexOutOfBoundsException
     // because the pruned schema would have string_field at ordinal 0
     val descBytes = createDescriptorBytes("AllPrimitiveTypes")
-    val result = df
+    val query = df
       .select(from_protobuf($"data", "AllPrimitiveTypes", descBytes).as("proto"))
       .select($"proto.string_field")
+
+    // query.explain(true)
+
+    val result = query
       .collect()
 
     result.length shouldBe 1
