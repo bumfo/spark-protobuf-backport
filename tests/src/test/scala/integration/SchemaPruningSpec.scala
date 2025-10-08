@@ -240,4 +240,42 @@ class SchemaPruningSpec extends AnyFlatSpec with Matchers with BeforeAndAfterAll
     result.length shouldBe 1
     result(0).getString(0) shouldBe "id1"
   }
+
+  it should "preserve field ordinals when selecting non-first fields" taggedAs SchemaPruningTest in {
+    val sparkImplicits = spark.implicits
+    import sparkImplicits._
+
+    // Create test data with string_field at ordinal 13 in the original schema
+    val message = AllPrimitiveTypes.newBuilder()
+      .setInt32Field(100)
+      .setInt64Field(200L)
+      .setUint32Field(300)
+      .setUint64Field(400L)
+      .setSint32Field(500)
+      .setSint64Field(600L)
+      .setFixed32Field(700)
+      .setFixed64Field(800L)
+      .setSfixed32Field(900)
+      .setSfixed64Field(1000L)
+      .setFloatField(1.5f)
+      .setDoubleField(2.5)
+      .setBoolField(true)
+      .setStringField("test_string")  // field 14, ordinal 13
+      .build()
+
+    val binary = message.toByteArray
+    val df = Seq(binary).toDF("data")
+
+    // Only select string_field (ordinal 13 in original schema)
+    // If ordinals are not preserved, this will fail with IndexOutOfBoundsException
+    // because the pruned schema would have string_field at ordinal 0
+    val descBytes = createDescriptorBytes("AllPrimitiveTypes")
+    val result = df
+      .select(from_protobuf($"data", "AllPrimitiveTypes", descBytes).as("proto"))
+      .select($"proto.string_field")
+      .collect()
+
+    result.length shouldBe 1
+    result(0).getString(0) shouldBe "test_string"
+  }
 }
