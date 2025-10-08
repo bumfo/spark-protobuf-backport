@@ -18,7 +18,6 @@ import scala.collection.mutable
  * - Leveraging packed field parsing methods from StreamWireParser
  * - Direct byte copying for strings/bytes/messages
  * - Single-pass streaming parse to UnsafeRow
- * TODO support skipping GROUP wire type by default
  *
  * @param descriptor the protobuf message descriptor
  * @param schema     the corresponding Spark SQL schema
@@ -80,6 +79,7 @@ class WireFormatParser(
       val fieldNum = field.getNumber
 
       // Find corresponding field in Spark schema by name
+      // GROUP fields won't be in schema (filtered by SchemaConverters), so ordinalObj will be null
       val ordinalObj = schemaFieldMap.get(field.getName)
       if (ordinalObj ne null) {
         val ordinal = ordinalObj.intValue()
@@ -591,6 +591,7 @@ object WireFormatParser {
     }
 
     // Build parsers for message fields
+    // Note: GROUP fields have JavaType.MESSAGE but Type.GROUP, so Type.MESSAGE check excludes them
     i = 0
     while (i < fields.size()) {
       val field = fields.get(i)

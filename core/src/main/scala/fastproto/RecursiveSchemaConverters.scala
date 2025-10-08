@@ -16,6 +16,10 @@ import scala.collection.mutable
  */
 object RecursiveSchemaConverters {
 
+  /** Helper to get supported fields from descriptor (excludes deprecated GROUP fields) */
+  private def supportedFields(descriptor: Descriptor) =
+    descriptor.getFields.asScala.filter(_.getType != FieldDescriptor.Type.GROUP)
+
   /**
    * Convert protobuf descriptor to Spark SQL type with recursion detection and mocking.
    *
@@ -67,7 +71,7 @@ object RecursiveSchemaConverters {
     val wasAlreadyVisited = visitedTypes.contains(typeName)
     visitedTypes += typeName
 
-    val fields = descriptor.getFields.asScala.map { field =>
+    val fields = supportedFields(descriptor).map { field =>
       val sparkType = convertFieldType(field, visitedTypes, wasAlreadyVisited, enumAsInt)
       StructField(field.getName, sparkType, nullable = true)
     }.toSeq
@@ -88,6 +92,8 @@ object RecursiveSchemaConverters {
       visitedTypes: mutable.Set[String],
       parentWasVisited: Boolean,
       enumAsInt: Boolean = false): DataType = {
+    // Filter out deprecated GROUP fields - should not happen but defensive check
+    require(field.getType != FieldDescriptor.Type.GROUP, "GROUP fields are not supported")
 
     val baseType = field.getJavaType match {
       case FieldDescriptor.JavaType.MESSAGE =>
@@ -167,7 +173,7 @@ object RecursiveSchemaConverters {
     val typeName = descriptor.getFullName
     visitedTypes += typeName
 
-    descriptor.getFields.asScala.foreach { field =>
+    supportedFields(descriptor).foreach { field =>
       val fieldPath = if (pathPrefix.isEmpty) field.getName else s"$pathPrefix.${field.getName}"
 
       if (field.getJavaType == FieldDescriptor.JavaType.MESSAGE) {
@@ -215,7 +221,7 @@ object RecursiveSchemaConverters {
       case Some(existingSchema) => existingSchema
       case None =>
         // Create placeholder schema first to handle immediate recursion
-        val placeholderFields = descriptor.getFields.asScala.map { field =>
+        val placeholderFields = supportedFields(descriptor).map { field =>
           StructField(field.getName, NullType, nullable = true)
         }.toArray
 
@@ -223,7 +229,7 @@ object RecursiveSchemaConverters {
         schemaMap(typeName) = schema
 
         // Now populate the fields properly
-        descriptor.getFields.asScala.zipWithIndex.foreach { case (field, index) =>
+        supportedFields(descriptor).zipWithIndex.foreach { case (field, index) =>
           val fieldType = convertFieldTypeForTrueRecursion(field, schemaMap, enumAsInt)
           placeholderFields(index) = StructField(field.getName, fieldType, nullable = true)
         }
@@ -240,6 +246,8 @@ object RecursiveSchemaConverters {
       field: FieldDescriptor,
       schemaMap: mutable.Map[String, RecursiveStructType],
       enumAsInt: Boolean = false): DataType = {
+    // Filter out deprecated GROUP fields - should not happen but defensive check
+    require(field.getType != FieldDescriptor.Type.GROUP, "GROUP fields are not supported")
 
     val baseType = field.getJavaType match {
       case FieldDescriptor.JavaType.MESSAGE =>
@@ -303,7 +311,7 @@ object RecursiveSchemaConverters {
     // For the DOM case, the DomNode.children field should already point to the correct DomNode schema.
 
     // Optional: Add validation to ensure recursion is working correctly
-    descriptor.getFields.asScala.foreach { field =>
+    supportedFields(descriptor).foreach { field =>
       if (field.getJavaType == FieldDescriptor.JavaType.MESSAGE) {
         val fieldIndex = schema.fieldIndex(field.getName)
         val sparkField = schema.fields(fieldIndex)
