@@ -50,14 +50,20 @@ private[backport] object ProtobufSchemaPruning extends Rule[LogicalPlan] {
 
   /**
    * Prune ProtobufDataToCatalyst expressions in the child plan based on
-   * which fields are accessed in the projection.
+   * which fields are accessed in the projection and child plan.
    */
   private def pruneProtobufInChild(
       projectList: Seq[NamedExpression],
       child: LogicalPlan): LogicalPlan = {
 
-    // Build map of attribute references to their required paths
-    val requiredFieldsPerAttr = collectRequiredFieldsPerAttribute(projectList)
+    // Build map of attribute references to their required paths from projection
+    val requiredFromProject = collectRequiredFieldsPerAttribute(projectList)
+
+    // Also collect requirements from the child plan itself (filters, joins, etc.)
+    val requiredFromChild = collectRequiredFieldsFromPlan(child)
+
+    // Merge requirements from both sources
+    val requiredFieldsPerAttr = mergeRequiredFields(requiredFromProject, requiredFromChild)
 
     if (requiredFieldsPerAttr.isEmpty) {
       return child
@@ -170,5 +176,45 @@ private[backport] object ProtobufSchemaPruning extends Rule[LogicalPlan] {
       case _ =>
         None
     }
+  }
+
+  /**
+   * Collect field references from all expressions in a logical plan.
+   * This captures references in filters, joins, and other operations.
+   */
+  private def collectRequiredFieldsFromPlan(
+      plan: LogicalPlan): Map[ExprId, Set[Seq[String]]] = {
+
+    val fieldsMap = scala.collection.mutable.Map[ExprId, Set[Seq[String]]]()
+
+    plan.foreach { node =>
+      node.expressions.foreach { expr =>
+        collectFieldReferencesFromExpression(expr, fieldsMap)
+      }
+    }
+
+    fieldsMap.toMap
+  }
+
+  /**
+   * Merge two required fields maps, combining the field sets for each attribute.
+   */
+  private def mergeRequiredFields(
+      map1: Map[ExprId, Set[Seq[String]]],
+      map2: Map[ExprId, Set[Seq[String]]]): Map[ExprId, Set[Seq[String]]] = {
+
+    val merged = scala.collection.mutable.Map[ExprId, Set[Seq[String]]]()
+
+    // Add all from map1
+    map1.foreach { case (id, fields) =>
+      merged(id) = fields
+    }
+
+    // Merge with map2
+    map2.foreach { case (id, fields) =>
+      merged(id) = merged.getOrElse(id, Set.empty) ++ fields
+    }
+
+    merged.toMap
   }
 }

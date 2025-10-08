@@ -199,4 +199,45 @@ class SchemaPruningSpec extends AnyFlatSpec with Matchers with BeforeAndAfterAll
     row.getInt(row.fieldIndex("int32_field")) shouldBe 100
     row.getString(row.fieldIndex("string_field")) shouldBe "test"
   }
+
+  it should "preserve fields referenced in filter conditions" taggedAs SchemaPruningTest in {
+    val sparkImplicits = spark.implicits
+    import sparkImplicits._
+
+    // Create test data with nested structure
+    val message1 = CompleteMessage.newBuilder()
+      .setPrimitives(AllPrimitiveTypes.newBuilder()
+        .setInt32Field(42)
+        .setStringField("test")
+        .setInt64Field(100L)
+        .build())
+      .setId("id1")
+      .setVersion(1)
+      .build()
+
+    val message2 = CompleteMessage.newBuilder()
+      .setPrimitives(AllPrimitiveTypes.newBuilder()
+        .setInt32Field(10)
+        .setStringField("test2")
+        .setInt64Field(200L)
+        .build())
+      .setId("id2")
+      .setVersion(2)
+      .build()
+
+    val df = Seq(message1.toByteArray, message2.toByteArray).toDF("data")
+
+    // Filter on primitives.int32_field but only select id
+    // Both fields must be preserved in the pruned schema
+    val descBytes = createDescriptorBytes("CompleteMessage")
+    val result = df
+      .select(from_protobuf($"data", "CompleteMessage", descBytes).as("proto"))
+      .filter($"proto.primitives.int32_field" > 20)
+      .select($"proto.id")
+      .collect()
+
+    // Should only return message1 (int32_field = 42 > 20)
+    result.length shouldBe 1
+    result(0).getString(0) shouldBe "id1"
+  }
 }
