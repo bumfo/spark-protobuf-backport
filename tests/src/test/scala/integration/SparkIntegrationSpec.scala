@@ -42,6 +42,7 @@ class SparkIntegrationSpec extends AnyFlatSpec with Matchers with BeforeAndAfter
       .config("spark.sql.shuffle.partitions", "4") // Force shuffling for distributed-like behavior
       .config("spark.sql.codegen.wholeStage", "true") // Force whole-stage code generation
       .config("spark.serializer", "org.apache.spark.serializer.JavaSerializer") // Use JavaSerializer to avoid Kryo Java module issues
+      .config("spark.sql.extensions", "org.apache.spark.sql.protobuf.backport.ProtobufExtensions")
       .config("spark.hadoop.fs.defaultFS", "file:///")
       .config("spark.sql.warehouse.dir", s"file://${System.getProperty("java.io.tmpdir")}/spark-warehouse")
       .config("spark.hadoop.yarn.timeline-service.enabled", "false")

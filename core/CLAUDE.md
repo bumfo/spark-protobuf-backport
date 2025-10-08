@@ -138,7 +138,16 @@ The connector includes an optimizer rule (`ProtobufSchemaPruning`) that prunes u
 **Scope**:
 - Applies only to `WireFormat` parser (binary descriptor set usage)
 - Generated message parsers and DynamicMessage parsers unchanged for simplicity
-- Tests in `integration/SchemaPruningSpec.scala` verify correctness 
+- Tests in `integration/SchemaPruningSpec.scala` verify correctness
+
+**Testing**:
+```bash
+# Verify optimizer actually prunes schemas (not just correctness)
+sbt 'testOnly integration.SchemaPruningSpec -- -z "actually prune schema"'
+
+# Run all schema pruning tests
+sbt 'testOnly integration.SchemaPruningSpec'
+``` 
 
 ## Performance Benchmarking
 
@@ -147,13 +156,13 @@ The project uses JMH (Java Microbenchmark Harness) for performance validation:
 ### Running Benchmarks
 ```bash
 # Run JMH benchmarks
-sbt "core/Jmh/run"
+sbt 'core/Jmh/run'
 
 # Run specific benchmarks
-sbt "core/Jmh/run .*WireFormatParser.*"
+sbt 'core/Jmh/run .*WireFormatParser.*'
 
 # Traditional ScalaTest benchmarks
-sbt "testOnly *ProtobufConversionBenchmark*"
+sbt 'testOnly *ProtobufConversionBenchmark*'
 ```
 
 ## Implementation Notes
