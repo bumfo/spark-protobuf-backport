@@ -1,6 +1,7 @@
 package integration
 
 import com.google.protobuf.DescriptorProtos
+import org.apache.spark.sql.protobuf.backport.ProtobufTestUtils
 import org.apache.spark.sql.protobuf.backport.functions._
 import org.apache.spark.sql.{Column, SparkSession}
 import org.scalatest.flatspec.AnyFlatSpec
@@ -285,5 +286,51 @@ class SchemaPruningSpec extends AnyFlatSpec with Matchers with BeforeAndAfterAll
 
     result.length shouldBe 1
     result(0).getString(0) shouldBe "test_string"
+  }
+
+  it should "actually prune schema in optimized plan" taggedAs SchemaPruningTest in {
+    val sparkImplicits = spark.implicits
+    import sparkImplicits._
+
+    val message = AllPrimitiveTypes.newBuilder()
+      .setInt32Field(100)
+      .setInt64Field(200L)
+      .setStringField("test")
+      .setBoolField(true)
+      .setDoubleField(3.14)
+      .build()
+
+    val binary = message.toByteArray
+    val df = spark.sparkContext.parallelize(Seq(binary)).toDF("data")
+
+    val descBytes = createDescriptorBytes("AllPrimitiveTypes")
+    val query = df
+      .select(from_protobuf($"data", "AllPrimitiveTypes", descBytes).as("proto"))
+      .select($"proto.string_field")
+
+    // Inspect optimized plan to verify schema pruning occurred
+    val optimizedPlan = query.queryExecution.optimizedPlan
+    val protobufExprs = ProtobufTestUtils.collectProtobufExpressions(optimizedPlan)
+
+    // Should find at least one ProtobufDataToCatalyst expression
+    protobufExprs should not be empty
+    val exprInfo = protobufExprs.head
+
+    // Verify schema was pruned (requiredSchema should be Some(...))
+    exprInfo.prunedSchema shouldBe defined
+    val prunedSchema = exprInfo.prunedSchema.get
+
+    // Should have only 1 field (string_field) instead of all 14+ fields
+    prunedSchema.fields.length shouldBe 1
+    prunedSchema.fields(0).name shouldBe "string_field"
+
+    // The pruned schema should be much smaller than the full AllPrimitiveTypes schema
+    // AllPrimitiveTypes has 14+ primitive fields in the proto definition
+    prunedSchema.fields.length should be < 5  // Significantly pruned
+
+    // Verify correctness still works
+    val result = query.collect()
+    result.length shouldBe 1
+    result(0).getString(0) shouldBe "test"
   }
 }
