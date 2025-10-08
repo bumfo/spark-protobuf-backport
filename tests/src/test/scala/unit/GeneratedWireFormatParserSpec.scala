@@ -24,4 +24,5 @@ class GeneratedWireFormatParserSpec extends AnyFlatSpec with Matchers with Parse
   it should behave like nestedMessageParser(createParser)
   it should behave like mapFieldParser(createParser)
   it should behave like edgeCaseParser(createParser)
+  it should behave like partialSchemaParser(createParser)
 }
