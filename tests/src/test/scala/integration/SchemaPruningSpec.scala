@@ -264,22 +264,19 @@ class SchemaPruningSpec extends AnyFlatSpec with Matchers with BeforeAndAfterAll
       .build()
 
     val binary = message.toByteArray
-    val df = Seq(binary).toDF("data")
+
+    // Use parallelized data to prevent constant folding optimization
+    // This ensures the query actually runs through the full execution path
+    val df = spark.sparkContext.parallelize(Seq(binary)).toDF("data")
 
     // Only select string_field (ordinal 13 in original schema)
     // If ordinals are not preserved, this will fail with IndexOutOfBoundsException
     // because the pruned schema would have string_field at ordinal 0
     val descBytes = createDescriptorBytes("AllPrimitiveTypes")
-    val query = df
+    val result = df
       .select(from_protobuf($"data", "AllPrimitiveTypes", descBytes).as("proto"))
       .select($"proto.string_field")
-
-    // Debug: print the logical plan to understand what's happening
-    println("=== LOGICAL PLAN ===")
-    query.explain(true)
-    println("=== END LOGICAL PLAN ===")
-
-    val result = query.collect()
+      .collect()
 
     result.length shouldBe 1
     result(0).getString(0) shouldBe "test_string"
