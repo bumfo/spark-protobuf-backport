@@ -45,6 +45,10 @@ class ProtobufConversionJmhBenchmarkComplex {
   var complexGeneratedParser: StreamWireParser = _
   var complexDynamicParser: DynamicMessageParser = _
 
+  // Pruned schema parser (single nested scalar field: message_b.nested_data.count)
+  var complexPrunedSchema: StructType = _
+  var complexPrunedParser: WireFormatParser = _
+
   @Setup
   def setup(): Unit = {
     // === Complex Schema Setup ===
@@ -69,6 +73,18 @@ class ProtobufConversionJmhBenchmarkComplex {
     complexDirectParser = new WireFormatParser(complexDescriptor, complexSparkSchema)
     complexGeneratedParser = WireFormatToRowGenerator.generateParser(complexDescriptor, complexSparkSchema)
     complexDynamicParser = new DynamicMessageParser(complexDescriptor, complexSparkSchema)
+
+    // === Initialize Pruned Schema Parser (nested scalar: message_b.nested_data.count) ===
+    val prunedNestedDataSchema = StructType(Seq(
+      StructField("count", IntegerType, nullable = false)
+    ))
+    val prunedMessageBSchema = StructType(Seq(
+      StructField("nested_data", prunedNestedDataSchema, nullable = true)
+    ))
+    complexPrunedSchema = StructType(Seq(
+      StructField("message_b", prunedMessageBSchema, nullable = true)
+    ))
+    complexPrunedParser = new WireFormatParser(complexDescriptor, complexPrunedSchema)
   }
 
   @TearDown
@@ -89,6 +105,11 @@ class ProtobufConversionJmhBenchmarkComplex {
   }
 
   @Benchmark
+  def complexPrunedWireFormatParser(bh: Blackhole): Unit = {
+    bh.consume(complexPrunedParser.parse(complexBinary))
+  }
+
+  // @Benchmark
   def complexProtoParsing(bh: Blackhole): Unit = {
     bh.consume(ComplexBenchmarkProtos.ComplexMessageA.parseFrom(complexBinary))
   }
