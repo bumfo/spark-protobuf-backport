@@ -55,6 +55,10 @@ class ProtobufConversionJmhBenchmarkDom {
   var domProtoToRowParser: Parser = _ // ProtoToRowGenerator produces parsers that implement Parser
   // var domDynamicParser: DynamicMessageParser = _
 
+  // Pruned schema parser (single nested field: root.tag_name)
+  var domPrunedSchema: StructType = _
+  var domPrunedParser: WireFormatParser = _
+
   @Setup
   def setup(): Unit = {
     // === Create DOM test data with different complexity levels ===
@@ -98,6 +102,25 @@ class ProtobufConversionJmhBenchmarkDom {
     domGeneratedWireParser = WireFormatToRowGenerator.generateParser(domDescriptor, domSparkSchema)
     domProtoToRowParser = ProtoToRowGenerator.generateParser(domDescriptor, classOf[DomDocument], domSparkSchema)
     // domDynamicParser = new DynamicMessageParser(domDescriptor, domSparkSchema)
+
+    // === Initialize Pruned Schema Parser (deeply nested: root.children[].children[].children[].tag_name) ===
+    // Access tag_name from 4th level nodes, skipping all other fields at all levels
+    val level4Schema = StructType(Seq(
+      StructField("tag_name", StringType, nullable = false)
+    ))
+    val level3Schema = StructType(Seq(
+      StructField("children", ArrayType(level4Schema), nullable = true)
+    ))
+    val level2Schema = StructType(Seq(
+      StructField("children", ArrayType(level3Schema), nullable = true)
+    ))
+    val level1Schema = StructType(Seq(
+      StructField("children", ArrayType(level2Schema), nullable = true)
+    ))
+    domPrunedSchema = StructType(Seq(
+      StructField("root", level1Schema, nullable = true)
+    ))
+    domPrunedParser = new WireFormatParser(domDescriptor, domPrunedSchema)
 
     // Print test data statistics
     // println(s"Shallow DOM: ${shallowDomBinary.length} bytes")
@@ -171,6 +194,11 @@ class ProtobufConversionJmhBenchmarkDom {
   @Benchmark
   def domDeepDirectWireFormatParser(bh: Blackhole): Unit = {
     bh.consume(domDirectParser.parse(deepDomBinary))
+  }
+
+  @Benchmark
+  def domDeepPrunedWireFormatParser(bh: Blackhole): Unit = {
+    bh.consume(domPrunedParser.parse(deepDomBinary))
   }
 
   @Benchmark

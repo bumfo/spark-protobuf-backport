@@ -45,6 +45,10 @@ class ProtobufConversionJmhBenchmarkSimple {
   var simpleGeneratedParser: StreamWireParser = _
   var simpleDynamicParser: DynamicMessageParser = _
 
+  // Pruned schema parser (single field)
+  var simplePrunedSchema: StructType = _
+  var simplePrunedParser: WireFormatParser = _
+
   @Setup
   def setup(): Unit = {
     // === Simple Schema Setup ===
@@ -69,6 +73,12 @@ class ProtobufConversionJmhBenchmarkSimple {
     simpleDirectParser = new WireFormatParser(simpleDescriptor, simpleSparkSchema)
     simpleGeneratedParser = WireFormatToRowGenerator.generateParser(simpleDescriptor, simpleSparkSchema)
     simpleDynamicParser = new DynamicMessageParser(simpleDescriptor, simpleSparkSchema)
+
+    // === Initialize Pruned Schema Parser (single scalar field from middle) ===
+    simplePrunedSchema = StructType(Seq(
+      StructField("field_double_055", DoubleType, nullable = false)
+    ))
+    simplePrunedParser = new WireFormatParser(simpleDescriptor, simplePrunedSchema)
   }
 
   @TearDown
@@ -86,6 +96,11 @@ class ProtobufConversionJmhBenchmarkSimple {
   @Benchmark
   def simpleDirectWireFormatParser(bh: Blackhole): Unit = {
     bh.consume(simpleDirectParser.parse(simpleBinary))
+  }
+
+  @Benchmark
+  def simplePrunedWireFormatParser(bh: Blackhole): Unit = {
+    bh.consume(simplePrunedParser.parse(simpleBinary))
   }
 
   // @Benchmark
