@@ -210,17 +210,10 @@ private[backport] case class ProtobufDataToCatalyst(
       val cls = Utils.classForName(plan.compiledClassName.get).asInstanceOf[Class[PbMessage]]
       ProtoToRowGenerator.generateParser(descriptor(), cls, plan.schema)
 
-    case ParserKind.WireFormat =>
+    case ParserKind.WireFormat => {
       WireFormatParser(descriptor(), plan.schema)
-
-      // try {
-      //   WireFormatToRowGenerator.generateParser(descriptor(), plan.schema)
-      // } catch {
-      //   case NonFatal(e) if parseMode == PermissiveMode =>
-      //     logWarning(
-      //       s"Failed to generate wire format parser for message $messageName, falling back to DynamicMessage parsing: ${e.getMessage}")
-      //     new DynamicMessageParser(descriptor(), plan.schema)
-      // }
+      // WireFormatToRowGenerator.generateParser(descriptor(), plan.schema)
+    }
 
     case ParserKind.Dynamic =>
       new DynamicMessageParser(descriptor(), plan.schema)
