@@ -4,7 +4,7 @@ import com.google.protobuf.Descriptors.Descriptor
 import com.google.protobuf.{ByteString, Message}
 import fastproto.{InternalRowMatchers, Parser, RecursiveSchemaConverters}
 import org.apache.spark.sql.catalyst.InternalRow
-import org.apache.spark.sql.types.StructType
+import org.apache.spark.sql.types._
 import org.scalatest.flatspec.AnyFlatSpec
 import org.scalatest.matchers.should.Matchers
 import testproto.AllTypesProtos._
@@ -515,6 +515,171 @@ trait ParserBehaviors extends InternalRowMatchers { this: AnyFlatSpec with Match
 
       // Other oneof choices should be null
       // (int_choice at ordinal 2, message_choice at ordinal 3)
+    }
+  }
+
+  // ========== Partial Schema Behavior (Schema Pruning Support) ==========
+
+  def partialSchemaParser(createParser: ParserFactory): Unit = {
+    it should "handle partial schema with subset of top-level fields" in {
+      val message = TestData.createFullPrimitives()
+      val binary = message.toByteArray
+      val descriptor = message.getDescriptorForType
+
+      // Create schema with only 3 fields: int32_field, string_field, bool_field
+      val partialSchema = StructType(Seq(
+        StructField("int32_field", IntegerType, nullable = true),
+        StructField("string_field", StringType, nullable = true),
+        StructField("bool_field", BooleanType, nullable = true)
+      ))
+
+      val parser = createParser(descriptor, partialSchema, Some(classOf[AllPrimitiveTypes]))
+      val row = parser.parse(binary)
+
+      // Verify the schema only has 3 fields
+      row.numFields shouldBe 3
+
+      // Verify the included fields are correctly parsed
+      row.isNullAt(0) shouldBe false
+      row.getInt(0) shouldBe 42 // int32_field
+
+      row.isNullAt(1) shouldBe false
+      row.getUTF8String(1).toString shouldBe "test_string" // string_field
+
+      row.isNullAt(2) shouldBe false
+      row.getBoolean(2) shouldBe true // bool_field
+    }
+
+    it should "handle partial schema with single field" in {
+      val message = TestData.createFullPrimitives()
+      val binary = message.toByteArray
+      val descriptor = message.getDescriptorForType
+
+      // Create schema with only string_field
+      val partialSchema = StructType(Seq(
+        StructField("string_field", StringType, nullable = true)
+      ))
+
+      val parser = createParser(descriptor, partialSchema, Some(classOf[AllPrimitiveTypes]))
+      val row = parser.parse(binary)
+
+      // Verify single field schema
+      row.numFields shouldBe 1
+      row.isNullAt(0) shouldBe false
+      row.getUTF8String(0).toString shouldBe "test_string"
+    }
+
+    it should "handle partial schema with nested message fields" in {
+      val message = CompleteMessage.newBuilder()
+        .setType(CompleteMessage.Type.EDGE_CASE)
+        .setPrimitives(AllPrimitiveTypes.newBuilder()
+          .setInt32Field(100)
+          .setStringField("nested_test")
+          .setBoolField(false)
+          .setInt64Field(999L)
+          .build())
+        .setId("test_id")
+        .setVersion(42)
+        .build()
+
+      val binary = message.toByteArray
+      val descriptor = message.getDescriptorForType
+
+      // Create schema with only some fields from nested primitives
+      val partialPrimitivesSchema = StructType(Seq(
+        StructField("int32_field", IntegerType, nullable = true),
+        StructField("string_field", StringType, nullable = true)
+      ))
+
+      val partialSchema = StructType(Seq(
+        StructField("primitives", partialPrimitivesSchema, nullable = true),
+        StructField("version", IntegerType, nullable = true)
+      ))
+
+      val parser = createParser(descriptor, partialSchema, Some(classOf[CompleteMessage]))
+      val row = parser.parse(binary)
+
+      // Verify schema structure
+      row.numFields shouldBe 2
+
+      // Check primitives nested struct
+      row.isNullAt(0) shouldBe false
+      val primitivesRow = row.getStruct(0, 2)
+      primitivesRow.numFields shouldBe 2
+      primitivesRow.getInt(0) shouldBe 100 // int32_field
+      primitivesRow.getUTF8String(1).toString shouldBe "nested_test" // string_field
+
+      // Check version field
+      row.isNullAt(1) shouldBe false
+      row.getInt(1) shouldBe 42
+    }
+
+    it should "handle partial schema with repeated fields" in {
+      val message = TestData.createFullRepeated()
+      val binary = message.toByteArray
+      val descriptor = message.getDescriptorForType
+
+      // Create schema with only 2 repeated fields
+      val partialSchema = StructType(Seq(
+        StructField("int32_list", ArrayType(IntegerType, containsNull = false), nullable = true),
+        StructField("string_list", ArrayType(StringType, containsNull = false), nullable = true)
+      ))
+
+      val parser = createParser(descriptor, partialSchema, Some(classOf[AllRepeatedTypes]))
+      val row = parser.parse(binary)
+
+      // Verify schema
+      row.numFields shouldBe 2
+
+      // Check int32_list
+      row.isNullAt(0) shouldBe false
+      val int32Array = row.getArray(0)
+      int32Array.numElements() shouldBe 5
+      int32Array.getInt(0) shouldBe 1
+      int32Array.getInt(4) shouldBe 5
+
+      // Check string_list
+      row.isNullAt(1) shouldBe false
+      val stringArray = row.getArray(1)
+      stringArray.numElements() shouldBe 3
+      stringArray.getUTF8String(0).toString shouldBe "a"
+    }
+
+    it should "handle empty schema gracefully" in {
+      val message = TestData.createFullPrimitives()
+      val binary = message.toByteArray
+      val descriptor = message.getDescriptorForType
+
+      // Create empty schema
+      val emptySchema = StructType(Seq.empty)
+
+      val parser = createParser(descriptor, emptySchema, Some(classOf[AllPrimitiveTypes]))
+      val row = parser.parse(binary)
+
+      // Should successfully parse with no fields
+      row.numFields shouldBe 0
+    }
+
+    it should "handle fields in different order than protobuf definition" in {
+      val message = TestData.createFullPrimitives()
+      val binary = message.toByteArray
+      val descriptor = message.getDescriptorForType
+
+      // Create schema with fields in different order
+      val reorderedSchema = StructType(Seq(
+        StructField("string_field", StringType, nullable = true),
+        StructField("bool_field", BooleanType, nullable = true),
+        StructField("int32_field", IntegerType, nullable = true)
+      ))
+
+      val parser = createParser(descriptor, reorderedSchema, Some(classOf[AllPrimitiveTypes]))
+      val row = parser.parse(binary)
+
+      // Fields should be parsed by name, not ordinal
+      row.numFields shouldBe 3
+      row.getUTF8String(0).toString shouldBe "test_string" // string_field at ordinal 0
+      row.getBoolean(1) shouldBe true // bool_field at ordinal 1
+      row.getInt(2) shouldBe 42 // int32_field at ordinal 2
     }
   }
 }

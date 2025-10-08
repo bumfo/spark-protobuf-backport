@@ -58,7 +58,8 @@ private[backport] case class ProtobufDataToCatalyst(
     messageName: String,
     descFilePath: Option[String] = None,
     options: Map[String, String] = Map.empty,
-    binaryDescriptorSet: Option[Array[Byte]] = None)
+    binaryDescriptorSet: Option[Array[Byte]] = None,
+    requiredSchema: Option[StructType] = None)
   extends UnaryExpression
     with ExpectsInputTypes
     with Logging {
@@ -148,6 +149,17 @@ private[backport] case class ProtobufDataToCatalyst(
   override protected def withNewChildInternal(newChild: Expression): ProtobufDataToCatalyst =
     copy(child = newChild)
 
+  /**
+   * Create a new ProtobufDataToCatalyst expression with a pruned schema.
+   * This is used by the ProtobufSchemaPruning optimizer rule to rewrite
+   * the expression with only the required fields.
+   *
+   * @param required the minimal schema containing only accessed fields
+   * @return a new expression instance with the pruned schema
+   */
+  def withPrunedSchema(required: StructType): ProtobufDataToCatalyst =
+    copy(requiredSchema = Some(required))
+
   private def buildPlan(): Plan = {
     val desc = descriptor()
 
@@ -168,8 +180,11 @@ private[backport] case class ProtobufDataToCatalyst(
 
     val schema: StructType = parserKind match {
       case ParserKind.WireFormat =>
-        RecursiveSchemaConverters.toSqlTypeWithTrueRecursion(desc, enumAsInt = true)
+        // For WireFormat parser, use pruned schema if provided, otherwise compute full schema
+        requiredSchema.getOrElse(
+          RecursiveSchemaConverters.toSqlTypeWithTrueRecursion(desc, enumAsInt = true))
       case _ =>
+        // Schema pruning only supported for WireFormat parser, ignore requiredSchema for others
         SchemaConverters.toSqlType(desc, protobufOptions).dataType
     }
 

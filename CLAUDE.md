@@ -53,6 +53,27 @@ sbt clean
 
 The assembled JAR includes shaded protobuf dependencies to avoid conflicts with Spark's own protobuf runtime.
 
+## Nested Schema Pruning
+
+The connector supports nested schema pruning to optimize deserialization performance. When enabled (default), only fields actually accessed in queries are parsed from protobuf binaries.
+
+**Configuration**:
+```scala
+spark.conf.set("spark.sql.protobuf.nestedSchemaPruning.enabled", "true")  // default
+```
+
+**Example**:
+```scala
+// Only parses person.name field, skipping all other person fields
+df.select(from_protobuf($"data", "MyMessage", descriptorBytes).as("proto"))
+  .select($"proto.person.name")
+```
+
+**Limitations**:
+- Only applies to WireFormat parser (binary descriptor set usage)
+- Compiled message parsers and DynamicMessage parsers are not pruned
+- Most effective for wide schemas with selective field access
+
 ## Performance Reporting
 
 Use unambiguous terminology for performance improvements:
