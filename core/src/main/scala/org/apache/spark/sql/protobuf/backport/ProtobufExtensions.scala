@@ -12,18 +12,26 @@ package org.apache.spark.sql.protobuf.backport
 
 import org.apache.spark.sql.catalyst.FunctionIdentifier
 import org.apache.spark.sql.catalyst.expressions.{Expression, ExpressionInfo, Literal}
+import org.apache.spark.sql.protobuf.backport.optimizer.ProtobufSchemaPruning
 import org.apache.spark.sql.{AnalysisException, SparkSessionExtensions}
 
 import scala.collection.Seq
 
 /**
- * Registers the Protobuf conversion functions with a [[SparkSessionExtensions]].
+ * Registers the Protobuf conversion functions and optimizer rules with a
+ * [[SparkSessionExtensions]].
  */
 class ProtobufExtensions extends (SparkSessionExtensions => Unit) {
 
   override def apply(extensions: SparkSessionExtensions): Unit = {
     registerFromProtobuf(extensions)
     registerToProtobuf(extensions)
+    registerOptimizerRules(extensions)
+  }
+
+  /** Register optimizer rules for Protobuf expressions. */
+  private def registerOptimizerRules(extensions: SparkSessionExtensions): Unit = {
+    extensions.injectOptimizerRule(_ => ProtobufSchemaPruning)
   }
 
   /** Register the `from_protobuf` SQL function. */

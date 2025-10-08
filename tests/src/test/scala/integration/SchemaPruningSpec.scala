@@ -1,0 +1,202 @@
+package integration
+
+import com.google.protobuf.DescriptorProtos
+import org.apache.spark.sql.protobuf.backport.functions._
+import org.apache.spark.sql.{Column, SparkSession}
+import org.scalatest.flatspec.AnyFlatSpec
+import org.scalatest.matchers.should.Matchers
+import org.scalatest.{BeforeAndAfterAll, Tag}
+import testproto.AllTypesProtos._
+import testproto.EdgeCasesProtos._
+
+/**
+ * Integration tests for nested schema pruning in protobuf deserialization.
+ *
+ * Verifies that the ProtobufSchemaPruning optimizer correctly prunes unused
+ * fields when using WireFormat parser (binary descriptor sets).
+ */
+object SchemaPruningTest extends Tag("Integration")
+
+class SchemaPruningSpec extends AnyFlatSpec with Matchers with BeforeAndAfterAll {
+
+  private var spark: SparkSession = _
+
+  override def beforeAll(): Unit = {
+    // Suppress Spark logging noise
+    org.apache.log4j.Logger.getLogger("org.apache.spark").setLevel(org.apache.log4j.Level.ERROR)
+    org.apache.log4j.Logger.getLogger("org.apache.hadoop").setLevel(org.apache.log4j.Level.ERROR)
+
+    spark = SparkSession.builder()
+      .master("local[2]")
+      .appName("SchemaPruningSpec")
+      .config("spark.ui.enabled", "false")
+      .config("spark.sql.adaptive.enabled", "false")
+      .config("spark.sql.shuffle.partitions", "4")
+      .config("spark.serializer", "org.apache.spark.serializer.JavaSerializer")
+      .config("spark.sql.protobuf.nestedSchemaPruning.enabled", "true")
+      .getOrCreate()
+
+    spark.sparkContext.setLogLevel("ERROR")
+  }
+
+  override def afterAll(): Unit = {
+    if (spark != null) {
+      try {
+        // Let JVM cleanup handle shutdown
+      } catch {
+        case _: Exception =>
+      }
+    }
+  }
+
+  private def createDescriptorBytes(messageName: String): Array[Byte] = {
+    val message = messageName match {
+      case "CompleteMessage" => CompleteMessage.getDefaultInstance
+      case "AllPrimitiveTypes" => AllPrimitiveTypes.getDefaultInstance
+      case _ => throw new IllegalArgumentException(s"Unknown message: $messageName")
+    }
+
+    DescriptorProtos.FileDescriptorSet.newBuilder()
+      .addFile(message.getDescriptorForType.getFile.toProto)
+      .build()
+      .toByteArray
+  }
+
+  "Schema pruning" should "work with nested struct field access" taggedAs SchemaPruningTest in {
+    val sparkImplicits = spark.implicits
+    import sparkImplicits._
+
+    // Create test data with nested structure
+    val message = CompleteMessage.newBuilder()
+      .setPrimitives(AllPrimitiveTypes.newBuilder()
+        .setInt32Field(42)
+        .setStringField("test")
+        .setInt64Field(100L)
+        .build())
+      .setId("test_id")
+      .setVersion(1)
+      .build()
+
+    val binary = message.toByteArray
+    val df = Seq(binary).toDF("data")
+
+    // Only select primitives.int32_field - other fields should be pruned
+    val descBytes = createDescriptorBytes("CompleteMessage")
+    val result = df
+      .select(from_protobuf($"data", "CompleteMessage", descBytes).as("proto"))
+      .select($"proto.primitives.int32_field")
+      .collect()
+
+    result.length shouldBe 1
+    result(0).getInt(0) shouldBe 42
+  }
+
+  it should "preserve correctness when pruning is disabled" taggedAs SchemaPruningTest in {
+    val sparkImplicits = spark.implicits
+    import sparkImplicits._
+
+    // Disable pruning
+    spark.conf.set("spark.sql.protobuf.nestedSchemaPruning.enabled", "false")
+
+    try {
+      val message = CompleteMessage.newBuilder()
+        .setPrimitives(AllPrimitiveTypes.newBuilder()
+          .setInt32Field(42)
+          .setStringField("test")
+          .build())
+        .setId("test_id")
+        .build()
+
+      val binary = message.toByteArray
+      val df = Seq(binary).toDF("data")
+
+      val descBytes = createDescriptorBytes("CompleteMessage")
+      val result = df
+        .select(from_protobuf($"data", "CompleteMessage", descBytes).as("proto"))
+        .select($"proto.primitives.int32_field")
+        .collect()
+
+      result.length shouldBe 1
+      result(0).getInt(0) shouldBe 42
+    } finally {
+      // Re-enable pruning for other tests
+      spark.conf.set("spark.sql.protobuf.nestedSchemaPruning.enabled", "true")
+    }
+  }
+
+  it should "handle multiple field accesses from same struct" taggedAs SchemaPruningTest in {
+    val sparkImplicits = spark.implicits
+    import sparkImplicits._
+
+    val message = CompleteMessage.newBuilder()
+      .setPrimitives(AllPrimitiveTypes.newBuilder()
+        .setInt32Field(42)
+        .setStringField("test")
+        .setInt64Field(100L)
+        .build())
+      .setId("test_id")
+      .build()
+
+    val binary = message.toByteArray
+    val df = Seq(binary).toDF("data")
+
+    val descBytes = createDescriptorBytes("CompleteMessage")
+    val result = df
+      .select(from_protobuf($"data", "CompleteMessage", descBytes).as("proto"))
+      .select($"proto.primitives.int32_field", $"proto.primitives.string_field")
+      .collect()
+
+    result.length shouldBe 1
+    result(0).getInt(0) shouldBe 42
+    result(0).getString(1) shouldBe "test"
+  }
+
+  it should "work with top-level field selection" taggedAs SchemaPruningTest in {
+    val sparkImplicits = spark.implicits
+    import sparkImplicits._
+
+    val message = AllPrimitiveTypes.newBuilder()
+      .setInt32Field(100)
+      .setInt64Field(200L)
+      .setStringField("test")
+      .build()
+
+    val binary = message.toByteArray
+    val df = Seq(binary).toDF("data")
+
+    // Only select int32_field - other fields should be pruned
+    val descBytes = createDescriptorBytes("AllPrimitiveTypes")
+    val result = df
+      .select(from_protobuf($"data", "AllPrimitiveTypes", descBytes).as("proto"))
+      .select($"proto.int32_field")
+      .collect()
+
+    result.length shouldBe 1
+    result(0).getInt(0) shouldBe 100
+  }
+
+  it should "handle entire struct selection without pruning" taggedAs SchemaPruningTest in {
+    val sparkImplicits = spark.implicits
+    import sparkImplicits._
+
+    val message = AllPrimitiveTypes.newBuilder()
+      .setInt32Field(100)
+      .setStringField("test")
+      .build()
+
+    val binary = message.toByteArray
+    val df = Seq(binary).toDF("data")
+
+    // Select entire struct - no pruning should occur
+    val descBytes = createDescriptorBytes("AllPrimitiveTypes")
+    val result = df
+      .select(from_protobuf($"data", "AllPrimitiveTypes", descBytes).as("proto"))
+      .select($"proto")
+      .collect()
+
+    result.length shouldBe 1
+    val row = result(0).getStruct(0)
+    row.getInt(row.fieldIndex("int32_field")) shouldBe 100
+    row.getString(row.fieldIndex("string_field")) shouldBe "test"
+  }
+}

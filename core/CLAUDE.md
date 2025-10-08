@@ -117,7 +117,28 @@ parser.parseWithSharedBuffer(message, parentWriter)  // Nested message conversio
 - **Performance benchmarks**: Performance comparison tests in `ProtobufConversionBenchmark.scala` comparing codegen vs DynamicMessage paths
 - **Shading**: All protobuf classes shaded under `org.sparkproject.spark.protobuf311.*` in uber JAR
 
-The tests verify three usage patterns: compiled class, descriptor file, and binary descriptor set approaches. 
+The tests verify three usage patterns: compiled class, descriptor file, and binary descriptor set approaches.
+
+## Nested Schema Pruning
+
+The connector includes an optimizer rule (`ProtobufSchemaPruning`) that prunes unused nested fields during query optimization.
+
+**Implementation**:
+- **Optimizer rule**: `org.apache.spark.sql.protobuf.backport.optimizer.ProtobufSchemaPruning`
+- **Configuration**: `ProtobufConfig.nestedSchemaPruningEnabled` (default: true)
+- **Schema utilities**: `SchemaUtils.pruneSchema()` builds minimal required schemas
+
+**How it works**:
+1. Identifies `Project` operations accessing protobuf columns
+2. Analyzes `GetStructField` expressions to determine accessed fields
+3. Builds minimal schema containing only required field paths
+4. Rewrites `ProtobufDataToCatalyst` with pruned schema
+5. `WireFormatParser` skips fields not in schema (via `rowOrdinals == -1`)
+
+**Scope**:
+- Applies only to `WireFormat` parser (binary descriptor set usage)
+- Generated message parsers and DynamicMessage parsers unchanged for simplicity
+- Tests in `integration/SchemaPruningSpec.scala` verify correctness 
 
 ## Performance Benchmarking
 
