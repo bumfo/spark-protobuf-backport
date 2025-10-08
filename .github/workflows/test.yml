@@ -2,7 +2,7 @@ name: Test
 
 on:
   push:
-    branches: [ master, proto-row-generator-integration ]
+    branches: [ '**' ]  # All branches
   pull_request:
     branches: [ master ]
 
@@ -44,8 +44,13 @@ jobs:
     - name: Compile
       run: sbt compile
     
-    - name: Run tests
-      run: sbt test
+    - name: Run all test tiers (PR or master push)
+      run: sbt allTestTiers
+      if: github.event_name == 'pull_request' || github.ref == 'refs/heads/master'
+
+    - name: Run unit tests (other branches)
+      run: sbt unitTests
+      if: github.event_name == 'push' && github.ref != 'refs/heads/master'
     
     - name: Build assembly
       run: sbt assembly

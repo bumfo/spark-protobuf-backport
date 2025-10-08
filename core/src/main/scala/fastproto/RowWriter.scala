@@ -36,7 +36,8 @@ trait RowWriter {
    */
   def initRow(): Unit = {
     if (!hasRow) throw new IllegalStateException("initRow() should only be called on top-level writers that own a row")
-    reset() // TODO: also clear buffer to zeros for security
+    reset()
+    clearFixedDataRegion() // Zero out data region to prevent leaking previous values
     setAllNullBytes()
   }
 
@@ -45,6 +46,13 @@ trait RowWriter {
    * This method handles memory allocation and cursor management without null bit initialization.
    */
   protected def reserveRowSpace(): Unit
+
+  /**
+   * Clears the fixed-length data region (excluding null bits) by zeroing it out.
+   * This ensures null fields contain 0L as required by UnsafeRow semantics.
+   * Only called during initRow() for top-level writers.
+   */
+  protected def clearFixedDataRegion(): Unit
 
   /**
    * Returns whether this writer owns its own UnsafeRow instance.
