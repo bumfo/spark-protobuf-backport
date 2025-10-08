@@ -1,0 +1,12 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(sbt unitTests)",
+      "Bash(sbt propertyTests)",
+      "Bash(sbt integrationTests)",
+      "Bash(sbt allTestTiers)"
+    ],
+    "deny": [],
+    "ask": []
+  }
+}

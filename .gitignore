@@ -1,9 +1,12 @@
 # Created by https://www.toptal.com/developers/gitignore/api/scala,java,intellij,sbt
 # Edit at https://www.toptal.com/developers/gitignore?templates=scala,java,intellij,sbt
 
-.claude
+.claude/*
+!.claude/settings.json
 
 .idea/*
+
+/*.txt
 
 ### Intellij ###
 # Covers JetBrains IDEs: IntelliJ, RubyMine, PhpStorm, AppCode, PyCharm, CLion, Android Studio, WebStorm and Rider
