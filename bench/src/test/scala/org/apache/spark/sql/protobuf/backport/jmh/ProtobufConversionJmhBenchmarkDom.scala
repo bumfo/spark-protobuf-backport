@@ -201,7 +201,7 @@ class ProtobufConversionJmhBenchmarkDom {
     bh.consume(domPrunedParser.parse(deepDomBinary))
   }
 
-  // @Benchmark
+  @Benchmark
   def domDeepProtoParsing(bh: Blackhole): Unit = {
     bh.consume(DomDocument.parseFrom(deepDomBinary))
   }
