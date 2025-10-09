@@ -35,7 +35,7 @@ import static org.apache.spark.sql.catalyst.expressions.UnsafeArrayData.calculat
  * Usage pattern:
  * <pre>
  *   GrowableArrayWriter writer = new GrowableArrayWriter(parentWriter, elementSize);
- *   writer.initialize(10);  // Initial capacity hint (can grow beyond this)
+ *   writer.initialize(10);  // Optional capacity hint (allocation happens on first write)
  *   writer.write(0, value1);
  *   writer.write(1, value2);
  *   writer.write(100, value3);  // Automatically grows to accommodate ordinal 100
@@ -43,7 +43,8 @@ import static org.apache.spark.sql.catalyst.expressions.UnsafeArrayData.calculat
  * </pre>
  * <p>
  * Key differences from UnsafeArrayWriter:
- * - initialize(capacity) allocates initial space, not final size
+ * - initialize(capacity) is optional and only sets capacity hint (lazy allocation)
+ * - Space allocated on first write, so empty arrays take no extra space
  * - write() methods auto-grow when ordinal >= capacity
  * - Tracks actual element count as max(ordinal + 1) across all writes
  * - Requires complete() call to finalize the array header with actual count
@@ -55,6 +56,9 @@ import static org.apache.spark.sql.catalyst.expressions.UnsafeArrayData.calculat
  * @see org.apache.spark.sql.catalyst.expressions.codegen.UnsafeArrayWriter
  */
 public final class GrowableArrayWriter extends UnsafeWriter {
+
+    // Default initial capacity when initialize() is not called
+    private static final int DEFAULT_CAPACITY = 10;
 
     // The allocated capacity (max elements without reallocation)
     private int capacity;
@@ -70,6 +74,9 @@ public final class GrowableArrayWriter extends UnsafeWriter {
     // Track if array has been finalized
     private boolean finalized;
 
+    // Track if space has been allocated yet (for lazy allocation)
+    private boolean allocated;
+
     private void assertIndexIsValid(int index) {
         assert index >= 0 : "index (" + index + ") should >= 0";
     }
@@ -77,27 +84,43 @@ public final class GrowableArrayWriter extends UnsafeWriter {
     public GrowableArrayWriter(UnsafeWriter writer, int elementSize) {
         super(writer.getBufferHolder());
         this.elementSize = elementSize;
+        this.capacity = DEFAULT_CAPACITY;
+        this.count = 0;
+        this.finalized = false;
+        this.allocated = false;
+    }
+
+    /**
+     * Set the initial capacity hint for the growable array.
+     * Space is allocated lazily on first write, so empty arrays take no space.
+     * This method is optional - if not called, DEFAULT_CAPACITY is used.
+     *
+     * @param initialCapacity the initial capacity hint (actual allocation happens on first write)
+     */
+    public void initialize(int initialCapacity) {
+        if (allocated) {
+            throw new IllegalStateException("Cannot call initialize() after allocation has occurred");
+        }
+        this.capacity = initialCapacity;
         this.count = 0;
         this.finalized = false;
     }
 
     /**
-     * Initialize the growable array with an initial capacity hint.
-     * Unlike UnsafeArrayWriter, this allocates initial capacity that can grow as needed.
-     *
-     * @param initialCapacity the initial capacity to allocate (can grow beyond this)
+     * Allocate space for the array with the current capacity.
+     * Called lazily on first write to avoid allocating space for empty arrays.
      */
-    public void initialize(int initialCapacity) {
-        this.capacity = initialCapacity;
-        this.count = 0;
-        this.finalized = false;
-        this.headerInBytes = calculateHeaderPortionInBytes(initialCapacity);
+    private void allocate() {
+        if (allocated) {
+            return;
+        }
 
+        this.headerInBytes = calculateHeaderPortionInBytes(capacity);
         this.startingOffset = cursor();
 
         // Grows the global buffer ahead for header and fixed size data.
         int fixedPartInBytes =
-                ByteArrayMethods.roundNumberOfBytesToNearestWord(elementSize * initialCapacity);
+                ByteArrayMethods.roundNumberOfBytesToNearestWord(elementSize * capacity);
         grow(headerInBytes + fixedPartInBytes);
 
         // Write temporary numElements (will be updated in complete()) and clear out null bits to header
@@ -107,10 +130,12 @@ public final class GrowableArrayWriter extends UnsafeWriter {
         }
 
         // fill 0 into reminder part of 8-bytes alignment in unsafe array
-        for (int i = elementSize * initialCapacity; i < fixedPartInBytes; i++) {
+        for (int i = elementSize * capacity; i < fixedPartInBytes; i++) {
             Platform.putByte(getBuffer(), startingOffset + headerInBytes + i, (byte) 0);
         }
         increaseCursor(headerInBytes + fixedPartInBytes);
+
+        this.allocated = true;
     }
 
     /**
@@ -180,6 +205,11 @@ public final class GrowableArrayWriter extends UnsafeWriter {
     }
 
     private void ensureCapacity(int ordinal) {
+        // Allocate on first write if not yet allocated
+        if (!allocated) {
+            allocate();
+        }
+
         if (ordinal >= capacity) {
             growCapacity(ordinal + 1);
         }
@@ -328,6 +358,7 @@ public final class GrowableArrayWriter extends UnsafeWriter {
     /**
      * Finalize the growable array by updating the header with the actual element count.
      * Must be called after all elements have been written.
+     * If no writes occurred, allocates an empty array.
      *
      * @return the actual number of elements written
      * @throws IllegalStateException if already finalized
@@ -335,6 +366,11 @@ public final class GrowableArrayWriter extends UnsafeWriter {
     public int complete() {
         if (finalized) {
             throw new IllegalStateException("GrowableArrayWriter has already been finalized");
+        }
+
+        // Allocate if no writes occurred (empty array)
+        if (!allocated) {
+            allocate();
         }
 
         // Update the numElements field in the header with the actual count
