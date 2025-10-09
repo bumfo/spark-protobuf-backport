@@ -273,4 +273,86 @@ class GrowableArrayWriterSpec extends AnyFlatSpec with Matchers {
     // Should use max(4*2, 21) = 21
     writer.getCapacity should be >= 21
   }
+
+  it should "allocate lazily on first write" in {
+    val rowWriter = new UnsafeRowWriter(1, 256)
+
+    // Get cursor position after row writer construction
+    val cursorAfterRowWriter = rowWriter.cursor()
+
+    val writer = new GrowableArrayWriter(rowWriter, 8)
+
+    // Initialize but don't write yet
+    writer.initialize(10)
+    val cursorAfterInit = rowWriter.cursor()
+
+    // Cursor should not have moved from initialize() (lazy allocation)
+    cursorAfterInit shouldBe cursorAfterRowWriter
+
+    // First write triggers allocation
+    writer.write(0, 100L)
+    val cursorAfterWrite = rowWriter.cursor()
+
+    // Now cursor should have moved (space allocated)
+    cursorAfterWrite should be > cursorAfterInit
+
+    // Verify actual element count in capacity is correct
+    writer.getCapacity shouldBe 10
+    writer.getCount shouldBe 1
+  }
+
+  it should "handle empty arrays without wasting space" in {
+    val rowWriter = new UnsafeRowWriter(1, 256)
+    val writer = new GrowableArrayWriter(rowWriter, 8)
+
+    writer.initialize(100)
+    val cursorBefore = rowWriter.cursor()
+
+    // Don't write anything, just complete
+    val count = writer.complete()
+    count shouldBe 0
+
+    // Space should have been allocated for empty array (minimal size)
+    val cursorAfter = rowWriter.cursor()
+    cursorAfter should be > cursorBefore
+
+    // Verify it's a valid empty array
+    val arrayData = new UnsafeArrayData()
+    arrayData.pointTo(rowWriter.getBuffer, writer.getStartingOffset, rowWriter.totalSize())
+    arrayData.numElements() shouldBe 0
+  }
+
+  it should "work without calling initialize()" in {
+    val rowWriter = new UnsafeRowWriter(1, 256)
+    val writer = new GrowableArrayWriter(rowWriter, 8)
+
+    // Don't call initialize() - should use DEFAULT_CAPACITY (10)
+    writer.getCapacity shouldBe 10
+
+    // Write some values
+    writer.write(0, 100L)
+    writer.write(5, 500L)
+
+    val count = writer.complete()
+    count shouldBe 6
+
+    val arrayData = new UnsafeArrayData()
+    arrayData.pointTo(rowWriter.getBuffer, writer.getStartingOffset, rowWriter.totalSize())
+    arrayData.numElements() shouldBe 6
+    arrayData.getLong(0) shouldBe 100L
+    arrayData.getLong(5) shouldBe 500L
+  }
+
+  it should "forbid initialize() after allocation" in {
+    val rowWriter = new UnsafeRowWriter(1, 256)
+    val writer = new GrowableArrayWriter(rowWriter, 8)
+
+    writer.initialize(5)
+    writer.write(0, 100L) // Triggers allocation
+
+    // Should not be able to call initialize() after allocation
+    assertThrows[IllegalStateException] {
+      writer.initialize(10)
+    }
+  }
 }
