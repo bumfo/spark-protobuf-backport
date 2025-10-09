@@ -84,26 +84,33 @@ public final class GrowableArrayWriter extends UnsafeWriter {
     public GrowableArrayWriter(UnsafeWriter writer, int elementSize) {
         super(writer.getBufferHolder());
         this.elementSize = elementSize;
-        this.capacity = DEFAULT_CAPACITY;
+        this.capacity = 0;  // Will be set on first sizeHint() or first write
         this.count = 0;
         this.finalized = false;
         this.allocated = false;
     }
 
     /**
-     * Set the initial capacity hint for the growable array.
+     * Provide a capacity hint to optimize space allocation.
+     * Can be called multiple times - keeps existing data and grows if needed.
      * Space is allocated lazily on first write, so empty arrays take no space.
-     * This method is optional - if not called, DEFAULT_CAPACITY is used.
      *
-     * @param initialCapacity the initial capacity hint (actual allocation happens on first write)
+     * @param minCapacity the minimum capacity hint
      */
-    public void initialize(int initialCapacity) {
+    public void sizeHint(int minCapacity) {
         if (allocated) {
-            throw new IllegalStateException("Cannot call initialize() after allocation has occurred");
+            // Already allocated - grow if needed
+            if (minCapacity > capacity) {
+                growCapacity(minCapacity);
+            }
+        } else {
+            // Not yet allocated - update capacity hint (take max if already set)
+            if (this.capacity == 0) {
+                this.capacity = minCapacity;
+            } else {
+                this.capacity = Math.max(this.capacity, minCapacity);
+            }
         }
-        this.capacity = initialCapacity;
-        this.count = 0;
-        this.finalized = false;
     }
 
     /**
@@ -113,6 +120,11 @@ public final class GrowableArrayWriter extends UnsafeWriter {
     private void allocate() {
         if (allocated) {
             return;
+        }
+
+        // Use DEFAULT_CAPACITY if sizeHint was never called
+        if (capacity == 0) {
+            capacity = DEFAULT_CAPACITY;
         }
 
         this.headerInBytes = calculateHeaderPortionInBytes(capacity);
