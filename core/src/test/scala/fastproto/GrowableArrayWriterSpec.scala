@@ -13,11 +13,11 @@ import org.scalatest.matchers.should.Matchers
  */
 class GrowableArrayWriterSpec extends AnyFlatSpec with Matchers {
 
-  "GrowableArrayWriter" should "initialize with given capacity" in {
+  "GrowableArrayWriter" should "accept capacity hint via sizeHint" in {
     val rowWriter = new UnsafeRowWriter(1, 64)
     val writer = new GrowableArrayWriter(rowWriter, 8)
 
-    writer.initialize(10)
+    writer.sizeHint(10)
     writer.getCapacity shouldBe 10
     writer.getCount shouldBe 0
   }
@@ -26,7 +26,7 @@ class GrowableArrayWriterSpec extends AnyFlatSpec with Matchers {
     val rowWriter = new UnsafeRowWriter(1, 64)
     val writer = new GrowableArrayWriter(rowWriter, 8)
 
-    writer.initialize(10)
+    writer.sizeHint(10)
     writer.write(0, 100L)
     writer.getCount shouldBe 1
 
@@ -41,7 +41,7 @@ class GrowableArrayWriterSpec extends AnyFlatSpec with Matchers {
     val rowWriter = new UnsafeRowWriter(1, 256)
     val writer = new GrowableArrayWriter(rowWriter, 8)
 
-    writer.initialize(5)  // Start with capacity of 5
+    writer.sizeHint(5)  // Start with capacity of 5
     writer.getCapacity shouldBe 5
 
     // Write within capacity
@@ -59,7 +59,7 @@ class GrowableArrayWriterSpec extends AnyFlatSpec with Matchers {
     val rowWriter = new UnsafeRowWriter(1, 512)
     val writer = new GrowableArrayWriter(rowWriter, 8)
 
-    writer.initialize(3)
+    writer.sizeHint(3)
 
     // Write some initial data
     writer.write(0, 100L)
@@ -88,7 +88,7 @@ class GrowableArrayWriterSpec extends AnyFlatSpec with Matchers {
     val rowWriter = new UnsafeRowWriter(1, 512)
     val writer = new GrowableArrayWriter(rowWriter, 4)  // 4-byte elements (int)
 
-    writer.initialize(2)
+    writer.sizeHint(2)
     writer.getCapacity shouldBe 2
 
     // First growth
@@ -117,7 +117,7 @@ class GrowableArrayWriterSpec extends AnyFlatSpec with Matchers {
     // Test with different element sizes
     val longRowWriter = new UnsafeRowWriter(1, 256)
     val longWriter = new GrowableArrayWriter(longRowWriter, 8)
-    longWriter.initialize(5)
+    longWriter.sizeHint(5)
     longWriter.write(0, 100L)
     longWriter.write(10, 999L)  // Trigger growth
     longWriter.complete() shouldBe 11
@@ -125,7 +125,7 @@ class GrowableArrayWriterSpec extends AnyFlatSpec with Matchers {
     // Test with int (4 bytes)
     val intRowWriter = new UnsafeRowWriter(1, 256)
     val intWriter = new GrowableArrayWriter(intRowWriter, 4)
-    intWriter.initialize(3)
+    intWriter.sizeHint(3)
     intWriter.write(0, 42)
     intWriter.write(5, 84)  // Trigger growth
     intWriter.complete() shouldBe 6
@@ -133,7 +133,7 @@ class GrowableArrayWriterSpec extends AnyFlatSpec with Matchers {
     // Test with double (8 bytes)
     val doubleRowWriter = new UnsafeRowWriter(1, 256)
     val doubleWriter = new GrowableArrayWriter(doubleRowWriter, 8)
-    doubleWriter.initialize(2)
+    doubleWriter.sizeHint(2)
     doubleWriter.write(0, 3.14)
     doubleWriter.write(4, 2.71)  // Trigger growth
     doubleWriter.complete() shouldBe 5
@@ -143,7 +143,7 @@ class GrowableArrayWriterSpec extends AnyFlatSpec with Matchers {
     val rowWriter = new UnsafeRowWriter(1, 256)
     val writer = new GrowableArrayWriter(rowWriter, 8)
 
-    writer.initialize(3)
+    writer.sizeHint(3)
     writer.write(0, 100L)
     writer.setNull8Bytes(1)  // Set ordinal 1 to null
     writer.write(2, 300L)
@@ -165,7 +165,7 @@ class GrowableArrayWriterSpec extends AnyFlatSpec with Matchers {
     val rowWriter = new UnsafeRowWriter(1, 256)
     val writer = new GrowableArrayWriter(rowWriter, 8)
 
-    writer.initialize(5)
+    writer.sizeHint(5)
     writer.write(0, 100L)
     writer.complete()
 
@@ -179,7 +179,7 @@ class GrowableArrayWriterSpec extends AnyFlatSpec with Matchers {
     val rowWriter = new UnsafeRowWriter(1, 2048)  // Need more space for sparse array
     val writer = new GrowableArrayWriter(rowWriter, 8)
 
-    writer.initialize(3)
+    writer.sizeHint(3)
 
     // Write only to ordinals 0 and 100, skipping everything in between
     writer.write(0, 1L)
@@ -201,7 +201,7 @@ class GrowableArrayWriterSpec extends AnyFlatSpec with Matchers {
     val rowWriter = new UnsafeRowWriter(1, 256)
     val writer = new GrowableArrayWriter(rowWriter, 8)
 
-    writer.initialize(5)
+    writer.sizeHint(5)
 
     // UTF8String writes should throw UnsupportedOperationException
     val utf8 = UTF8String.fromString("test")
@@ -223,7 +223,7 @@ class GrowableArrayWriterSpec extends AnyFlatSpec with Matchers {
     val rowWriter = new UnsafeRowWriter(1, 256)
     val writer = new GrowableArrayWriter(rowWriter, 8)
 
-    writer.initialize(5)
+    writer.sizeHint(5)
 
     // Small decimal (fits in long)
     val smallDecimal = Decimal(12345, 10, 2)
@@ -243,7 +243,7 @@ class GrowableArrayWriterSpec extends AnyFlatSpec with Matchers {
     val rowWriter = new UnsafeRowWriter(1, 256)
     val writer = new GrowableArrayWriter(rowWriter, 8)
 
-    writer.initialize(4)
+    writer.sizeHint(4)
     writer.getCapacity shouldBe 4
 
     // Write to ordinal 5 (needs capacity of at least 6)
@@ -263,7 +263,7 @@ class GrowableArrayWriterSpec extends AnyFlatSpec with Matchers {
     val rowWriter = new UnsafeRowWriter(1, 512)
     val writer = new GrowableArrayWriter(rowWriter, 8)
 
-    writer.initialize(4)
+    writer.sizeHint(4)
     writer.getCapacity shouldBe 4
 
     // Jump way beyond double capacity (4 * 2 = 8)
@@ -282,19 +282,19 @@ class GrowableArrayWriterSpec extends AnyFlatSpec with Matchers {
 
     val writer = new GrowableArrayWriter(rowWriter, 8)
 
-    // Initialize but don't write yet
-    writer.initialize(10)
-    val cursorAfterInit = rowWriter.cursor()
+    // Set size hint but don't write yet
+    writer.sizeHint(10)
+    val cursorAfterHint = rowWriter.cursor()
 
-    // Cursor should not have moved from initialize() (lazy allocation)
-    cursorAfterInit shouldBe cursorAfterRowWriter
+    // Cursor should not have moved from sizeHint() (lazy allocation)
+    cursorAfterHint shouldBe cursorAfterRowWriter
 
     // First write triggers allocation
     writer.write(0, 100L)
     val cursorAfterWrite = rowWriter.cursor()
 
     // Now cursor should have moved (space allocated)
-    cursorAfterWrite should be > cursorAfterInit
+    cursorAfterWrite should be > cursorAfterHint
 
     // Verify actual element count in capacity is correct
     writer.getCapacity shouldBe 10
@@ -305,7 +305,7 @@ class GrowableArrayWriterSpec extends AnyFlatSpec with Matchers {
     val rowWriter = new UnsafeRowWriter(1, 256)
     val writer = new GrowableArrayWriter(rowWriter, 8)
 
-    writer.initialize(100)
+    writer.sizeHint(100)
     val cursorBefore = rowWriter.cursor()
 
     // Don't write anything, just complete
@@ -322,16 +322,17 @@ class GrowableArrayWriterSpec extends AnyFlatSpec with Matchers {
     arrayData.numElements() shouldBe 0
   }
 
-  it should "work without calling initialize()" in {
+  it should "work without calling sizeHint()" in {
     val rowWriter = new UnsafeRowWriter(1, 256)
     val writer = new GrowableArrayWriter(rowWriter, 8)
 
-    // Don't call initialize() - should use DEFAULT_CAPACITY (10)
-    writer.getCapacity shouldBe 10
-
+    // Don't call sizeHint() - should use DEFAULT_CAPACITY on first write
     // Write some values
     writer.write(0, 100L)
     writer.write(5, 500L)
+
+    // After allocation, capacity should be DEFAULT_CAPACITY (10)
+    writer.getCapacity shouldBe 10
 
     val count = writer.complete()
     count shouldBe 6
@@ -343,16 +344,33 @@ class GrowableArrayWriterSpec extends AnyFlatSpec with Matchers {
     arrayData.getLong(5) shouldBe 500L
   }
 
-  it should "forbid initialize() after allocation" in {
-    val rowWriter = new UnsafeRowWriter(1, 256)
+  it should "allow multiple sizeHint calls" in {
+    val rowWriter = new UnsafeRowWriter(1, 512)
     val writer = new GrowableArrayWriter(rowWriter, 8)
 
-    writer.initialize(5)
-    writer.write(0, 100L) // Triggers allocation
+    // Multiple hints before allocation - takes max
+    writer.sizeHint(5)
+    writer.sizeHint(3)   // Smaller hint is ignored
+    writer.sizeHint(10)  // Larger hint is used
+    writer.getCapacity shouldBe 10
 
-    // Should not be able to call initialize() after allocation
-    assertThrows[IllegalStateException] {
-      writer.initialize(10)
-    }
+    // Write to trigger allocation
+    writer.write(0, 100L)
+    writer.write(5, 500L)
+
+    // Can still call sizeHint after allocation - grows if needed
+    writer.sizeHint(20)
+    writer.getCapacity shouldBe 20
+
+    // Data should be preserved
+    writer.write(15, 1500L)
+    val count = writer.complete()
+    count shouldBe 16
+
+    val arrayData = new UnsafeArrayData()
+    arrayData.pointTo(rowWriter.getBuffer, writer.getStartingOffset, rowWriter.totalSize())
+    arrayData.getLong(0) shouldBe 100L
+    arrayData.getLong(5) shouldBe 500L
+    arrayData.getLong(15) shouldBe 1500L
   }
 }
