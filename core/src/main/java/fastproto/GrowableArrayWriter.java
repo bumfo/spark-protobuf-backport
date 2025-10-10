@@ -57,9 +57,6 @@ import static org.apache.spark.sql.catalyst.expressions.UnsafeArrayData.calculat
  */
 public final class GrowableArrayWriter extends UnsafeWriter {
 
-    // Default initial capacity when initialize() is not called
-    private static final int DEFAULT_CAPACITY = 10;
-
     // The allocated capacity (max elements without reallocation)
     private int capacity;
 
@@ -74,9 +71,6 @@ public final class GrowableArrayWriter extends UnsafeWriter {
     // Track if array has been finalized
     private boolean finalized;
 
-    // Track if space has been allocated yet (for lazy allocation)
-    private boolean allocated;
-
     private void assertIndexIsValid(int index) {
         assert index >= 0 : "index (" + index + ") should >= 0";
     }
@@ -84,76 +78,32 @@ public final class GrowableArrayWriter extends UnsafeWriter {
     public GrowableArrayWriter(UnsafeWriter writer, int elementSize) {
         super(writer.getBufferHolder());
         this.elementSize = elementSize;
-        this.capacity = 0;  // Will be set on first sizeHint() or first write
+        this.capacity = 0;  // 0 indicates not yet allocated
         this.count = 0;
         this.finalized = false;
-        this.allocated = false;
     }
 
     /**
      * Provide a capacity hint to optimize space allocation.
      * Can be called multiple times - keeps existing data and grows if needed.
-     * Space is allocated lazily on first write, so empty arrays take no space.
      *
      * @param minCapacity the minimum capacity hint
      */
     public void sizeHint(int minCapacity) {
-        if (allocated) {
-            // Already allocated - grow if needed
-            if (minCapacity > capacity) {
-                growCapacity(minCapacity);
-            }
-        } else {
-            // Not yet allocated - update capacity hint (take max if already set)
-            this.capacity = minCapacity;
+        if (minCapacity > capacity) {
+            growCapacity(minCapacity);
         }
-    }
-
-    /**
-     * Allocate space for the array with the current capacity.
-     * Called lazily on first write to avoid allocating space for empty arrays.
-     */
-    private void allocate() {
-        if (allocated) {
-            return;
-        }
-
-        // Use DEFAULT_CAPACITY if sizeHint was never called
-        if (capacity == 0) {
-            capacity = DEFAULT_CAPACITY;
-        }
-
-        this.headerInBytes = calculateHeaderPortionInBytes(capacity);
-        this.startingOffset = cursor();
-
-        // Grows the global buffer ahead for header and fixed size data.
-        int fixedPartInBytes =
-                ByteArrayMethods.roundNumberOfBytesToNearestWord(elementSize * capacity);
-        grow(headerInBytes + fixedPartInBytes);
-
-        // Write temporary numElements (will be updated in complete()) and clear out null bits to header
-        Platform.putLong(getBuffer(), startingOffset, 0L);
-        for (int i = 8; i < headerInBytes; i += 8) {
-            Platform.putLong(getBuffer(), startingOffset + i, 0L);
-        }
-
-        // fill 0 into reminder part of 8-bytes alignment in unsafe array
-        for (int i = elementSize * capacity; i < fixedPartInBytes; i++) {
-            Platform.putByte(getBuffer(), startingOffset + headerInBytes + i, (byte) 0);
-        }
-        increaseCursor(headerInBytes + fixedPartInBytes);
-
-        this.allocated = true;
     }
 
     /**
      * Grow the array capacity to accommodate at least minCapacity elements.
+     * Handles initial allocation when capacity == 0.
      * Uses hybrid growth strategy:
      * - Small arrays (< 823): Linear growth (allocate exactly what's needed)
      * - Large arrays (>= 823): Exponential growth (1.5x) to amortize costs
      *
-     * Optimization: Fast path when header size unchanged (most common case).
-     * Header grows every 64 elements, so 63 out of 64 growth operations take fast path.
+     * Optimization: Fastest path for small mid-block arrays (capacity < 823 && capacity % 64 != 0).
+     * Header guaranteed unchanged, just grow buffer space - no calculations or data movement needed.
      *
      * @param minCapacity the minimum capacity required
      */
@@ -161,25 +111,23 @@ public final class GrowableArrayWriter extends UnsafeWriter {
         // Hybrid growth strategy
         int newCapacity;
         if (capacity < 823) {
-            // Small arrays: allocate exactly what's needed (no exponential growth)
+            // Small arrays (including initial allocation): allocate exactly what's needed
             newCapacity = minCapacity;
         } else {
             // Large arrays: use 1.5x growth like ArrayList
             newCapacity = Math.max(capacity + (capacity >> 1), minCapacity);
         }
 
-        int oldHeaderInBytes = headerInBytes;
-        int newHeaderInBytes = calculateHeaderPortionInBytes(newCapacity);
-
-        // Fast path: header size unchanged (most common - 63 out of 64 growth operations)
-        if (newHeaderInBytes == oldHeaderInBytes) {
+        // Fastest path: incrementing by 1 element without crossing 64-element boundary
+        // Header changes every 64 elements, so header unchanged when (capacity & 63) != 63
+        if (capacity < 823 && newCapacity == capacity + 1 && (capacity & 63) != 63) {
             int oldFixedPartInBytes = ByteArrayMethods.roundNumberOfBytesToNearestWord(elementSize * capacity);
             int newFixedPartInBytes = ByteArrayMethods.roundNumberOfBytesToNearestWord(elementSize * newCapacity);
             int additionalSpace = newFixedPartInBytes - oldFixedPartInBytes;
 
             grow(additionalSpace);
 
-            // Zero out new fixed region slots only (beyond existing count)
+            // Zero out new fixed region slots only
             int fixedStart = startingOffset + headerInBytes;
             for (int i = oldFixedPartInBytes; i < newFixedPartInBytes; i += 8) {
                 Platform.putLong(getBuffer(), fixedStart + i, 0L);
@@ -190,38 +138,45 @@ public final class GrowableArrayWriter extends UnsafeWriter {
             return;
         }
 
-        // Slow path: header size changed, need to move data
-        int oldFixedPartInBytes = ByteArrayMethods.roundNumberOfBytesToNearestWord(elementSize * capacity);
+        // General path: initial allocation, large arrays, or boundary cases
+        boolean isInitialAllocation = (capacity == 0);
+        int oldHeaderInBytes = isInitialAllocation ? 0 : headerInBytes;
+        int newHeaderInBytes = calculateHeaderPortionInBytes(newCapacity);
+        int oldFixedPartInBytes = isInitialAllocation ? 0 : ByteArrayMethods.roundNumberOfBytesToNearestWord(elementSize * capacity);
         int newFixedPartInBytes = ByteArrayMethods.roundNumberOfBytesToNearestWord(elementSize * newCapacity);
 
-        // Calculate old cursor position relative to starting offset
+        // Set starting offset for initial allocation
+        if (isInitialAllocation) {
+            this.startingOffset = cursor();
+        }
+
+        // Calculate space needed and variable data size
         int oldCursor = cursor();
-        int variableDataSize = oldCursor - startingOffset - oldHeaderInBytes - oldFixedPartInBytes;
+        int variableDataSize = isInitialAllocation ? 0 : oldCursor - startingOffset - oldHeaderInBytes - oldFixedPartInBytes;
 
         // Assert no variable-length data (enforced by setOffsetAndSize throwing UnsupportedOperationException)
         assert variableDataSize == 0 : "GrowableArrayWriter does not support variable-length data";
 
-        // Grow buffer for new header + fixed + existing variable data
+        // Grow buffer
         int additionalSpace = (newHeaderInBytes - oldHeaderInBytes) + (newFixedPartInBytes - oldFixedPartInBytes);
         grow(additionalSpace);
 
-        // Need to move data in reverse order to avoid overwriting
-        // Move variable-length data first (if any)
-        if (variableDataSize > 0) {
-            int oldVariableStart = startingOffset + oldHeaderInBytes + oldFixedPartInBytes;
-            int newVariableStart = startingOffset + newHeaderInBytes + newFixedPartInBytes;
-            Platform.copyMemory(
-                getBuffer(), oldVariableStart,
-                getBuffer(), newVariableStart,
-                variableDataSize
-            );
-        }
+        // Move data if header size changed (skip for initial allocation)
+        if (!isInitialAllocation && newHeaderInBytes > oldHeaderInBytes) {
+            // Move variable-length data first (if any) to avoid overwriting
+            if (variableDataSize > 0) {
+                int oldVariableStart = startingOffset + oldHeaderInBytes + oldFixedPartInBytes;
+                int newVariableStart = startingOffset + newHeaderInBytes + newFixedPartInBytes;
+                Platform.copyMemory(
+                    getBuffer(), oldVariableStart,
+                    getBuffer(), newVariableStart,
+                    variableDataSize
+                );
+            }
 
-        // Move fixed-length data if header size changed
-        if (newHeaderInBytes > oldHeaderInBytes) {
+            // Move fixed-length data
             int oldFixedStart = startingOffset + oldHeaderInBytes;
             int newFixedStart = startingOffset + newHeaderInBytes;
-            // Only copy existing element data, not the padding
             int existingDataBytes = count * elementSize;
             Platform.copyMemory(
                 getBuffer(), oldFixedStart,
@@ -230,18 +185,21 @@ public final class GrowableArrayWriter extends UnsafeWriter {
             );
         }
 
-        // Initialize new null bits (from old header size to new header size)
-        for (int i = oldHeaderInBytes; i < newHeaderInBytes; i += 8) {
+        // Initialize header (full initialization for new allocation, only new null bits for growth)
+        int headerInitStart = isInitialAllocation ? 0 : oldHeaderInBytes;
+        Platform.putLong(getBuffer(), startingOffset, 0L);  // Always write numElements placeholder
+        for (int i = Math.max(8, headerInitStart); i < newHeaderInBytes; i += 8) {
             Platform.putLong(getBuffer(), startingOffset + i, 0L);
         }
 
-        // Zero out new fixed region slots (beyond existing count)
+        // Zero out new fixed region slots
         int newFixedStart = startingOffset + newHeaderInBytes;
-        for (int i = count * elementSize; i < newFixedPartInBytes; i += 8) {
+        int fixedInitStart = isInitialAllocation ? 0 : count * elementSize;
+        for (int i = fixedInitStart; i < newFixedPartInBytes; i += 8) {
             Platform.putLong(getBuffer(), newFixedStart + i, 0L);
         }
 
-        // Update cursor to account for new layout
+        // Update cursor
         int newCursor = startingOffset + newHeaderInBytes + newFixedPartInBytes + variableDataSize;
         increaseCursor(newCursor - oldCursor);
 
@@ -250,11 +208,6 @@ public final class GrowableArrayWriter extends UnsafeWriter {
     }
 
     private void ensureCapacity(int ordinal) {
-        // Allocate on first write if not yet allocated
-        if (!allocated) {
-            allocate();
-        }
-
         if (ordinal >= capacity) {
             growCapacity(ordinal + 1);
         }
@@ -414,8 +367,8 @@ public final class GrowableArrayWriter extends UnsafeWriter {
         }
 
         // Allocate if no writes occurred (empty array)
-        if (!allocated) {
-            allocate();
+        if (capacity == 0) {
+            growCapacity(0);
         }
 
         // Update the numElements field in the header with the actual count
