@@ -123,8 +123,10 @@ public final class GrowableArrayWriter extends UnsafeWriter {
         // Safe to use fast path when capacity is not at boundary: (capacity & 63) != 0
         // No need to zero - new slot will be written or already zero from buffer allocation
         if (capacity < 823 && newCapacity == capacity + 1 && (capacity & 63) != 0) {
-            int additionalSpace = ByteArrayMethods.roundNumberOfBytesToNearestWord(elementSize * newCapacity) -
-                                  ByteArrayMethods.roundNumberOfBytesToNearestWord(elementSize * capacity);
+            // roundToWord(capacity+1) - roundToWord(capacity) where roundToWord(n) = (n*elementSize + 7) & ~7
+            int oldBytes = elementSize * capacity;
+            int newBytes = oldBytes + elementSize;
+            int additionalSpace = ((newBytes + 7) & ~7) - ((oldBytes + 7) & ~7);
             grow(additionalSpace);
             increaseCursor(additionalSpace);
             this.capacity = newCapacity;
