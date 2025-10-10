@@ -171,8 +171,7 @@ public final class GrowableArrayWriter extends UnsafeWriter {
 
         // Initialize header (full initialization for new allocation, only new null bits for growth)
         int headerInitStart = oldHeaderInBytes;  // 0 when isInitialAllocation
-        Platform.putLong(getBuffer(), startingOffset, 0L);  // Always write numElements placeholder
-        for (int i = Math.max(8, headerInitStart); i < newHeaderInBytes; i += 8) {
+        for (int i = headerInitStart; i < newHeaderInBytes; i += 8) {
             Platform.putLong(getBuffer(), startingOffset + i, 0L);
         }
 
