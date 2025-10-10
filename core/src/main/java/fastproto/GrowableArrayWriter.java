@@ -105,11 +105,7 @@ public final class GrowableArrayWriter extends UnsafeWriter {
             }
         } else {
             // Not yet allocated - update capacity hint (take max if already set)
-            if (this.capacity == 0) {
-                this.capacity = minCapacity;
-            } else {
-                this.capacity = Math.max(this.capacity, minCapacity);
-            }
+            this.capacity = minCapacity;
         }
     }
 
@@ -426,13 +422,6 @@ public final class GrowableArrayWriter extends UnsafeWriter {
 
     @Override
     protected final void setOffsetAndSize(int ordinal, int currentCursor, int size) {
-        throw new UnsupportedOperationException(
-            "GrowableArrayWriter does not support variable-length data. " +
-            "Only fixed-size primitive types and Decimal are supported.");
-    }
-
-    @Override
-    protected final void setOffsetAndSize(int ordinal, int size) {
         throw new UnsupportedOperationException(
             "GrowableArrayWriter does not support variable-length data. " +
             "Only fixed-size primitive types and Decimal are supported.");
