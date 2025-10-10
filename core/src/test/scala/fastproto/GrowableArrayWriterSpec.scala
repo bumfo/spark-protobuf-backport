@@ -273,7 +273,7 @@ class GrowableArrayWriterSpec extends AnyFlatSpec with Matchers {
     writer.getCapacity shouldBe 21
   }
 
-  it should "allocate lazily on first write" in {
+  it should "allocate on sizeHint" in {
     val rowWriter = new UnsafeRowWriter(1, 256)
 
     // Get cursor position after row writer construction
@@ -281,21 +281,21 @@ class GrowableArrayWriterSpec extends AnyFlatSpec with Matchers {
 
     val writer = new GrowableArrayWriter(rowWriter, 8)
 
-    // Set size hint but don't write yet
+    // sizeHint now allocates immediately
     writer.sizeHint(10)
     val cursorAfterHint = rowWriter.cursor()
 
-    // Cursor should not have moved from sizeHint() (lazy allocation)
-    cursorAfterHint shouldBe cursorAfterRowWriter
+    // Cursor should have moved (allocation happened)
+    cursorAfterHint should be > cursorAfterRowWriter
 
-    // First write triggers allocation
+    // Write data
     writer.write(0, 100L)
     val cursorAfterWrite = rowWriter.cursor()
 
-    // Now cursor should have moved (space allocated)
-    cursorAfterWrite should be > cursorAfterHint
+    // Cursor should not have moved significantly (no reallocation)
+    cursorAfterWrite shouldBe cursorAfterHint
 
-    // Verify actual element count in capacity is correct
+    // Verify capacity is correct
     writer.getCapacity shouldBe 10
     writer.getCount shouldBe 1
   }
@@ -304,18 +304,20 @@ class GrowableArrayWriterSpec extends AnyFlatSpec with Matchers {
     val rowWriter = new UnsafeRowWriter(1, 256)
     val writer = new GrowableArrayWriter(rowWriter, 8)
 
-    writer.sizeHint(100)
+    // Don't call sizeHint or write anything
     val cursorBefore = rowWriter.cursor()
 
-    // Don't write anything, just complete
+    // Complete without any writes - allocates minimal capacity (0)
     val count = writer.complete()
     count shouldBe 0
 
-    // Space should have been allocated for empty array (minimal size)
+    // Space should have been allocated for empty array
     val cursorAfter = rowWriter.cursor()
     cursorAfter should be > cursorBefore
 
-    // Verify it's a valid empty array
+    // Verify it's a valid empty array with minimal capacity
+    writer.getCapacity shouldBe 0
+
     val arrayData = new UnsafeArrayData()
     arrayData.pointTo(rowWriter.getBuffer, writer.getStartingOffset, rowWriter.totalSize())
     arrayData.numElements() shouldBe 0
@@ -325,13 +327,13 @@ class GrowableArrayWriterSpec extends AnyFlatSpec with Matchers {
     val rowWriter = new UnsafeRowWriter(1, 256)
     val writer = new GrowableArrayWriter(rowWriter, 8)
 
-    // Don't call sizeHint() - should use DEFAULT_CAPACITY on first write
+    // Don't call sizeHint() - allocates exactly what's needed
     // Write some values
     writer.write(0, 100L)
     writer.write(5, 500L)
 
-    // After allocation, capacity should be DEFAULT_CAPACITY (10)
-    writer.getCapacity shouldBe 10
+    // After growth, capacity should be 6 (linear growth for small arrays)
+    writer.getCapacity shouldBe 6
 
     val count = writer.complete()
     count shouldBe 6
