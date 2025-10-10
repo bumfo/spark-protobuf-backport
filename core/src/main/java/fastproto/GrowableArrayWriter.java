@@ -29,29 +29,35 @@ import static org.apache.spark.sql.catalyst.expressions.UnsafeArrayData.calculat
  * A growable version of UnsafeArrayWriter that supports dynamic capacity expansion.
  * <p>
  * Unlike UnsafeArrayWriter which requires the exact element count upfront via initialize(numElements),
- * GrowableArrayWriter starts with an initial capacity and automatically grows as elements are written
- * to any ordinal beyond current capacity.
+ * GrowableArrayWriter starts with capacity 0 and automatically grows as elements are written.
  * <p>
  * Usage pattern:
  * <pre>
  *   GrowableArrayWriter writer = new GrowableArrayWriter(parentWriter, elementSize);
- *   writer.initialize(10);  // Optional capacity hint (allocation happens on first write)
+ *   writer.sizeHint(10);    // Optional capacity hint (allocates immediately)
  *   writer.write(0, value1);
  *   writer.write(1, value2);
  *   writer.write(100, value3);  // Automatically grows to accommodate ordinal 100
  *   int actualCount = writer.complete();  // Finalizes with actual count (101)
  * </pre>
  * <p>
- * Key differences from UnsafeArrayWriter:
- * - initialize(capacity) is optional and only sets capacity hint (lazy allocation)
- * - Space allocated on first write, so empty arrays take no extra space
- * - write() methods auto-grow when ordinal >= capacity
- * - Tracks actual element count as max(ordinal + 1) across all writes
- * - Requires complete() call to finalize the array header with actual count
+ * Growth Strategy:
+ * <ul>
+ *   <li>Small arrays (&lt; 768 elements): Linear growth (allocate exactly what's needed)</li>
+ *   <li>Large arrays (&ge; 768 elements): 1.5x exponential growth, aligned to 64-element boundaries</li>
+ *   <li>Sequential writes: Fast path for single-element increments within same 64-element block</li>
+ *   <li>Empty arrays: Fast path allocates only 8 bytes for numElements field</li>
+ * </ul>
  * <p>
- * The element count is determined by the highest ordinal written to plus one,
- * not by the number of write() calls. Sparse arrays are supported (e.g., writing
- * only to ordinals 0 and 100 creates an array of size 101).
+ * Key Features:
+ * <ul>
+ *   <li>sizeHint() is optional - allocates immediately to avoid reallocation overhead</li>
+ *   <li>Auto-grows when writing beyond capacity</li>
+ *   <li>Tracks actual element count as max(ordinal + 1) across all writes</li>
+ *   <li>Supports sparse arrays (e.g., writing to ordinals 0 and 100 creates size 101)</li>
+ *   <li>Fixed-size elements only (primitives and Decimal)</li>
+ *   <li>Requires complete() to finalize the array header with actual count</li>
+ * </ul>
  *
  * @see org.apache.spark.sql.catalyst.expressions.codegen.UnsafeArrayWriter
  */
