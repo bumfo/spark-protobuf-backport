@@ -57,6 +57,9 @@ import static org.apache.spark.sql.catalyst.expressions.UnsafeArrayData.calculat
  */
 public final class GrowableArrayWriter extends UnsafeWriter {
 
+    // Threshold for switching from linear to exponential growth (12 * 64)
+    private static final int GROWTH_THRESHOLD = 768;
+
     // The allocated capacity (max elements without reallocation)
     private int capacity;
 
@@ -99,15 +102,15 @@ public final class GrowableArrayWriter extends UnsafeWriter {
      * Grow the array capacity to accommodate at least minCapacity elements.
      * Handles initial allocation when capacity == 0.
      * Uses hybrid growth strategy:
-     * - Small arrays (< 823): Linear growth (allocate exactly what's needed)
-     * - Large arrays (>= 823): Exponential growth (1.5x) to amortize costs
+     * - Small arrays (< GROWTH_THRESHOLD): Linear growth (allocate exactly what's needed)
+     * - Large arrays (>= GROWTH_THRESHOLD): Exponential growth (1.5x) to amortize costs
      *
      * @param minCapacity the minimum capacity required
      */
     private void growCapacity(int minCapacity) {
         // Hybrid growth strategy
         int newCapacity;
-        if (capacity < 823) {
+        if (capacity < GROWTH_THRESHOLD) {
             // Small arrays (including initial allocation): allocate exactly what's needed
             newCapacity = minCapacity;
         } else {
@@ -195,7 +198,7 @@ public final class GrowableArrayWriter extends UnsafeWriter {
             // Fastest path: incrementing by 1 element without crossing 64-element boundary
             // Header changes when crossing 64, 128, 192... (multiples of 64)
             // No need to zero - new slot will be written or already zero from buffer allocation
-            if (ordinal == capacity && capacity < 823 && (capacity & 63) != 0) {
+            if (ordinal == capacity && capacity < GROWTH_THRESHOLD && (capacity & 63) != 0) {
                 // Simplified: ((newBytes + 7) & ~7) - ((oldBytes + 7) & ~7)
                 // = ((newBytes - oldBytes) + ((-newBytes) & 7)) & ~7
                 // = (elementSize + ((-newBytes) & 7)) & ~7
