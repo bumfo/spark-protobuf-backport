@@ -239,7 +239,7 @@ class GrowableArrayWriterSpec extends AnyFlatSpec with Matchers {
     result.toJavaBigDecimal shouldBe smallDecimal.toJavaBigDecimal
   }
 
-  it should "use hybrid growth strategy (linear < 823, 1.5x >= 823)" in {
+  it should "use hybrid growth strategy (linear < 768, 1.5x >= 768)" in {
     val rowWriter = new UnsafeRowWriter(1, 256)
     val writer = new GrowableArrayWriter(rowWriter, 8)
 
@@ -375,23 +375,23 @@ class GrowableArrayWriterSpec extends AnyFlatSpec with Matchers {
     arrayData.getLong(15) shouldBe 1500L
   }
 
-  it should "use 1.5x growth for large arrays (>= 823 elements)" in {
+  it should "use 1.5x growth for large arrays (>= 768 elements)" in {
     val rowWriter = new UnsafeRowWriter(1, 32768)  // Need large buffer for large array
     val writer = new GrowableArrayWriter(rowWriter, 8)
 
     // Build up to capacity just above threshold
-    writer.sizeHint(900)
+    writer.sizeHint(800)
     writer.write(0, 1L)  // Trigger allocation
-    writer.getCapacity shouldBe 960  // Aligned to next 64-element boundary
+    writer.getCapacity shouldBe 832  // Aligned to next 64-element boundary (13 * 64)
 
-    // Write to trigger 1.5x growth (since capacity >= 823)
-    writer.write(960, 960L)  // Triggers growth
+    // Write to trigger 1.5x growth (since capacity >= 768)
+    writer.write(832, 832L)  // Triggers growth
 
-    // Should use 1.5x growth: max(960 + 480, 961) = 1440, aligned to 1472
-    writer.getCapacity shouldBe 1472
+    // Should use 1.5x growth: max(832 + 416, 833) = 1248, aligned to 1280 (20 * 64)
+    writer.getCapacity shouldBe 1280
 
     // Verify growth strategy used
     val count = writer.complete()
-    count shouldBe 961
+    count shouldBe 833
   }
 }
