@@ -239,7 +239,7 @@ class GrowableArrayWriterSpec extends AnyFlatSpec with Matchers {
     result.toJavaBigDecimal shouldBe smallDecimal.toJavaBigDecimal
   }
 
-  it should "double capacity when growing by default" in {
+  it should "use hybrid growth strategy (linear < 823, 1.5x >= 823)" in {
     val rowWriter = new UnsafeRowWriter(1, 256)
     val writer = new GrowableArrayWriter(rowWriter, 8)
 
@@ -249,29 +249,28 @@ class GrowableArrayWriterSpec extends AnyFlatSpec with Matchers {
     // Write to ordinal 5 (needs capacity of at least 6)
     writer.write(5, 100L)
 
-    // Should double: 4 * 2 = 8
-    writer.getCapacity shouldBe 8
+    // Small array: linear growth (exactly what's needed)
+    writer.getCapacity shouldBe 6
 
     // Write to ordinal 15 (needs capacity of at least 16)
     writer.write(15, 200L)
 
-    // Should double: 8 * 2 = 16
+    // Still small array: linear growth
     writer.getCapacity shouldBe 16
   }
 
-  it should "use minCapacity when doubling is insufficient" in {
+  it should "handle large jumps in ordinal efficiently" in {
     val rowWriter = new UnsafeRowWriter(1, 512)
     val writer = new GrowableArrayWriter(rowWriter, 8)
 
     writer.sizeHint(4)
     writer.getCapacity shouldBe 4
 
-    // Jump way beyond double capacity (4 * 2 = 8)
-    // Writing to ordinal 20 needs capacity of 21
+    // Jump to ordinal 20 (needs capacity of 21)
     writer.write(20, 100L)
 
-    // Should use max(4*2, 21) = 21
-    writer.getCapacity should be >= 21
+    // Small array: linear growth, allocates exactly what's needed
+    writer.getCapacity shouldBe 21
   }
 
   it should "allocate lazily on first write" in {
@@ -372,5 +371,25 @@ class GrowableArrayWriterSpec extends AnyFlatSpec with Matchers {
     arrayData.getLong(0) shouldBe 100L
     arrayData.getLong(5) shouldBe 500L
     arrayData.getLong(15) shouldBe 1500L
+  }
+
+  it should "use 1.5x growth for large arrays (>= 823 elements)" in {
+    val rowWriter = new UnsafeRowWriter(1, 32768)  // Need large buffer for large array
+    val writer = new GrowableArrayWriter(rowWriter, 8)
+
+    // Build up to capacity just above threshold
+    writer.sizeHint(900)
+    writer.write(0, 1L)  // Trigger allocation
+    writer.getCapacity shouldBe 900
+
+    // Write to trigger 1.5x growth (since capacity >= 823)
+    writer.write(900, 900L)  // Triggers growth
+
+    // Should use 1.5x growth: max(900 + 450, 901) = 1350
+    writer.getCapacity shouldBe 1350
+
+    // Verify growth strategy used
+    val count = writer.complete()
+    count shouldBe 901
   }
 }

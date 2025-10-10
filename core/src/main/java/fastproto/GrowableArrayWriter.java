@@ -148,12 +148,28 @@ public final class GrowableArrayWriter extends UnsafeWriter {
 
     /**
      * Grow the array capacity to accommodate at least minCapacity elements.
-     * Reallocates header and fixed region, preserving existing data.
+     * Uses hybrid growth strategy:
+     * - Small arrays (< 823): Linear growth (allocate exactly what's needed)
+     * - Large arrays (>= 823): Exponential growth (1.5x) to amortize costs
+     *
+     * Linear growth is safe for small arrays since:
+     * - Only fixed-size elements (variable-length data forbidden via setOffsetAndSize)
+     * - Data only moves when header grows (every 64 elements for null bitmap)
+     * - Reallocations are cheap for small data
      *
      * @param minCapacity the minimum capacity required
      */
     private void growCapacity(int minCapacity) {
-        int newCapacity = Math.max(capacity * 2, minCapacity);
+        // Hybrid growth strategy
+        int newCapacity;
+        if (capacity < 823) {
+            // Small arrays: allocate exactly what's needed (no exponential growth)
+            newCapacity = minCapacity;
+        } else {
+            // Large arrays: use 1.5x growth like ArrayList
+            newCapacity = Math.max(capacity + (capacity >> 1), minCapacity);
+        }
+
         int oldHeaderInBytes = headerInBytes;
         int newHeaderInBytes = calculateHeaderPortionInBytes(newCapacity);
 
@@ -163,6 +179,9 @@ public final class GrowableArrayWriter extends UnsafeWriter {
         // Calculate old cursor position relative to starting offset
         int oldCursor = cursor();
         int variableDataSize = oldCursor - startingOffset - oldHeaderInBytes - oldFixedPartInBytes;
+
+        // Assert no variable-length data (enforced by setOffsetAndSize throwing UnsupportedOperationException)
+        assert variableDataSize == 0 : "GrowableArrayWriter does not support variable-length data";
 
         // Grow buffer for new header + fixed + existing variable data
         int additionalSpace = (newHeaderInBytes - oldHeaderInBytes) + (newFixedPartInBytes - oldFixedPartInBytes);
