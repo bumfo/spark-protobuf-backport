@@ -115,6 +115,12 @@ public final class GrowableArrayWriter extends UnsafeWriter {
             newCapacity = Math.max(capacity + (capacity >> 1), minCapacity);
         }
 
+        // Align to 64-element boundaries to reduce header size changes during future growths
+        // Header changes at 64, 128, 192... so aligning reduces reallocation overhead
+        if (newCapacity > 64) {
+            newCapacity = ((newCapacity + 63) >> 6) << 6;
+        }
+
         // General path: handles all cases (initial allocation, jumps, boundaries, large arrays)
         boolean isInitialAllocation = (capacity == 0);
         int oldHeaderInBytes = headerInBytes;  // 0 when isInitialAllocation
