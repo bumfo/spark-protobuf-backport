@@ -190,10 +190,11 @@ public final class GrowableArrayWriter extends UnsafeWriter {
             // Header changes when crossing 64, 128, 192... (multiples of 64)
             // No need to zero - new slot will be written or already zero from buffer allocation
             if (ordinal == capacity && capacity < 823 && (capacity & 63) != 0) {
-                // roundToWord(capacity+1) - roundToWord(capacity) where roundToWord(n) = (n*elementSize + 7) & ~7
-                int oldBytes = elementSize * capacity;
-                int newBytes = oldBytes + elementSize;
-                int additionalSpace = ((newBytes + 7) & ~7) - ((oldBytes + 7) & ~7);
+                // Simplified: ((newBytes + 7) & ~7) - ((oldBytes + 7) & ~7)
+                // = ((newBytes - oldBytes) + ((-newBytes) & 7)) & ~7
+                // = (elementSize + ((-newBytes) & 7)) & ~7
+                int newBytes = elementSize * capacity + elementSize;
+                int additionalSpace = (elementSize + ((-newBytes) & 7)) & ~7;
                 grow(additionalSpace);
                 increaseCursor(additionalSpace);
                 this.capacity++;
