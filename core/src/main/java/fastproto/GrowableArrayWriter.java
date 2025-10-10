@@ -117,9 +117,9 @@ public final class GrowableArrayWriter extends UnsafeWriter {
 
         // General path: handles all cases (initial allocation, jumps, boundaries, large arrays)
         boolean isInitialAllocation = (capacity == 0);
-        int oldHeaderInBytes = isInitialAllocation ? 0 : headerInBytes;
+        int oldHeaderInBytes = headerInBytes;  // 0 when isInitialAllocation
         int newHeaderInBytes = calculateHeaderPortionInBytes(newCapacity);
-        int oldFixedPartInBytes = isInitialAllocation ? 0 : ByteArrayMethods.roundNumberOfBytesToNearestWord(elementSize * capacity);
+        int oldFixedPartInBytes = ByteArrayMethods.roundNumberOfBytesToNearestWord(elementSize * capacity);  // 0 when capacity == 0
         int newFixedPartInBytes = ByteArrayMethods.roundNumberOfBytesToNearestWord(elementSize * newCapacity);
 
         // Set starting offset for initial allocation
@@ -129,7 +129,7 @@ public final class GrowableArrayWriter extends UnsafeWriter {
 
         // Calculate space needed and variable data size
         int oldCursor = cursor();
-        int variableDataSize = isInitialAllocation ? 0 : oldCursor - startingOffset - oldHeaderInBytes - oldFixedPartInBytes;
+        int variableDataSize = oldCursor - startingOffset - oldHeaderInBytes - oldFixedPartInBytes;  // 0 when isInitialAllocation (oldCursor == startingOffset)
 
         // Assert no variable-length data (enforced by setOffsetAndSize throwing UnsupportedOperationException)
         assert variableDataSize == 0 : "GrowableArrayWriter does not support variable-length data";
@@ -163,7 +163,7 @@ public final class GrowableArrayWriter extends UnsafeWriter {
         }
 
         // Initialize header (full initialization for new allocation, only new null bits for growth)
-        int headerInitStart = isInitialAllocation ? 0 : oldHeaderInBytes;
+        int headerInitStart = oldHeaderInBytes;  // 0 when isInitialAllocation
         Platform.putLong(getBuffer(), startingOffset, 0L);  // Always write numElements placeholder
         for (int i = Math.max(8, headerInitStart); i < newHeaderInBytes; i += 8) {
             Platform.putLong(getBuffer(), startingOffset + i, 0L);
@@ -171,7 +171,7 @@ public final class GrowableArrayWriter extends UnsafeWriter {
 
         // Zero out new fixed region slots
         int newFixedStart = startingOffset + newHeaderInBytes;
-        int fixedInitStart = isInitialAllocation ? 0 : count * elementSize;
+        int fixedInitStart = count * elementSize;  // 0 when isInitialAllocation (count == 0)
         for (int i = fixedInitStart; i < newFixedPartInBytes; i += 8) {
             Platform.putLong(getBuffer(), newFixedStart + i, 0L);
         }
