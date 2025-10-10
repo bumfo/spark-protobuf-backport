@@ -382,13 +382,13 @@ class GrowableArrayWriterSpec extends AnyFlatSpec with Matchers {
     // Build up to capacity just above threshold
     writer.sizeHint(800)
     writer.write(0, 1L)  // Trigger allocation
-    writer.getCapacity shouldBe 832  // Aligned to next 64-element boundary (13 * 64)
+    writer.getCapacity shouldBe 800  // Linear growth (capacity was 0 < 768), no alignment
 
     // Write to trigger 1.5x growth (since capacity >= 768)
     writer.write(832, 832L)  // Triggers growth
 
-    // Should use 1.5x growth: max(832 + 416, 833) = 1248, aligned to 1280 (20 * 64)
-    writer.getCapacity shouldBe 1280
+    // Should use 1.5x growth: max(800 + 400, 833) = 1200, aligned to 1216 (19 * 64)
+    writer.getCapacity shouldBe 1216
 
     // Verify growth strategy used
     val count = writer.complete()

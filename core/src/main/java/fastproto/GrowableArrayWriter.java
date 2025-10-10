@@ -116,11 +116,9 @@ public final class GrowableArrayWriter extends UnsafeWriter {
         } else {
             // Large arrays: use 1.5x growth like ArrayList
             newCapacity = Math.max(capacity + (capacity >> 1), minCapacity);
-        }
 
-        // Align to 64-element boundaries to reduce header size changes during future growths
-        // Header changes at 64, 128, 192... so aligning reduces reallocation overhead
-        if (newCapacity > 64) {
+            // Align to 64-element boundaries to reduce header size changes during future growths
+            // Header changes at 64, 128, 192... so aligning reduces reallocation overhead
             newCapacity = ((newCapacity + 63) >> 6) << 6;
         }
 
@@ -198,7 +196,7 @@ public final class GrowableArrayWriter extends UnsafeWriter {
             // Fastest path: incrementing by 1 element without crossing 64-element boundary
             // Header changes when crossing 64, 128, 192... (multiples of 64)
             // No need to zero - new slot will be written or already zero from buffer allocation
-            if (ordinal == capacity && capacity < GROWTH_THRESHOLD && (capacity & 63) != 0) {
+            if (ordinal == capacity && (capacity & 63) != 0) {
                 // Simplified: ((newBytes + 7) & ~7) - ((oldBytes + 7) & ~7)
                 // = ((newBytes - oldBytes) + ((-newBytes) & 7)) & ~7
                 // = (elementSize + ((-newBytes) & 7)) & ~7
