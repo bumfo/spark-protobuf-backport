@@ -152,10 +152,8 @@ public final class GrowableArrayWriter extends UnsafeWriter {
      * - Small arrays (< 823): Linear growth (allocate exactly what's needed)
      * - Large arrays (>= 823): Exponential growth (1.5x) to amortize costs
      *
-     * Linear growth is safe for small arrays since:
-     * - Only fixed-size elements (variable-length data forbidden via setOffsetAndSize)
-     * - Data only moves when header grows (every 64 elements for null bitmap)
-     * - Reallocations are cheap for small data
+     * Optimization: Fast path when header size unchanged (most common case).
+     * Header grows every 64 elements, so 63 out of 64 growth operations take fast path.
      *
      * @param minCapacity the minimum capacity required
      */
@@ -173,6 +171,26 @@ public final class GrowableArrayWriter extends UnsafeWriter {
         int oldHeaderInBytes = headerInBytes;
         int newHeaderInBytes = calculateHeaderPortionInBytes(newCapacity);
 
+        // Fast path: header size unchanged (most common - 63 out of 64 growth operations)
+        if (newHeaderInBytes == oldHeaderInBytes) {
+            int oldFixedPartInBytes = ByteArrayMethods.roundNumberOfBytesToNearestWord(elementSize * capacity);
+            int newFixedPartInBytes = ByteArrayMethods.roundNumberOfBytesToNearestWord(elementSize * newCapacity);
+            int additionalSpace = newFixedPartInBytes - oldFixedPartInBytes;
+
+            grow(additionalSpace);
+
+            // Zero out new fixed region slots only (beyond existing count)
+            int fixedStart = startingOffset + headerInBytes;
+            for (int i = oldFixedPartInBytes; i < newFixedPartInBytes; i += 8) {
+                Platform.putLong(getBuffer(), fixedStart + i, 0L);
+            }
+
+            increaseCursor(additionalSpace);
+            this.capacity = newCapacity;
+            return;
+        }
+
+        // Slow path: header size changed, need to move data
         int oldFixedPartInBytes = ByteArrayMethods.roundNumberOfBytesToNearestWord(elementSize * capacity);
         int newFixedPartInBytes = ByteArrayMethods.roundNumberOfBytesToNearestWord(elementSize * newCapacity);
 
