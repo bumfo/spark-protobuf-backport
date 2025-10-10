@@ -147,16 +147,16 @@ public final class GrowableArrayWriter extends UnsafeWriter {
 
         // Move data if header size changed (skip for initial allocation)
         if (!isInitialAllocation && newHeaderInBytes > oldHeaderInBytes) {
-            // Move variable-length data first (if any) to avoid overwriting
-            if (variableDataSize > 0) {
-                int oldVariableStart = startingOffset + oldHeaderInBytes + oldFixedPartInBytes;
-                int newVariableStart = startingOffset + newHeaderInBytes + newFixedPartInBytes;
-                Platform.copyMemory(
-                    getBuffer(), oldVariableStart,
-                    getBuffer(), newVariableStart,
-                    variableDataSize
-                );
-            }
+            // // Move variable-length data first (if any) to avoid overwriting
+            // if (variableDataSize > 0) {
+            //     int oldVariableStart = startingOffset + oldHeaderInBytes + oldFixedPartInBytes;
+            //     int newVariableStart = startingOffset + newHeaderInBytes + newFixedPartInBytes;
+            //     Platform.copyMemory(
+            //         getBuffer(), oldVariableStart,
+            //         getBuffer(), newVariableStart,
+            //         variableDataSize
+            //     );
+            // }
 
             // Move fixed-length data
             int oldFixedStart = startingOffset + oldHeaderInBytes;
@@ -175,12 +175,12 @@ public final class GrowableArrayWriter extends UnsafeWriter {
             Platform.putLong(getBuffer(), startingOffset + i, 0L);
         }
 
-        // Zero out new fixed region slots
-        int newFixedStart = startingOffset + newHeaderInBytes;
-        int fixedInitStart = count * elementSize;  // 0 when isInitialAllocation (count == 0)
-        for (int i = fixedInitStart; i < newFixedPartInBytes; i += 8) {
-            Platform.putLong(getBuffer(), newFixedStart + i, 0L);
-        }
+        // // Zero out new fixed region slots
+        // int newFixedStart = startingOffset + newHeaderInBytes;
+        // int fixedInitStart = count * elementSize;  // 0 when isInitialAllocation (count == 0)
+        // for (int i = fixedInitStart; i < newFixedPartInBytes; i += 8) {
+        //     Platform.putLong(getBuffer(), newFixedStart + i, 0L);
+        // }
 
         // Update cursor
         int newCursor = startingOffset + newHeaderInBytes + newFixedPartInBytes + variableDataSize;
