@@ -363,9 +363,12 @@ public final class GrowableArrayWriter extends UnsafeWriter {
             throw new IllegalStateException("GrowableArrayWriter has already been finalized");
         }
 
-        // Allocate if no writes occurred (empty array)
+        // Fast path for empty array: just allocate 8 bytes for numElements
         if (capacity == 0) {
-            growCapacity(0);
+            this.startingOffset = cursor();
+            grow(8);
+            increaseCursor(8);
+            this.headerInBytes = 8;
         }
 
         // Update the numElements field in the header with the actual count
