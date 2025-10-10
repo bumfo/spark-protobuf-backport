@@ -119,20 +119,13 @@ public final class GrowableArrayWriter extends UnsafeWriter {
         }
 
         // Fastest path: incrementing by 1 element without crossing 64-element boundary
-        // Header changes every 64 elements, so header unchanged when (capacity & 63) != 63
-        if (capacity < 823 && newCapacity == capacity + 1 && (capacity & 63) != 63) {
-            int oldFixedPartInBytes = ByteArrayMethods.roundNumberOfBytesToNearestWord(elementSize * capacity);
-            int newFixedPartInBytes = ByteArrayMethods.roundNumberOfBytesToNearestWord(elementSize * newCapacity);
-            int additionalSpace = newFixedPartInBytes - oldFixedPartInBytes;
-
+        // Header changes when crossing 64, 128, 192... (multiples of 64)
+        // Safe to use fast path when capacity is not at boundary: (capacity & 63) != 0
+        // No need to zero - new slot will be written or already zero from buffer allocation
+        if (capacity < 823 && newCapacity == capacity + 1 && (capacity & 63) != 0) {
+            int additionalSpace = ByteArrayMethods.roundNumberOfBytesToNearestWord(elementSize * newCapacity) -
+                                  ByteArrayMethods.roundNumberOfBytesToNearestWord(elementSize * capacity);
             grow(additionalSpace);
-
-            // Zero out new fixed region slots only
-            int fixedStart = startingOffset + headerInBytes;
-            for (int i = oldFixedPartInBytes; i < newFixedPartInBytes; i += 8) {
-                Platform.putLong(getBuffer(), fixedStart + i, 0L);
-            }
-
             increaseCursor(additionalSpace);
             this.capacity = newCapacity;
             return;
