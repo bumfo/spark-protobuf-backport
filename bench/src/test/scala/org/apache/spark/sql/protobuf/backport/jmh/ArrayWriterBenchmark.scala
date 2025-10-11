@@ -114,7 +114,7 @@ class ArrayWriterBenchmark {
   /**
    * FastList + UnsafeArrayWriter: Traditional two-phase approach for longs
    */
-  @Benchmark
+  // @Benchmark
   def longArrayFastList(bh: Blackhole): Unit = {
     val rowWriter = new UnsafeRowWriter(1, 8192)
 
