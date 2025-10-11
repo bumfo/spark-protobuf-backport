@@ -198,6 +198,20 @@ public final class GrowableArrayWriter extends UnsafeWriter {
     }
 
     /**
+     * Conditionally grow buffer if needed, updating cursor first to preserve data.
+     * Checks if buffer has sufficient capacity before calling grow().
+     *
+     * @param targetCursor the target cursor position
+     * @param neededSize the additional space needed
+     */
+    private void growIfNeeded(int targetCursor, int neededSize) {
+        if (getBuffer().length < targetCursor + neededSize - Platform.BYTE_ARRAY_OFFSET) {
+            setCursor(targetCursor);
+            grow(neededSize);
+        }
+    }
+
+    /**
      * Grow the array to accommodate newSize elements.
      * Handles initial allocation and header/element space growth.
      *
@@ -218,9 +232,10 @@ public final class GrowableArrayWriter extends UnsafeWriter {
 
             // Update cursor to current data end before grow() to preserve existing data
             if (headerCapacity > 0) {
-                setCursor(startingOffset + headerInBytes + oldFixedPartInBytes);
+                growIfNeeded(startingOffset + headerInBytes + oldFixedPartInBytes, additionalSpace);
+            } else {
+                grow(additionalSpace);
             }
-            grow(additionalSpace);
         } else {
             // Header capacity changed - handle header growth and data movement
             int newHeaderInBytes = calculateHeaderPortionInBytes(newHeaderCapacity);
@@ -229,15 +244,17 @@ public final class GrowableArrayWriter extends UnsafeWriter {
             if (isInitialAllocation) {
                 this.startingOffset = cursor();
                 this.savedCursor = cursor();
-            } else {
-                // Update cursor to current data end before grow() to preserve existing data
-                setCursor(startingOffset + headerInBytes + oldFixedPartInBytes);
             }
 
             int oldHeaderInBytes = headerInBytes;
             additionalSpace = (newHeaderInBytes - oldHeaderInBytes) + (newFixedPartInBytes - oldFixedPartInBytes);
 
-            grow(additionalSpace);
+            if (isInitialAllocation) {
+                grow(additionalSpace);
+            } else {
+                // Update cursor to current data end before grow() to preserve existing data
+                growIfNeeded(startingOffset + headerInBytes + oldFixedPartInBytes, additionalSpace);
+            }
 
             // Move existing data if not initial allocation
             if (!isInitialAllocation) {
@@ -271,8 +288,7 @@ public final class GrowableArrayWriter extends UnsafeWriter {
             int additionalSpace = (elementSize + ((-newBytes) & 7)) & ~7;
 
             // Update cursor to current data end before grow() to preserve existing data
-            setCursor(startingOffset + headerInBytes + oldFixedPartInBytes);
-            grow(additionalSpace);
+            growIfNeeded(startingOffset + headerInBytes + oldFixedPartInBytes, additionalSpace);
             this.size++;
         } else if (ordinal >= size) {
             // Slow path: multi-element jump or header growth needed
