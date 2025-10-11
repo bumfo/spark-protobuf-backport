@@ -280,16 +280,12 @@ public final class GrowableArrayWriter extends UnsafeWriter {
         }
     }
 
-    private void assertIndexIsValid(int index) {
-        assert index >= 0 : "index (" + index + ") should >= 0";
-    }
-
     private long getElementOffset(int ordinal) {
         return startingOffset + headerInBytes + ordinal * (long) elementSize;
     }
 
     private void setNullBit(int ordinal) {
-        assertIndexIsValid(ordinal);
+        assert ordinal >= 0;
         BitSetMethods.set(getBuffer(), startingOffset + 8, ordinal);
     }
 
@@ -331,49 +327,49 @@ public final class GrowableArrayWriter extends UnsafeWriter {
 
     @Override
     public void write(int ordinal, boolean value) {
-        assertIndexIsValid(ordinal);
+        assert ordinal >= 0;
         ensureSize(ordinal);
         writeBoolean(getElementOffset(ordinal), value);
     }
 
     @Override
     public void write(int ordinal, byte value) {
-        assertIndexIsValid(ordinal);
+        assert ordinal >= 0;
         ensureSize(ordinal);
         writeByte(getElementOffset(ordinal), value);
     }
 
     @Override
     public void write(int ordinal, short value) {
-        assertIndexIsValid(ordinal);
+        assert ordinal >= 0;
         ensureSize(ordinal);
         writeShort(getElementOffset(ordinal), value);
     }
 
     @Override
     public void write(int ordinal, int value) {
-        assertIndexIsValid(ordinal);
+        assert ordinal >= 0;
         ensureSize(ordinal);
         writeInt(getElementOffset(ordinal), value);
     }
 
     @Override
     public void write(int ordinal, long value) {
-        assertIndexIsValid(ordinal);
+        assert ordinal >= 0;
         ensureSize(ordinal);
         writeLong(getElementOffset(ordinal), value);
     }
 
     @Override
     public void write(int ordinal, float value) {
-        assertIndexIsValid(ordinal);
+        assert ordinal >= 0;
         ensureSize(ordinal);
         writeFloat(getElementOffset(ordinal), value);
     }
 
     @Override
     public void write(int ordinal, double value) {
-        assertIndexIsValid(ordinal);
+        assert ordinal >= 0;
         ensureSize(ordinal);
         writeDouble(getElementOffset(ordinal), value);
     }
@@ -382,7 +378,7 @@ public final class GrowableArrayWriter extends UnsafeWriter {
 
     @Override
     public void write(int ordinal, Decimal input, int precision, int scale) {
-        assertIndexIsValid(ordinal);
+        assert ordinal >= 0;
         ensureSize(ordinal);
         if (input != null && input.changePrecision(precision, scale)) {
             if (precision <= Decimal.MAX_LONG_DIGITS()) {
