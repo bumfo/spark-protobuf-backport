@@ -20,7 +20,6 @@ package fastproto;
 import org.apache.spark.sql.catalyst.expressions.codegen.UnsafeWriter;
 import org.apache.spark.sql.types.Decimal;
 import org.apache.spark.unsafe.Platform;
-import org.apache.spark.unsafe.array.ByteArrayMethods;
 import org.apache.spark.unsafe.bitset.BitSetMethods;
 
 import static org.apache.spark.sql.catalyst.expressions.UnsafeArrayData.calculateHeaderPortionInBytes;
@@ -187,8 +186,8 @@ public final class GrowableArrayWriter extends UnsafeWriter {
         assert newSize >= this.size;
 
         int newHeaderCapacity = Math.max(64, ceilPow2(newSize));
-        int oldFixedPartInBytes = ByteArrayMethods.roundNumberOfBytesToNearestWord(elementSize * size);
-        int newFixedPartInBytes = ByteArrayMethods.roundNumberOfBytesToNearestWord(elementSize * newSize);
+        int oldFixedPartInBytes = roundToWord(elementSize * size);
+        int newFixedPartInBytes = roundToWord(elementSize * newSize);
 
         int additionalSpace;
 
@@ -361,7 +360,7 @@ public final class GrowableArrayWriter extends UnsafeWriter {
                 final byte[] bytes = input.toJavaBigDecimal().unscaledValue().toByteArray();
                 final int numBytes = bytes.length;
                 assert numBytes <= 16;
-                int roundedSize = ByteArrayMethods.roundNumberOfBytesToNearestWord(numBytes);
+                int roundedSize = roundToWord(numBytes);
                 grow(roundedSize);
 
                 zeroOutPaddingBytes(numBytes);
@@ -388,6 +387,17 @@ public final class GrowableArrayWriter extends UnsafeWriter {
     }
 
     // ========== Static Utilities ==========
+
+    /**
+     * Round number of bytes to nearest 8-byte word.
+     * Uses bit manipulation for fast computation.
+     *
+     * @param numBytes the number of bytes
+     * @return numBytes rounded up to nearest multiple of 8
+     */
+    private static int roundToWord(int numBytes) {
+        return (numBytes + 7) & ~7;
+    }
 
     /**
      * Compute the ceiling power of 2 for a given value.
