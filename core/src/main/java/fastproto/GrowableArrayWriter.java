@@ -236,14 +236,12 @@ public final class GrowableArrayWriter extends UnsafeWriter {
         assert newSize >= this.size;
 
         int newHeaderCapacity = Math.max(64, ceilPow2(newSize));
-        int newFixedPartInBytes = roundToWord(elementSize * newSize);
 
         int additionalSpace;
 
         if (newHeaderCapacity == headerCapacity) {
             // Header capacity unchanged - only grow element space
-            int oldFixedPartInBytes = roundToWord(elementSize * size);
-            additionalSpace = newFixedPartInBytes - oldFixedPartInBytes;
+            additionalSpace = neededBytes(elementSize * (newSize - size));
 
             // Update cursor to current data end before grow() to preserve existing data
             growIfNeeded(newSize, additionalSpace);
@@ -258,8 +256,7 @@ public final class GrowableArrayWriter extends UnsafeWriter {
             }
 
             int oldHeaderInBytes = headerInBytes;
-            int oldFixedPartInBytes = roundToWord(elementSize * size);
-            additionalSpace = (newHeaderInBytes - oldHeaderInBytes) + (newFixedPartInBytes - oldFixedPartInBytes);
+            additionalSpace = (newHeaderInBytes - oldHeaderInBytes) + neededBytes(elementSize * (newSize - size));
 
             if (isInitialAllocation) {
                 grow(additionalSpace);
@@ -296,16 +293,18 @@ public final class GrowableArrayWriter extends UnsafeWriter {
         // Fast path: single-element growth within header capacity
         // Most common case for sequential writes
         if (ordinal == size && ordinal < headerCapacity) {
-            int newBytes = elementSize * size + elementSize;
-            int additionalSpace = (elementSize + ((-newBytes) & 7)) & ~7;
-
             // Update cursor to current data end before grow() to preserve existing data
-            growIfNeeded(size + 1, additionalSpace);
+            growIfNeeded(size + 1, neededBytes(elementSize));
             this.size++;
         } else if (ordinal >= size) {
             // Slow path: multi-element jump or header growth needed
             growToSize(ordinal + 1);
         }
+    }
+
+    private int neededBytes(int addedBytes) {
+        int newBytes = elementSize * size + addedBytes;
+        return (addedBytes + ((-newBytes) & 7)) & ~7;
     }
 
     private long getElementOffset(int ordinal) {
