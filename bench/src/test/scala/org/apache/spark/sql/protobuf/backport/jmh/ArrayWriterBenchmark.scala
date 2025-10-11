@@ -29,7 +29,7 @@ import java.util.concurrent.TimeUnit
 class ArrayWriterBenchmark {
 
   // Test data sizes
-  @Param(Array("10", "100", "1000"))
+  @Param(Array("10", "11"))
   var arraySize: Int = _
 
   // Reusable test data
@@ -50,7 +50,7 @@ class ArrayWriterBenchmark {
    * 1. Accumulate values in IntList during parsing
    * 2. Copy to UnsafeArrayData via UnsafeArrayWriter loop
    */
-  @Benchmark
+  // @Benchmark
   def intArrayFastList(bh: Blackhole): Unit = {
     val rowWriter = new UnsafeRowWriter(1, 8192)
 
@@ -85,7 +85,7 @@ class ArrayWriterBenchmark {
    * - Direct writes with automatic growth
    * - No intermediate collection
    */
-  @Benchmark
+  // @Benchmark
   def intArrayGrowable(bh: Blackhole): Unit = {
     val rowWriter = new UnsafeRowWriter(1, 8192)
 
@@ -147,7 +147,7 @@ class ArrayWriterBenchmark {
   /**
    * GrowableArrayWriter: Direct single-phase approach for longs
    */
-  @Benchmark
+  // @Benchmark
   def longArrayGrowable(bh: Blackhole): Unit = {
     val rowWriter = new UnsafeRowWriter(1, 8192)
 
@@ -176,7 +176,7 @@ class ArrayWriterBenchmark {
   /**
    * GrowableArrayWriter without size hint - tests automatic growth
    */
-  @Benchmark
+  // @Benchmark
   def intArrayGrowableNoHint(bh: Blackhole): Unit = {
     val rowWriter = new UnsafeRowWriter(1, 8192)
 
