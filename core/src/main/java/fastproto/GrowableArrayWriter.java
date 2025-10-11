@@ -178,64 +178,45 @@ public final class GrowableArrayWriter extends UnsafeWriter {
     // ========== Private Helpers ==========
 
     /**
-     * Grow the array to accommodate at least newSize elements.
-     * Handles initial allocation when headerCapacity == 0.
-     * Header capacity grows exponentially (powers of 2) to minimize header resizes.
-     * Element space allocated exactly for newSize elements.
-     * BufferHolder.grow() handles actual buffer allocation with its own 2x growth.
+     * Grow the array to accommodate newSize elements.
+     * Handles initial allocation and header/element space growth.
      *
-     * @param newSize the minimum size required (for header capacity calculation)
+     * @param newSize the target size (must be >= current size)
      */
     private void growToSize(int newSize) {
-        // Compute next power of 2 >= newSize, with minimum 64
-        int newHeaderCapacity = Math.max(64, ceilPow2(newSize));
-
         assert newSize >= this.size;
 
-        // Calculate space requirements
-        boolean isInitialAllocation = (headerCapacity == 0);
-        int oldHeaderInBytes = headerInBytes;
+        int newHeaderCapacity = Math.max(64, ceilPow2(newSize));
         int newHeaderInBytes = calculateHeaderPortionInBytes(newHeaderCapacity);
-        int oldFixedPartInBytes = ByteArrayMethods.roundNumberOfBytesToNearestWord(elementSize * size);
         int newFixedPartInBytes = ByteArrayMethods.roundNumberOfBytesToNearestWord(elementSize * newSize);
 
-        // Set starting offset for initial allocation
+        boolean isInitialAllocation = (headerCapacity == 0);
         if (isInitialAllocation) {
             this.startingOffset = cursor();
         }
 
-        // Calculate space needed
-        int oldCursor = cursor();
-        int variableDataSize = oldCursor - startingOffset - oldHeaderInBytes - oldFixedPartInBytes;
-        assert variableDataSize == 0 : "GrowableArrayWriter does not support variable-length data";
-
-        // Grow buffer
+        int oldHeaderInBytes = headerInBytes;
+        int oldFixedPartInBytes = ByteArrayMethods.roundNumberOfBytesToNearestWord(elementSize * size);
         int additionalSpace = (newHeaderInBytes - oldHeaderInBytes) + (newFixedPartInBytes - oldFixedPartInBytes);
+
         grow(additionalSpace);
 
-        // Move fixed-length data if header size changed
+        // Move existing data if header size changed
         if (!isInitialAllocation && newHeaderInBytes > oldHeaderInBytes) {
-            int oldFixedStart = startingOffset + oldHeaderInBytes;
-            int newFixedStart = startingOffset + newHeaderInBytes;
-            int existingDataBytes = size * elementSize;
             Platform.copyMemory(
-                    getBuffer(), oldFixedStart,
-                    getBuffer(), newFixedStart,
-                    existingDataBytes
+                    getBuffer(), startingOffset + oldHeaderInBytes,
+                    getBuffer(), startingOffset + newHeaderInBytes,
+                    (long) size * elementSize
             );
         }
 
-        // Initialize new header portion
-        int headerInitStart = oldHeaderInBytes;
-        for (int i = headerInitStart; i < newHeaderInBytes; i += 8) {
+        // Zero out new header portion
+        for (int i = oldHeaderInBytes; i < newHeaderInBytes; i += 8) {
             Platform.putLong(getBuffer(), startingOffset + i, 0L);
         }
 
-        // Update cursor
-        int newCursor = startingOffset + newHeaderInBytes + newFixedPartInBytes + variableDataSize;
-        increaseCursor(newCursor - oldCursor);
-
-        // Update state
+        // Update cursor and state
+        increaseCursor(additionalSpace);
         this.headerCapacity = newHeaderCapacity;
         this.size = newSize;
         this.headerInBytes = newHeaderInBytes;
