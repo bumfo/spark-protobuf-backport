@@ -63,43 +63,22 @@ import static org.apache.spark.sql.catalyst.expressions.UnsafeArrayData.calculat
  */
 public final class GrowableArrayWriter extends UnsafeWriter {
 
-    // Header capacity grows exponentially (64, 128, 256...) to minimize header resizes
-    private int headerCapacity;
+    // ========== Fields ==========
 
-    // Allocated element space (number of slots allocated)
-    // Updated only by growToSize() when allocating space
-    // After all writes: size = allocated space = highest ordinal + 1
-    private int size;
-
-    // The element size in this array
+    // Element configuration
     private final int elementSize;
 
+    // Header tracking (grows exponentially: 64, 128, 256...)
+    private int headerCapacity;
     private int headerInBytes;
 
-    // Track if array has been finalized
+    // Element space tracking (grows linearly to ordinal+1)
+    private int size;
+
+    // Finalization tracking
     private boolean finalized;
 
-    private void assertIndexIsValid(int index) {
-        assert index >= 0 : "index (" + index + ") should >= 0";
-    }
-
-    /**
-     * Compute the ceiling power of 2 for a given value.
-     * Uses bit manipulation for O(1) computation.
-     *
-     * @param x the input value
-     * @return the smallest power of 2 >= x
-     */
-    private static int ceilPow2(int x) {
-        x -= 1;
-        x |= x >> 1;
-        x |= x >> 2;
-        x |= x >> 4;
-        x |= x >> 8;
-        x |= x >> 16;
-        x += 1;
-        return x;
-    }
+    // ========== Constructor ==========
 
     public GrowableArrayWriter(UnsafeWriter writer, int elementSize) {
         super(writer.getBufferHolder());
@@ -108,6 +87,8 @@ public final class GrowableArrayWriter extends UnsafeWriter {
         this.size = 0;
         this.finalized = false;
     }
+
+    // ========== Public API ==========
 
     /**
      * Provide a size hint to optimize space allocation.
@@ -118,225 +99,6 @@ public final class GrowableArrayWriter extends UnsafeWriter {
     public void sizeHint(int minSize) {
         if (minSize > size) {
             growToSize(minSize);
-        }
-    }
-
-    /**
-     * Grow the array to accommodate at least minSize elements.
-     * Handles initial allocation when headerCapacity == 0.
-     * Header capacity grows exponentially (powers of 2) to minimize header resizes.
-     * Element space allocated exactly for minSize elements.
-     * BufferHolder.grow() handles actual buffer allocation with its own 2x growth.
-     *
-     * @param minSize the minimum size required (for header capacity calculation)
-     */
-    private void growToSize(int minSize) {
-        // Compute next power of 2 >= minSize, with minimum 64
-        // Using bit manipulation for O(1) computation
-        int newHeaderCapacity = Math.max(64, ceilPow2(minSize));
-
-        // Allocate space for exactly minSize elements
-        int newSize = minSize;
-
-        // General path: handles all cases (initial allocation, jumps, boundaries, large arrays)
-        boolean isInitialAllocation = (headerCapacity == 0);
-        int oldHeaderInBytes = headerInBytes;  // 0 when isInitialAllocation
-        int newHeaderInBytes = calculateHeaderPortionInBytes(newHeaderCapacity);
-        int oldFixedPartInBytes = ByteArrayMethods.roundNumberOfBytesToNearestWord(elementSize * size);  // 0 when size == 0
-        int newFixedPartInBytes = ByteArrayMethods.roundNumberOfBytesToNearestWord(elementSize * newSize);
-
-        // Set starting offset for initial allocation
-        if (isInitialAllocation) {
-            this.startingOffset = cursor();
-        }
-
-        // Calculate space needed and variable data size
-        int oldCursor = cursor();
-        int variableDataSize = oldCursor - startingOffset - oldHeaderInBytes - oldFixedPartInBytes;  // 0 when isInitialAllocation (oldCursor == startingOffset)
-
-        // Assert no variable-length data (enforced by setOffsetAndSize throwing UnsupportedOperationException)
-        assert variableDataSize == 0 : "GrowableArrayWriter does not support variable-length data";
-
-        // Grow buffer
-        int additionalSpace = (newHeaderInBytes - oldHeaderInBytes) + (newFixedPartInBytes - oldFixedPartInBytes);
-        grow(additionalSpace);
-
-        // Move data if header size changed (skip for initial allocation)
-        if (!isInitialAllocation && newHeaderInBytes > oldHeaderInBytes) {
-            // // Move variable-length data first (if any) to avoid overwriting
-            // if (variableDataSize > 0) {
-            //     int oldVariableStart = startingOffset + oldHeaderInBytes + oldFixedPartInBytes;
-            //     int newVariableStart = startingOffset + newHeaderInBytes + newFixedPartInBytes;
-            //     Platform.copyMemory(
-            //         getBuffer(), oldVariableStart,
-            //         getBuffer(), newVariableStart,
-            //         variableDataSize
-            //     );
-            // }
-
-            // Move fixed-length data
-            int oldFixedStart = startingOffset + oldHeaderInBytes;
-            int newFixedStart = startingOffset + newHeaderInBytes;
-            int existingDataBytes = size * elementSize;
-            Platform.copyMemory(
-                getBuffer(), oldFixedStart,
-                getBuffer(), newFixedStart,
-                existingDataBytes
-            );
-        }
-
-        // Initialize header (full initialization for new allocation, only new null bits for growth)
-        int headerInitStart = oldHeaderInBytes;  // 0 when isInitialAllocation
-        for (int i = headerInitStart; i < newHeaderInBytes; i += 8) {
-            Platform.putLong(getBuffer(), startingOffset + i, 0L);
-        }
-
-        // // Zero out new fixed region slots
-        // int newFixedStart = startingOffset + newHeaderInBytes;
-        // int fixedInitStart = size * elementSize;  // 0 when isInitialAllocation (size == 0)
-        // for (int i = fixedInitStart; i < newFixedPartInBytes; i += 8) {
-        //     Platform.putLong(getBuffer(), newFixedStart + i, 0L);
-        // }
-
-        // Update cursor
-        int newCursor = startingOffset + newHeaderInBytes + newFixedPartInBytes + variableDataSize;
-        increaseCursor(newCursor - oldCursor);
-
-        this.headerCapacity = newHeaderCapacity;
-        // Only update size if growing beyond current size (from writes, not sizeHint)
-        if (newSize > this.size) {
-            this.size = newSize;
-        }
-        this.headerInBytes = newHeaderInBytes;
-    }
-
-    private void ensureSize(int ordinal) {
-        if (ordinal >= size) {
-            growToSize(ordinal + 1);
-        }
-    }
-
-    private long getElementOffset(int ordinal) {
-        return startingOffset + headerInBytes + ordinal * (long) elementSize;
-    }
-
-    private void setNullBit(int ordinal) {
-        assertIndexIsValid(ordinal);
-        BitSetMethods.set(getBuffer(), startingOffset + 8, ordinal);
-    }
-
-    @Override
-    public void setNull1Bytes(int ordinal) {
-        ensureSize(ordinal);
-        setNullBit(ordinal);
-        // put zero into the corresponding field when set null
-        writeByte(getElementOffset(ordinal), (byte) 0);
-    }
-
-    @Override
-    public void setNull2Bytes(int ordinal) {
-        ensureSize(ordinal);
-        setNullBit(ordinal);
-        // put zero into the corresponding field when set null
-        writeShort(getElementOffset(ordinal), (short) 0);
-    }
-
-    @Override
-    public void setNull4Bytes(int ordinal) {
-        ensureSize(ordinal);
-        setNullBit(ordinal);
-        // put zero into the corresponding field when set null
-        writeInt(getElementOffset(ordinal), 0);
-    }
-
-    @Override
-    public void setNull8Bytes(int ordinal) {
-        ensureSize(ordinal);
-        setNullBit(ordinal);
-        // put zero into the corresponding field when set null
-        writeLong(getElementOffset(ordinal), 0);
-    }
-
-    public void setNull(int ordinal) {
-        setNull8Bytes(ordinal);
-    }
-
-    @Override
-    public void write(int ordinal, boolean value) {
-        assertIndexIsValid(ordinal);
-        ensureSize(ordinal);
-        writeBoolean(getElementOffset(ordinal), value);
-    }
-
-    @Override
-    public void write(int ordinal, byte value) {
-        assertIndexIsValid(ordinal);
-        ensureSize(ordinal);
-        writeByte(getElementOffset(ordinal), value);
-    }
-
-    @Override
-    public void write(int ordinal, short value) {
-        assertIndexIsValid(ordinal);
-        ensureSize(ordinal);
-        writeShort(getElementOffset(ordinal), value);
-    }
-
-    @Override
-    public void write(int ordinal, int value) {
-        assertIndexIsValid(ordinal);
-        ensureSize(ordinal);
-        writeInt(getElementOffset(ordinal), value);
-    }
-
-    @Override
-    public void write(int ordinal, long value) {
-        assertIndexIsValid(ordinal);
-        ensureSize(ordinal);
-        writeLong(getElementOffset(ordinal), value);
-    }
-
-    @Override
-    public void write(int ordinal, float value) {
-        assertIndexIsValid(ordinal);
-        ensureSize(ordinal);
-        writeFloat(getElementOffset(ordinal), value);
-    }
-
-    @Override
-    public void write(int ordinal, double value) {
-        assertIndexIsValid(ordinal);
-        ensureSize(ordinal);
-        writeDouble(getElementOffset(ordinal), value);
-    }
-
-    @Override
-    public void write(int ordinal, Decimal input, int precision, int scale) {
-        // make sure Decimal object has the same scale as DecimalType
-        assertIndexIsValid(ordinal);
-        ensureSize(ordinal);
-        if (input != null && input.changePrecision(precision, scale)) {
-            if (precision <= Decimal.MAX_LONG_DIGITS()) {
-                write(ordinal, input.toUnscaledLong());
-            } else {
-                final byte[] bytes = input.toJavaBigDecimal().unscaledValue().toByteArray();
-                final int numBytes = bytes.length;
-                assert numBytes <= 16;
-                int roundedSize = ByteArrayMethods.roundNumberOfBytesToNearestWord(numBytes);
-                grow(roundedSize);
-
-                zeroOutPaddingBytes(numBytes);
-
-                // Write the bytes to the variable length portion.
-                Platform.copyMemory(
-                        bytes, Platform.BYTE_ARRAY_OFFSET, getBuffer(), cursor(), numBytes);
-                setOffsetAndSize(ordinal, numBytes);
-
-                // move the cursor forward with 8-bytes boundary
-                increaseCursor(roundedSize);
-            }
-        } else {
-            setNull(ordinal);
         }
     }
 
@@ -398,13 +160,233 @@ public final class GrowableArrayWriter extends UnsafeWriter {
         return startingOffset;
     }
 
-    // Override variable-length write methods to forbid their use
-    // GrowableArrayWriter only supports fixed-size elements
+    // ========== Private Helpers ==========
+
+    /**
+     * Grow the array to accommodate at least minSize elements.
+     * Handles initial allocation when headerCapacity == 0.
+     * Header capacity grows exponentially (powers of 2) to minimize header resizes.
+     * Element space allocated exactly for minSize elements.
+     * BufferHolder.grow() handles actual buffer allocation with its own 2x growth.
+     *
+     * @param minSize the minimum size required (for header capacity calculation)
+     */
+    private void growToSize(int minSize) {
+        // Compute next power of 2 >= minSize, with minimum 64
+        int newHeaderCapacity = Math.max(64, ceilPow2(minSize));
+        int newSize = minSize;
+
+        // Calculate space requirements
+        boolean isInitialAllocation = (headerCapacity == 0);
+        int oldHeaderInBytes = headerInBytes;
+        int newHeaderInBytes = calculateHeaderPortionInBytes(newHeaderCapacity);
+        int oldFixedPartInBytes = ByteArrayMethods.roundNumberOfBytesToNearestWord(elementSize * size);
+        int newFixedPartInBytes = ByteArrayMethods.roundNumberOfBytesToNearestWord(elementSize * newSize);
+
+        // Set starting offset for initial allocation
+        if (isInitialAllocation) {
+            this.startingOffset = cursor();
+        }
+
+        // Calculate space needed
+        int oldCursor = cursor();
+        int variableDataSize = oldCursor - startingOffset - oldHeaderInBytes - oldFixedPartInBytes;
+        assert variableDataSize == 0 : "GrowableArrayWriter does not support variable-length data";
+
+        // Grow buffer
+        int additionalSpace = (newHeaderInBytes - oldHeaderInBytes) + (newFixedPartInBytes - oldFixedPartInBytes);
+        grow(additionalSpace);
+
+        // Move fixed-length data if header size changed
+        if (!isInitialAllocation && newHeaderInBytes > oldHeaderInBytes) {
+            int oldFixedStart = startingOffset + oldHeaderInBytes;
+            int newFixedStart = startingOffset + newHeaderInBytes;
+            int existingDataBytes = size * elementSize;
+            Platform.copyMemory(
+                getBuffer(), oldFixedStart,
+                getBuffer(), newFixedStart,
+                existingDataBytes
+            );
+        }
+
+        // Initialize new header portion
+        int headerInitStart = oldHeaderInBytes;
+        for (int i = headerInitStart; i < newHeaderInBytes; i += 8) {
+            Platform.putLong(getBuffer(), startingOffset + i, 0L);
+        }
+
+        // Update cursor
+        int newCursor = startingOffset + newHeaderInBytes + newFixedPartInBytes + variableDataSize;
+        increaseCursor(newCursor - oldCursor);
+
+        // Update state
+        this.headerCapacity = newHeaderCapacity;
+        if (newSize > this.size) {
+            this.size = newSize;
+        }
+        this.headerInBytes = newHeaderInBytes;
+    }
+
+    private void ensureSize(int ordinal) {
+        if (ordinal >= size) {
+            growToSize(ordinal + 1);
+        }
+    }
+
+    private void assertIndexIsValid(int index) {
+        assert index >= 0 : "index (" + index + ") should >= 0";
+    }
+
+    private long getElementOffset(int ordinal) {
+        return startingOffset + headerInBytes + ordinal * (long) elementSize;
+    }
+
+    private void setNullBit(int ordinal) {
+        assertIndexIsValid(ordinal);
+        BitSetMethods.set(getBuffer(), startingOffset + 8, ordinal);
+    }
+
+    // ========== Override: Null Setters ==========
+
+    @Override
+    public void setNull1Bytes(int ordinal) {
+        ensureSize(ordinal);
+        setNullBit(ordinal);
+        writeByte(getElementOffset(ordinal), (byte) 0);
+    }
+
+    @Override
+    public void setNull2Bytes(int ordinal) {
+        ensureSize(ordinal);
+        setNullBit(ordinal);
+        writeShort(getElementOffset(ordinal), (short) 0);
+    }
+
+    @Override
+    public void setNull4Bytes(int ordinal) {
+        ensureSize(ordinal);
+        setNullBit(ordinal);
+        writeInt(getElementOffset(ordinal), 0);
+    }
+
+    @Override
+    public void setNull8Bytes(int ordinal) {
+        ensureSize(ordinal);
+        setNullBit(ordinal);
+        writeLong(getElementOffset(ordinal), 0);
+    }
+
+    public void setNull(int ordinal) {
+        setNull8Bytes(ordinal);
+    }
+
+    // ========== Override: Write Primitives ==========
+
+    @Override
+    public void write(int ordinal, boolean value) {
+        assertIndexIsValid(ordinal);
+        ensureSize(ordinal);
+        writeBoolean(getElementOffset(ordinal), value);
+    }
+
+    @Override
+    public void write(int ordinal, byte value) {
+        assertIndexIsValid(ordinal);
+        ensureSize(ordinal);
+        writeByte(getElementOffset(ordinal), value);
+    }
+
+    @Override
+    public void write(int ordinal, short value) {
+        assertIndexIsValid(ordinal);
+        ensureSize(ordinal);
+        writeShort(getElementOffset(ordinal), value);
+    }
+
+    @Override
+    public void write(int ordinal, int value) {
+        assertIndexIsValid(ordinal);
+        ensureSize(ordinal);
+        writeInt(getElementOffset(ordinal), value);
+    }
+
+    @Override
+    public void write(int ordinal, long value) {
+        assertIndexIsValid(ordinal);
+        ensureSize(ordinal);
+        writeLong(getElementOffset(ordinal), value);
+    }
+
+    @Override
+    public void write(int ordinal, float value) {
+        assertIndexIsValid(ordinal);
+        ensureSize(ordinal);
+        writeFloat(getElementOffset(ordinal), value);
+    }
+
+    @Override
+    public void write(int ordinal, double value) {
+        assertIndexIsValid(ordinal);
+        ensureSize(ordinal);
+        writeDouble(getElementOffset(ordinal), value);
+    }
+
+    // ========== Override: Write Complex Types ==========
+
+    @Override
+    public void write(int ordinal, Decimal input, int precision, int scale) {
+        assertIndexIsValid(ordinal);
+        ensureSize(ordinal);
+        if (input != null && input.changePrecision(precision, scale)) {
+            if (precision <= Decimal.MAX_LONG_DIGITS()) {
+                write(ordinal, input.toUnscaledLong());
+            } else {
+                final byte[] bytes = input.toJavaBigDecimal().unscaledValue().toByteArray();
+                final int numBytes = bytes.length;
+                assert numBytes <= 16;
+                int roundedSize = ByteArrayMethods.roundNumberOfBytesToNearestWord(numBytes);
+                grow(roundedSize);
+
+                zeroOutPaddingBytes(numBytes);
+
+                // Write the bytes to the variable length portion
+                Platform.copyMemory(
+                        bytes, Platform.BYTE_ARRAY_OFFSET, getBuffer(), cursor(), numBytes);
+                setOffsetAndSize(ordinal, numBytes);
+
+                increaseCursor(roundedSize);
+            }
+        } else {
+            setNull(ordinal);
+        }
+    }
+
+    // ========== Override: Forbidden Operations ==========
 
     @Override
     protected final void setOffsetAndSize(int ordinal, int currentCursor, int size) {
         throw new UnsupportedOperationException(
             "GrowableArrayWriter does not support variable-length data. " +
             "Only fixed-size primitive types and Decimal are supported.");
+    }
+
+    // ========== Static Utilities ==========
+
+    /**
+     * Compute the ceiling power of 2 for a given value.
+     * Uses bit manipulation for O(1) computation.
+     *
+     * @param x the input value
+     * @return the smallest power of 2 >= x
+     */
+    private static int ceilPow2(int x) {
+        x -= 1;
+        x |= x >> 1;
+        x |= x >> 2;
+        x |= x >> 4;
+        x |= x >> 8;
+        x |= x >> 16;
+        x += 1;
+        return x;
     }
 }
