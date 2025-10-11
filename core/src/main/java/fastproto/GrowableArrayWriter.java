@@ -89,6 +89,9 @@ public final class GrowableArrayWriter extends UnsafeWriter {
     // Element space tracking (grows linearly to ordinal+1)
     private int size;
 
+    // Cursor tracking (saved to verify no external modifications)
+    private int savedCursor;
+
     // Finalization tracking
     private boolean finalized;
 
@@ -135,6 +138,13 @@ public final class GrowableArrayWriter extends UnsafeWriter {
             grow(8);
             increaseCursor(8);
             this.headerInBytes = 8;
+        } else {
+            // Verify cursor hasn't been modified externally
+            if (cursor() != savedCursor) {
+                throw new IllegalStateException("cursor() != savedCursor: cursor was modified externally");
+            }
+            // Apply final cursor adjustment: move cursor to end of all allocated data
+            setCursor(startingOffset + headerInBytes + roundToWord(elementSize * size));
         }
 
         // Update the numElements field in the header with the actual size
@@ -177,6 +187,17 @@ public final class GrowableArrayWriter extends UnsafeWriter {
     // ========== Private Helpers ==========
 
     /**
+     * Update cursor position and save it for verification.
+     * Should be called instead of increaseCursor() when cursor needs to be moved.
+     *
+     * @param targetCursor the target cursor position
+     */
+    private void setCursor(int targetCursor) {
+        increaseCursor(targetCursor - cursor());
+        this.savedCursor = targetCursor;
+    }
+
+    /**
      * Grow the array to accommodate newSize elements.
      * Handles initial allocation and header/element space growth.
      *
@@ -194,6 +215,11 @@ public final class GrowableArrayWriter extends UnsafeWriter {
         if (newHeaderCapacity == headerCapacity) {
             // Header capacity unchanged - only grow element space
             additionalSpace = newFixedPartInBytes - oldFixedPartInBytes;
+
+            // Update cursor to current data end before grow() to preserve existing data
+            if (headerCapacity > 0) {
+                setCursor(startingOffset + headerInBytes + oldFixedPartInBytes);
+            }
             grow(additionalSpace);
         } else {
             // Header capacity changed - handle header growth and data movement
@@ -202,6 +228,10 @@ public final class GrowableArrayWriter extends UnsafeWriter {
             boolean isInitialAllocation = (headerCapacity == 0);
             if (isInitialAllocation) {
                 this.startingOffset = cursor();
+                this.savedCursor = cursor();
+            } else {
+                // Update cursor to current data end before grow() to preserve existing data
+                setCursor(startingOffset + headerInBytes + oldFixedPartInBytes);
             }
 
             int oldHeaderInBytes = headerInBytes;
@@ -228,8 +258,7 @@ public final class GrowableArrayWriter extends UnsafeWriter {
             this.headerInBytes = newHeaderInBytes;
         }
 
-        // Common: update cursor and size
-        increaseCursor(additionalSpace);
+        // Common: update size (cursor update deferred to complete())
         this.size = newSize;
     }
 
@@ -237,11 +266,13 @@ public final class GrowableArrayWriter extends UnsafeWriter {
         // Fast path: single-element growth within header capacity
         // Most common case for sequential writes
         if (ordinal == size && ordinal < headerCapacity) {
+            int oldFixedPartInBytes = roundToWord(elementSize * size);
             int newBytes = elementSize * size + elementSize;
             int additionalSpace = (elementSize + ((-newBytes) & 7)) & ~7;
 
+            // Update cursor to current data end before grow() to preserve existing data
+            setCursor(startingOffset + headerInBytes + oldFixedPartInBytes);
             grow(additionalSpace);
-            increaseCursor(additionalSpace);
             this.size++;
         } else if (ordinal >= size) {
             // Slow path: multi-element jump or header growth needed
