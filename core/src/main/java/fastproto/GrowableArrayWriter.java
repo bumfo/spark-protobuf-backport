@@ -246,35 +246,22 @@ public final class GrowableArrayWriter extends UnsafeWriter {
             // Header capacity changed - handle header growth and data movement
             int newHeaderInBytes = calculateHeaderPortionInBytes(newHeaderCapacity);
 
-            boolean isInitialAllocation = (headerCapacity == 0);
-            if (isInitialAllocation) {
+            if (headerCapacity == 0) {
                 this.startingOffset = cursor();
                 this.savedCursor = cursor();
             }
 
-            int oldHeaderInBytes = headerInBytes;
-            int headerGrowth = newHeaderInBytes - oldHeaderInBytes;
+            growIfNeeded(newSize, newHeaderInBytes - headerInBytes);
 
-            if (isInitialAllocation) {
-                int elementGrowth = wordAlignedSpace(elementSize * newSize);
-                grow(headerGrowth + elementGrowth);
-                updateElementCapacity();
-            } else {
-                // Update cursor to current data end before grow() to preserve existing data
-                growIfNeeded(newSize, headerGrowth);
-            }
-
-            // Move existing data if not initial allocation
-            if (!isInitialAllocation) {
-                Platform.copyMemory(
-                        getBuffer(), startingOffset + oldHeaderInBytes,
-                        getBuffer(), startingOffset + newHeaderInBytes,
-                        (long) size * elementSize
-                );
-            }
+            // Move existing data (no-op when size == 0 for initial allocation)
+            Platform.copyMemory(
+                    getBuffer(), startingOffset + headerInBytes,
+                    getBuffer(), startingOffset + newHeaderInBytes,
+                    (long) size * elementSize
+            );
 
             // Zero out new header portion
-            for (int i = oldHeaderInBytes; i < newHeaderInBytes; i += 8) {
+            for (int i = headerInBytes; i < newHeaderInBytes; i += 8) {
                 Platform.putLong(getBuffer(), startingOffset + i, 0L);
             }
 
