@@ -1,0 +1,227 @@
+package org.apache.spark.sql.protobuf.backport.jmh
+
+import fastproto.{GrowableArrayWriter, IntList, LongList}
+import org.apache.spark.sql.catalyst.expressions.UnsafeArrayData
+import org.apache.spark.sql.catalyst.expressions.codegen.{UnsafeArrayWriter, UnsafeRowWriter}
+import org.openjdk.jmh.annotations._
+import org.openjdk.jmh.infra.Blackhole
+
+import java.util.concurrent.TimeUnit
+
+/**
+ * JMH benchmark comparing array writing strategies for UnsafeArrayData output:
+ *
+ * 1. FastList (IntList/LongList) + UnsafeArrayWriter loop
+ * 2. GrowableArrayWriter with direct writes
+ *
+ * Both approaches produce identical UnsafeArrayData output.
+ *
+ * Usage:
+ *   sbt "bench/Jmh/run .*ArrayWriterBenchmark.*"
+ *   sbt "bench/Jmh/run .*ArrayWriterBenchmark.* -wi 5 -i 10"
+ */
+@BenchmarkMode(Array(Mode.AverageTime))
+@OutputTimeUnit(TimeUnit.NANOSECONDS)
+@State(Scope.Benchmark)
+@Fork(value = 2, jvmArgs = Array("-Xms2G", "-Xmx2G"))
+@Warmup(iterations = 10, time = 1, timeUnit = TimeUnit.SECONDS)
+@Measurement(iterations = 10, time = 1, timeUnit = TimeUnit.SECONDS)
+class ArrayWriterBenchmark {
+
+  // Test data sizes
+  @Param(Array("10", "100", "1000"))
+  var arraySize: Int = _
+
+  // Reusable test data
+  var intValues: Array[Int] = _
+  var longValues: Array[Long] = _
+
+  @Setup
+  def setup(): Unit = {
+    // Initialize test data with sequential values
+    intValues = Array.tabulate(arraySize)(i => i)
+    longValues = Array.tabulate(arraySize)(i => i.toLong)
+  }
+
+  // ========== Int Array (4-byte elements) ==========
+
+  /**
+   * FastList + UnsafeArrayWriter: Traditional two-phase approach
+   * 1. Accumulate values in IntList during parsing
+   * 2. Copy to UnsafeArrayData via UnsafeArrayWriter loop
+   */
+  @Benchmark
+  def intArrayFastList(bh: Blackhole): Unit = {
+    val rowWriter = new UnsafeRowWriter(1, 8192)
+
+    // Phase 1: Accumulate values in IntList (simulates parsing)
+    val list = new IntList()
+    var i = 0
+    while (i < arraySize) {
+      list.add(intValues(i))
+      i += 1
+    }
+
+    // Phase 2: Convert IntList to UnsafeArrayData
+    val offset = rowWriter.cursor()
+    val arrayWriter = new UnsafeArrayWriter(rowWriter, 4)
+    arrayWriter.initialize(list.count)
+
+    i = 0
+    while (i < list.count) {
+      arrayWriter.write(i, list.array(i))
+      i += 1
+    }
+
+    // Verify output is valid UnsafeArrayData
+    val size = rowWriter.cursor() - offset
+    val arrayData = new UnsafeArrayData()
+    arrayData.pointTo(rowWriter.getBuffer, offset, size)
+    bh.consume(arrayData.numElements())
+  }
+
+  /**
+   * GrowableArrayWriter: Direct single-phase approach
+   * - Direct writes with automatic growth
+   * - No intermediate collection
+   */
+  @Benchmark
+  def intArrayGrowable(bh: Blackhole): Unit = {
+    val rowWriter = new UnsafeRowWriter(1, 8192)
+
+    // Single phase: Direct writes to GrowableArrayWriter
+    val writer = new GrowableArrayWriter(rowWriter, 4)
+    writer.sizeHint(arraySize)  // Optional: pre-allocate for known size
+
+    var i = 0
+    while (i < arraySize) {
+      writer.write(i, intValues(i))
+      i += 1
+    }
+
+    val offset = writer.getStartingOffset
+    val count = writer.complete()
+
+    // Verify output is valid UnsafeArrayData
+    val size = rowWriter.cursor() - offset
+    val arrayData = new UnsafeArrayData()
+    arrayData.pointTo(rowWriter.getBuffer, offset, size)
+    bh.consume(arrayData.numElements())
+  }
+
+  // ========== Long Array (8-byte elements) ==========
+
+  /**
+   * FastList + UnsafeArrayWriter: Traditional two-phase approach for longs
+   */
+  @Benchmark
+  def longArrayFastList(bh: Blackhole): Unit = {
+    val rowWriter = new UnsafeRowWriter(1, 8192)
+
+    // Phase 1: Accumulate values in LongList (simulates parsing)
+    val list = new LongList()
+    var i = 0
+    while (i < arraySize) {
+      list.add(longValues(i))
+      i += 1
+    }
+
+    // Phase 2: Convert LongList to UnsafeArrayData
+    val offset = rowWriter.cursor()
+    val arrayWriter = new UnsafeArrayWriter(rowWriter, 8)
+    arrayWriter.initialize(list.count)
+
+    i = 0
+    while (i < list.count) {
+      arrayWriter.write(i, list.array(i))
+      i += 1
+    }
+
+    // Verify output is valid UnsafeArrayData
+    val size = rowWriter.cursor() - offset
+    val arrayData = new UnsafeArrayData()
+    arrayData.pointTo(rowWriter.getBuffer, offset, size)
+    bh.consume(arrayData.numElements())
+  }
+
+  /**
+   * GrowableArrayWriter: Direct single-phase approach for longs
+   */
+  @Benchmark
+  def longArrayGrowable(bh: Blackhole): Unit = {
+    val rowWriter = new UnsafeRowWriter(1, 8192)
+
+    // Single phase: Direct writes to GrowableArrayWriter
+    val writer = new GrowableArrayWriter(rowWriter, 8)
+    writer.sizeHint(arraySize)  // Optional: pre-allocate for known size
+
+    var i = 0
+    while (i < arraySize) {
+      writer.write(i, longValues(i))
+      i += 1
+    }
+
+    val offset = writer.getStartingOffset
+    val count = writer.complete()
+
+    // Verify output is valid UnsafeArrayData
+    val size = rowWriter.cursor() - offset
+    val arrayData = new UnsafeArrayData()
+    arrayData.pointTo(rowWriter.getBuffer, offset, size)
+    bh.consume(arrayData.numElements())
+  }
+
+  // ========== No Size Hint Variants ==========
+
+  /**
+   * GrowableArrayWriter without size hint - tests automatic growth
+   */
+  @Benchmark
+  def intArrayGrowableNoHint(bh: Blackhole): Unit = {
+    val rowWriter = new UnsafeRowWriter(1, 8192)
+
+    // No sizeHint - tests automatic growth performance
+    val writer = new GrowableArrayWriter(rowWriter, 4)
+
+    var i = 0
+    while (i < arraySize) {
+      writer.write(i, intValues(i))
+      i += 1
+    }
+
+    val offset = writer.getStartingOffset
+    val count = writer.complete()
+
+    // Verify output is valid UnsafeArrayData
+    val size = rowWriter.cursor() - offset
+    val arrayData = new UnsafeArrayData()
+    arrayData.pointTo(rowWriter.getBuffer, offset, size)
+    bh.consume(arrayData.numElements())
+  }
+
+  /**
+   * GrowableArrayWriter without size hint - tests automatic growth for longs
+   */
+  @Benchmark
+  def longArrayGrowableNoHint(bh: Blackhole): Unit = {
+    val rowWriter = new UnsafeRowWriter(1, 8192)
+
+    // No sizeHint - tests automatic growth performance
+    val writer = new GrowableArrayWriter(rowWriter, 8)
+
+    var i = 0
+    while (i < arraySize) {
+      writer.write(i, longValues(i))
+      i += 1
+    }
+
+    val offset = writer.getStartingOffset
+    val count = writer.complete()
+
+    // Verify output is valid UnsafeArrayData
+    val size = rowWriter.cursor() - offset
+    val arrayData = new UnsafeArrayData()
+    arrayData.pointTo(rowWriter.getBuffer, offset, size)
+    bh.consume(arrayData.numElements())
+  }
+}
