@@ -182,6 +182,7 @@ class ArrayWriterBenchmark {
 
     // No sizeHint - tests automatic growth performance
     val writer = new GrowableArrayWriter(rowWriter, 4)
+    writer.sizeHint(0)
 
     var i = 0
     while (i < arraySize) {
@@ -208,6 +209,7 @@ class ArrayWriterBenchmark {
 
     // No sizeHint - tests automatic growth performance
     val writer = new GrowableArrayWriter(rowWriter, 8)
+    writer.sizeHint(0)
 
     var i = 0
     while (i < arraySize) {
