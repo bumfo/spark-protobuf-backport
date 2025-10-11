@@ -29,34 +29,49 @@ import static org.apache.spark.sql.catalyst.expressions.UnsafeArrayData.calculat
  * A growable version of UnsafeArrayWriter that supports dynamic size expansion.
  * <p>
  * Unlike UnsafeArrayWriter which requires the exact element count upfront via initialize(numElements),
- * GrowableArrayWriter starts with size 0 and automatically grows as elements are written.
+ * GrowableArrayWriter starts with zero size and automatically grows as elements are written.
  * <p>
- * Usage pattern:
+ * <b>Usage Pattern:</b>
  * <pre>
  *   GrowableArrayWriter writer = new GrowableArrayWriter(parentWriter, elementSize);
- *   writer.sizeHint(10);    // Optional size hint (allocates immediately)
+ *   writer.sizeHint(10);      // Optional: pre-allocate space for 10 elements
  *   writer.write(0, value1);
  *   writer.write(1, value2);
- *   writer.write(100, value3);  // Automatically grows to accommodate ordinal 100
- *   int actualCount = writer.complete();  // Finalizes with actual count (101)
+ *   writer.write(100, value3); // Auto-grows to accommodate ordinal 100
+ *   int count = writer.complete(); // Finalize array, returns 101
  * </pre>
  * <p>
- * Growth Strategy:
+ * <b>Growth Strategy:</b>
  * <ul>
- *   <li>Header-focused growth: Header capacity doubles (64 → 128 → 256 → 512...) to minimize header resizes</li>
- *   <li>BufferHolder handles buffer allocation with 2x exponential growth automatically</li>
- *   <li>Data movement only occurs when header size changes (logarithmic resizes)</li>
- *   <li>Empty arrays: Fast path allocates only 8 bytes for numElements field</li>
+ *   <li><b>Header capacity:</b> Grows exponentially (64 → 128 → 256 → 512...) using powers of 2
+ *       to minimize header resizes. Computed in O(1) time using bit manipulation.</li>
+ *   <li><b>Element space:</b> Grows linearly to exactly (ordinal + 1) on each write beyond current size.</li>
+ *   <li><b>Data movement:</b> Only occurs when header size changes (at 64, 128, 192, 256... element boundaries),
+ *       resulting in logarithmic number of resizes.</li>
+ *   <li><b>Buffer allocation:</b> Delegated to BufferHolder which uses its own 2x exponential growth.</li>
  * </ul>
  * <p>
- * Key Features:
+ * <b>Terminology:</b>
  * <ul>
- *   <li>sizeHint() is optional - allocates immediately to avoid reallocation overhead</li>
- *   <li>Auto-grows when writing beyond size</li>
- *   <li>Tracks actual element count as max(ordinal + 1) across all writes</li>
- *   <li>Supports sparse arrays (e.g., writing to ordinals 0 and 100 creates size 101)</li>
- *   <li>Fixed-size elements only (primitives and Decimal)</li>
- *   <li>Requires complete() to finalize the array header with actual count</li>
+ *   <li><b>headerCapacity:</b> The header size boundary (64, 128, 256...). Determines when header needs to grow.</li>
+ *   <li><b>size:</b> Allocated element slots. Equals max(ordinal + 1) across all writes.</li>
+ *   <li><b>elementSize:</b> Fixed size per element in bytes (8 for long, 4 for int, etc.).</li>
+ * </ul>
+ * <p>
+ * <b>Key Features:</b>
+ * <ul>
+ *   <li><b>Optional size hint:</b> Call sizeHint() to pre-allocate space and avoid reallocation overhead.</li>
+ *   <li><b>Automatic growth:</b> Writes beyond current size trigger automatic expansion.</li>
+ *   <li><b>Sparse arrays:</b> Writing to ordinals 0 and 100 creates an array of size 101 (unwritten slots remain null/zero).</li>
+ *   <li><b>Fixed-size elements only:</b> Supports primitives and compact Decimal. Variable-length data throws UnsupportedOperationException.</li>
+ *   <li><b>Finalization required:</b> Must call complete() to write the final element count to the array header.</li>
+ * </ul>
+ * <p>
+ * <b>Performance Characteristics:</b>
+ * <ul>
+ *   <li>Header capacity computation: O(1) using bit manipulation</li>
+ *   <li>Number of resizes: O(log N) where N is the final size</li>
+ *   <li>Data movement: Only when crossing header boundaries (every 64 elements)</li>
  * </ul>
  *
  * @see org.apache.spark.sql.catalyst.expressions.codegen.UnsafeArrayWriter
