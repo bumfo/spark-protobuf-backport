@@ -43,9 +43,9 @@ import static org.apache.spark.sql.catalyst.expressions.UnsafeArrayData.calculat
  * <p>
  * Growth Strategy:
  * <ul>
- *   <li>Small arrays (&lt; 768 elements): Linear growth (allocate exactly what's needed)</li>
- *   <li>Large arrays (&ge; 768 elements): 1.5x exponential growth, aligned to 64-element boundaries</li>
- *   <li>Sequential writes: Fast path for single-element increments within same 64-element block</li>
+ *   <li>Header-focused growth: Capacity doubles (64 → 128 → 256 → 512...) to minimize header resizes</li>
+ *   <li>BufferHolder handles buffer allocation with 2x exponential growth automatically</li>
+ *   <li>Data movement only occurs when header size changes (logarithmic resizes)</li>
  *   <li>Empty arrays: Fast path allocates only 8 bytes for numElements field</li>
  * </ul>
  * <p>
@@ -63,13 +63,12 @@ import static org.apache.spark.sql.catalyst.expressions.UnsafeArrayData.calculat
  */
 public final class GrowableArrayWriter extends UnsafeWriter {
 
-    // Threshold for switching from linear to exponential growth (12 * 64)
-    private static final int GROWTH_THRESHOLD = 768;
+    // Header capacity grows exponentially (64, 128, 256...) to minimize header resizes
+    private int headerCapacity;
 
-    // The allocated capacity (max elements without reallocation)
-    private int capacity;
-
-    // The actual number of elements written (highest ordinal + 1)
+    // Allocated element space (number of slots allocated)
+    // Updated only by growCapacity() when allocating space
+    // After all writes: count = allocated space = highest ordinal + 1
     private int count;
 
     // The element size in this array
@@ -87,7 +86,7 @@ public final class GrowableArrayWriter extends UnsafeWriter {
     public GrowableArrayWriter(UnsafeWriter writer, int elementSize) {
         super(writer.getBufferHolder());
         this.elementSize = elementSize;
-        this.capacity = 0;  // 0 indicates not yet allocated
+        this.headerCapacity = 0;  // 0 indicates not yet allocated
         this.count = 0;
         this.finalized = false;
     }
@@ -99,41 +98,37 @@ public final class GrowableArrayWriter extends UnsafeWriter {
      * @param minCapacity the minimum capacity hint
      */
     public void sizeHint(int minCapacity) {
-        if (minCapacity > capacity) {
+        if (minCapacity > count) {
             growCapacity(minCapacity);
         }
     }
 
     /**
      * Grow the array capacity to accommodate at least minCapacity elements.
-     * Handles initial allocation when capacity == 0.
-     * Uses hybrid growth strategy:
-     * - Small arrays (< GROWTH_THRESHOLD): Linear growth (allocate exactly what's needed)
-     * - Large arrays (>= GROWTH_THRESHOLD): Exponential growth (1.5x) to amortize costs
+     * Handles initial allocation when headerCapacity == 0.
+     * Header capacity grows exponentially (doubles) to minimize header resizes.
+     * Element space allocated exactly for count (current allocated space).
+     * BufferHolder.grow() handles actual buffer allocation with its own 2x growth.
      *
-     * @param minCapacity the minimum capacity required
+     * @param minCapacity the minimum capacity required (for header calculation only)
      */
     private void growCapacity(int minCapacity) {
-        // Hybrid growth strategy
-        int newCapacity;
-        if (capacity < GROWTH_THRESHOLD) {
-            // Small arrays (including initial allocation): allocate exactly what's needed
-            newCapacity = minCapacity;
-        } else {
-            // Large arrays: use 1.5x growth like ArrayList
-            newCapacity = Math.max(capacity + (capacity >> 1), minCapacity);
-
-            // Align to 64-element boundaries to reduce header size changes during future growths
-            // Header changes at 64, 128, 192... so aligning reduces reallocation overhead
-            newCapacity = ((newCapacity + 63) >> 6) << 6;
+        // Double headerCapacity until it satisfies minCapacity
+        // Start with 64 for initial allocation (first boundary where header includes null bits)
+        int newHeaderCapacity = headerCapacity == 0 ? 64 : headerCapacity;
+        while (newHeaderCapacity < minCapacity) {
+            newHeaderCapacity = newHeaderCapacity << 1;  // Double
         }
 
+        // Allocate space for exactly minCapacity elements
+        int newCount = minCapacity;
+
         // General path: handles all cases (initial allocation, jumps, boundaries, large arrays)
-        boolean isInitialAllocation = (capacity == 0);
+        boolean isInitialAllocation = (headerCapacity == 0);
         int oldHeaderInBytes = headerInBytes;  // 0 when isInitialAllocation
-        int newHeaderInBytes = calculateHeaderPortionInBytes(newCapacity);
-        int oldFixedPartInBytes = ByteArrayMethods.roundNumberOfBytesToNearestWord(elementSize * capacity);  // 0 when capacity == 0
-        int newFixedPartInBytes = ByteArrayMethods.roundNumberOfBytesToNearestWord(elementSize * newCapacity);
+        int newHeaderInBytes = calculateHeaderPortionInBytes(newHeaderCapacity);
+        int oldFixedPartInBytes = ByteArrayMethods.roundNumberOfBytesToNearestWord(elementSize * count);  // 0 when count == 0
+        int newFixedPartInBytes = ByteArrayMethods.roundNumberOfBytesToNearestWord(elementSize * newCount);
 
         // Set starting offset for initial allocation
         if (isInitialAllocation) {
@@ -192,32 +187,18 @@ public final class GrowableArrayWriter extends UnsafeWriter {
         int newCursor = startingOffset + newHeaderInBytes + newFixedPartInBytes + variableDataSize;
         increaseCursor(newCursor - oldCursor);
 
-        this.capacity = newCapacity;
+        this.headerCapacity = newHeaderCapacity;
+        // Only update count if growing beyond current count (from writes, not sizeHint)
+        if (newCount > this.count) {
+            this.count = newCount;
+        }
         this.headerInBytes = newHeaderInBytes;
     }
 
     private void ensureCapacity(int ordinal) {
-        if (ordinal >= capacity) {
-            // Fastest path: incrementing by 1 element without crossing 64-element boundary
-            // Header changes when crossing 64, 128, 192... (multiples of 64)
-            // No need to zero - new slot will be written or already zero from buffer allocation
-            if (ordinal == capacity && (capacity & 63) != 0) {
-                // Simplified: ((newBytes + 7) & ~7) - ((oldBytes + 7) & ~7)
-                // = ((newBytes - oldBytes) + ((-newBytes) & 7)) & ~7
-                // = (elementSize + ((-newBytes) & 7)) & ~7
-                int newBytes = elementSize * capacity + elementSize;
-                int additionalSpace = (elementSize + ((-newBytes) & 7)) & ~7;
-                grow(additionalSpace);
-                increaseCursor(additionalSpace);
-                this.capacity++;
-            } else {
-                growCapacity(ordinal + 1);
-            }
+        if (ordinal >= count) {
+            growCapacity(ordinal + 1);
         }
-    }
-
-    private void updateCount(int ordinal) {
-        count = Math.max(count, ordinal + 1);
     }
 
     private long getElementOffset(int ordinal) {
@@ -235,7 +216,6 @@ public final class GrowableArrayWriter extends UnsafeWriter {
         setNullBit(ordinal);
         // put zero into the corresponding field when set null
         writeByte(getElementOffset(ordinal), (byte) 0);
-        updateCount(ordinal);
     }
 
     @Override
@@ -244,7 +224,6 @@ public final class GrowableArrayWriter extends UnsafeWriter {
         setNullBit(ordinal);
         // put zero into the corresponding field when set null
         writeShort(getElementOffset(ordinal), (short) 0);
-        updateCount(ordinal);
     }
 
     @Override
@@ -253,7 +232,6 @@ public final class GrowableArrayWriter extends UnsafeWriter {
         setNullBit(ordinal);
         // put zero into the corresponding field when set null
         writeInt(getElementOffset(ordinal), 0);
-        updateCount(ordinal);
     }
 
     @Override
@@ -262,7 +240,6 @@ public final class GrowableArrayWriter extends UnsafeWriter {
         setNullBit(ordinal);
         // put zero into the corresponding field when set null
         writeLong(getElementOffset(ordinal), 0);
-        updateCount(ordinal);
     }
 
     public void setNull(int ordinal) {
@@ -274,7 +251,6 @@ public final class GrowableArrayWriter extends UnsafeWriter {
         assertIndexIsValid(ordinal);
         ensureCapacity(ordinal);
         writeBoolean(getElementOffset(ordinal), value);
-        updateCount(ordinal);
     }
 
     @Override
@@ -282,7 +258,6 @@ public final class GrowableArrayWriter extends UnsafeWriter {
         assertIndexIsValid(ordinal);
         ensureCapacity(ordinal);
         writeByte(getElementOffset(ordinal), value);
-        updateCount(ordinal);
     }
 
     @Override
@@ -290,7 +265,6 @@ public final class GrowableArrayWriter extends UnsafeWriter {
         assertIndexIsValid(ordinal);
         ensureCapacity(ordinal);
         writeShort(getElementOffset(ordinal), value);
-        updateCount(ordinal);
     }
 
     @Override
@@ -298,7 +272,6 @@ public final class GrowableArrayWriter extends UnsafeWriter {
         assertIndexIsValid(ordinal);
         ensureCapacity(ordinal);
         writeInt(getElementOffset(ordinal), value);
-        updateCount(ordinal);
     }
 
     @Override
@@ -306,7 +279,6 @@ public final class GrowableArrayWriter extends UnsafeWriter {
         assertIndexIsValid(ordinal);
         ensureCapacity(ordinal);
         writeLong(getElementOffset(ordinal), value);
-        updateCount(ordinal);
     }
 
     @Override
@@ -314,7 +286,6 @@ public final class GrowableArrayWriter extends UnsafeWriter {
         assertIndexIsValid(ordinal);
         ensureCapacity(ordinal);
         writeFloat(getElementOffset(ordinal), value);
-        updateCount(ordinal);
     }
 
     @Override
@@ -322,7 +293,6 @@ public final class GrowableArrayWriter extends UnsafeWriter {
         assertIndexIsValid(ordinal);
         ensureCapacity(ordinal);
         writeDouble(getElementOffset(ordinal), value);
-        updateCount(ordinal);
     }
 
     @Override
@@ -349,7 +319,6 @@ public final class GrowableArrayWriter extends UnsafeWriter {
 
                 // move the cursor forward with 8-bytes boundary
                 increaseCursor(roundedSize);
-                updateCount(ordinal);
             }
         } else {
             setNull(ordinal);
@@ -370,7 +339,7 @@ public final class GrowableArrayWriter extends UnsafeWriter {
         }
 
         // Fast path for empty array: just allocate 8 bytes for numElements
-        if (capacity == 0) {
+        if (headerCapacity == 0) {
             this.startingOffset = cursor();
             grow(8);
             increaseCursor(8);
@@ -395,12 +364,13 @@ public final class GrowableArrayWriter extends UnsafeWriter {
     }
 
     /**
-     * Get the current allocated capacity.
+     * Get the current header capacity (for testing).
+     * This represents the header size boundary, not element count.
      *
-     * @return the current capacity before next growth would be triggered
+     * @return the current header capacity
      */
     public int getCapacity() {
-        return capacity;
+        return headerCapacity;
     }
 
     /**
