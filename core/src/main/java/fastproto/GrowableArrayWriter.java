@@ -207,21 +207,6 @@ public final class GrowableArrayWriter extends UnsafeWriter {
             grow(headerGrowth + ((addedBytes + ((-newSpace) & 7)) & ~7));
 
             int newElementStart = elementStart + headerGrowth;
-            if (headerGrowth > 0) {
-                // Move existing data (no-op when size == 0 for initial allocation)
-                Platform.copyMemory(
-                        getBuffer(), elementStart,
-                        getBuffer(), newElementStart,
-                        (long) size * elementSize
-                );
-
-                // Zero out new header portion
-                for (int i = elementStart; i < newElementStart; i += 8) {
-                    Platform.putLong(getBuffer(), i, 0L);
-                }
-                this.headerInBytes += headerGrowth;
-            }
-
             elementCapacity = (getBuffer().length - Platform.BYTE_ARRAY_OFFSET - newElementStart) / elementSize;
         }
     }
@@ -253,10 +238,25 @@ public final class GrowableArrayWriter extends UnsafeWriter {
                 this.savedCursor = cursor();
             }
 
-            growIfNeeded(newSize, newHeaderInBytes - headerInBytes);
+            int headerGrowth = newHeaderInBytes - headerInBytes;
+            growIfNeeded(newSize, headerGrowth);
+
+            // Move existing data (no-op when size == 0 for initial allocation)
+            int elementStart = startingOffset + headerInBytes;
+            Platform.copyMemory(
+                    getBuffer(), elementStart,
+                    getBuffer(), elementStart + headerGrowth,
+                    (long) elementSize * size
+            );
+
+            // Zero out new header portion
+            for (int i = headerInBytes; i < newHeaderInBytes; i += 8) {
+                Platform.putLong(getBuffer(), startingOffset + i, 0L);
+            }
 
             // Update header state
             this.headerCapacity = newHeaderCapacity;
+            this.headerInBytes = newHeaderInBytes;
         }
 
         // Common: update size (cursor update deferred to complete())
