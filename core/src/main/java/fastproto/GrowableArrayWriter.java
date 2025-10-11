@@ -187,39 +187,51 @@ public final class GrowableArrayWriter extends UnsafeWriter {
         assert newSize >= this.size;
 
         int newHeaderCapacity = Math.max(64, ceilPow2(newSize));
-        int newHeaderInBytes = calculateHeaderPortionInBytes(newHeaderCapacity);
+        int oldFixedPartInBytes = ByteArrayMethods.roundNumberOfBytesToNearestWord(elementSize * size);
         int newFixedPartInBytes = ByteArrayMethods.roundNumberOfBytesToNearestWord(elementSize * newSize);
 
-        boolean isInitialAllocation = (headerCapacity == 0);
-        if (isInitialAllocation) {
-            this.startingOffset = cursor();
+        int additionalSpace;
+
+        if (newHeaderCapacity == headerCapacity) {
+            // Header capacity unchanged - only grow element space
+            additionalSpace = newFixedPartInBytes - oldFixedPartInBytes;
+            grow(additionalSpace);
+        } else {
+            // Header capacity changed - handle header growth and data movement
+            int newHeaderInBytes = calculateHeaderPortionInBytes(newHeaderCapacity);
+
+            boolean isInitialAllocation = (headerCapacity == 0);
+            if (isInitialAllocation) {
+                this.startingOffset = cursor();
+            }
+
+            int oldHeaderInBytes = headerInBytes;
+            additionalSpace = (newHeaderInBytes - oldHeaderInBytes) + (newFixedPartInBytes - oldFixedPartInBytes);
+
+            grow(additionalSpace);
+
+            // Move existing data if not initial allocation
+            if (!isInitialAllocation) {
+                Platform.copyMemory(
+                        getBuffer(), startingOffset + oldHeaderInBytes,
+                        getBuffer(), startingOffset + newHeaderInBytes,
+                        (long) size * elementSize
+                );
+            }
+
+            // Zero out new header portion
+            for (int i = oldHeaderInBytes; i < newHeaderInBytes; i += 8) {
+                Platform.putLong(getBuffer(), startingOffset + i, 0L);
+            }
+
+            // Update header state
+            this.headerCapacity = newHeaderCapacity;
+            this.headerInBytes = newHeaderInBytes;
         }
 
-        int oldHeaderInBytes = headerInBytes;
-        int oldFixedPartInBytes = ByteArrayMethods.roundNumberOfBytesToNearestWord(elementSize * size);
-        int additionalSpace = (newHeaderInBytes - oldHeaderInBytes) + (newFixedPartInBytes - oldFixedPartInBytes);
-
-        grow(additionalSpace);
-
-        // Move existing data if header size changed
-        if (!isInitialAllocation && newHeaderInBytes > oldHeaderInBytes) {
-            Platform.copyMemory(
-                    getBuffer(), startingOffset + oldHeaderInBytes,
-                    getBuffer(), startingOffset + newHeaderInBytes,
-                    (long) size * elementSize
-            );
-        }
-
-        // Zero out new header portion
-        for (int i = oldHeaderInBytes; i < newHeaderInBytes; i += 8) {
-            Platform.putLong(getBuffer(), startingOffset + i, 0L);
-        }
-
-        // Update cursor and state
+        // Common: update cursor and size
         increaseCursor(additionalSpace);
-        this.headerCapacity = newHeaderCapacity;
         this.size = newSize;
-        this.headerInBytes = newHeaderInBytes;
     }
 
     private void ensureSize(int ordinal) {
