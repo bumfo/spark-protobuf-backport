@@ -178,18 +178,19 @@ public final class GrowableArrayWriter extends UnsafeWriter {
     // ========== Private Helpers ==========
 
     /**
-     * Grow the array to accommodate at least minSize elements.
+     * Grow the array to accommodate at least newSize elements.
      * Handles initial allocation when headerCapacity == 0.
      * Header capacity grows exponentially (powers of 2) to minimize header resizes.
-     * Element space allocated exactly for minSize elements.
+     * Element space allocated exactly for newSize elements.
      * BufferHolder.grow() handles actual buffer allocation with its own 2x growth.
      *
-     * @param minSize the minimum size required (for header capacity calculation)
+     * @param newSize the minimum size required (for header capacity calculation)
      */
-    private void growToSize(int minSize) {
-        // Compute next power of 2 >= minSize, with minimum 64
-        int newHeaderCapacity = Math.max(64, ceilPow2(minSize));
-        int newSize = minSize;
+    private void growToSize(int newSize) {
+        // Compute next power of 2 >= newSize, with minimum 64
+        int newHeaderCapacity = Math.max(64, ceilPow2(newSize));
+
+        assert newSize >= this.size;
 
         // Calculate space requirements
         boolean isInitialAllocation = (headerCapacity == 0);
@@ -218,9 +219,9 @@ public final class GrowableArrayWriter extends UnsafeWriter {
             int newFixedStart = startingOffset + newHeaderInBytes;
             int existingDataBytes = size * elementSize;
             Platform.copyMemory(
-                getBuffer(), oldFixedStart,
-                getBuffer(), newFixedStart,
-                existingDataBytes
+                    getBuffer(), oldFixedStart,
+                    getBuffer(), newFixedStart,
+                    existingDataBytes
             );
         }
 
@@ -236,27 +237,23 @@ public final class GrowableArrayWriter extends UnsafeWriter {
 
         // Update state
         this.headerCapacity = newHeaderCapacity;
-        if (newSize > this.size) {
-            this.size = newSize;
-        }
+        this.size = newSize;
         this.headerInBytes = newHeaderInBytes;
     }
 
     private void ensureSize(int ordinal) {
-        if (ordinal >= size) {
-            // Fast path: single-element growth within header capacity
-            // Most common case for sequential writes
-            if (ordinal == size && ordinal < headerCapacity) {
-                int newBytes = elementSize * size + elementSize;
-                int additionalSpace = (elementSize + ((-newBytes) & 7)) & ~7;
+        // Fast path: single-element growth within header capacity
+        // Most common case for sequential writes
+        if (ordinal == size && ordinal < headerCapacity) {
+            int newBytes = elementSize * size + elementSize;
+            int additionalSpace = (elementSize + ((-newBytes) & 7)) & ~7;
 
-                grow(additionalSpace);
-                increaseCursor(additionalSpace);
-                this.size++;
-            } else {
-                // Slow path: multi-element jump or header growth needed
-                growToSize(ordinal + 1);
-            }
+            grow(additionalSpace);
+            increaseCursor(additionalSpace);
+            this.size++;
+        } else if (ordinal >= size) {
+            // Slow path: multi-element jump or header growth needed
+            growToSize(ordinal + 1);
         }
     }
 
@@ -393,8 +390,8 @@ public final class GrowableArrayWriter extends UnsafeWriter {
     @Override
     protected final void setOffsetAndSize(int ordinal, int currentCursor, int size) {
         throw new UnsupportedOperationException(
-            "GrowableArrayWriter does not support variable-length data. " +
-            "Only fixed-size primitive types and Decimal are supported.");
+                "GrowableArrayWriter does not support variable-length data. " +
+                        "Only fixed-size primitive types and Decimal are supported.");
     }
 
     // ========== Static Utilities ==========
