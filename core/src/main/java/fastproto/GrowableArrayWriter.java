@@ -238,20 +238,19 @@ public final class GrowableArrayWriter extends UnsafeWriter {
                 this.savedCursor = cursor();
             }
 
-            int headerGrowth = newHeaderInBytes - headerInBytes;
-            growIfNeeded(newSize, headerGrowth);
+            growIfNeeded(newSize, newHeaderInBytes - headerInBytes);
+            byte[] buffer = getBuffer();
 
             // Move existing data (no-op when size == 0 for initial allocation)
-            int elementStart = startingOffset + headerInBytes;
             Platform.copyMemory(
-                    getBuffer(), elementStart,
-                    getBuffer(), elementStart + headerGrowth,
-                    (long) elementSize * size
+                    buffer, startingOffset + headerInBytes,
+                    buffer, startingOffset + newHeaderInBytes,
+                    (long) size * elementSize
             );
 
             // Zero out new header portion
             for (int i = headerInBytes; i < newHeaderInBytes; i += 8) {
-                Platform.putLong(getBuffer(), startingOffset + i, 0L);
+                Platform.putLong(buffer, startingOffset + i, 0L);
             }
 
             // Update header state
