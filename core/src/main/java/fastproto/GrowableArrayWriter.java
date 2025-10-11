@@ -198,13 +198,37 @@ public final class GrowableArrayWriter extends UnsafeWriter {
      */
     private void growIfNeeded(int newSize, int headerGrowth) {
         if (newSize > elementCapacity) {
-            int targetCursor = startingOffset + headerInBytes + roundToWord(elementSize * size);
-            increaseCursor(targetCursor - cursor());
-            savedCursor = targetCursor;
-            grow(headerGrowth + wordAlignedSpace(elementSize * (newSize - size)));
-            int availableBytes = getBuffer().length - Platform.BYTE_ARRAY_OFFSET - startingOffset - headerInBytes - headerGrowth;
-            elementCapacity = availableBytes / elementSize;
+            int elementStart = startingOffset + headerInBytes;
+            int oldSpace = elementSize * size;
+            setCursor(elementStart + roundToWord(oldSpace));
+
+            int addedBytes = elementSize * (newSize - size);
+            int newSpace = oldSpace + addedBytes;
+            grow(headerGrowth + ((addedBytes + ((-newSpace) & 7)) & ~7));
+
+            int newElementStart = elementStart + headerGrowth;
+            if (headerGrowth > 0) {
+                // Move existing data (no-op when size == 0 for initial allocation)
+                Platform.copyMemory(
+                        getBuffer(), elementStart,
+                        getBuffer(), newElementStart,
+                        (long) size * elementSize
+                );
+
+                // Zero out new header portion
+                for (int i = elementStart; i < newElementStart; i += 8) {
+                    Platform.putLong(getBuffer(), i, 0L);
+                }
+                this.headerInBytes += headerGrowth;
+            }
+
+            elementCapacity = (getBuffer().length - Platform.BYTE_ARRAY_OFFSET - newElementStart) / elementSize;
         }
+    }
+
+    private void setCursor(int targetCursor) {
+        increaseCursor(targetCursor - cursor());
+        savedCursor = targetCursor;
     }
 
     /**
@@ -231,21 +255,8 @@ public final class GrowableArrayWriter extends UnsafeWriter {
 
             growIfNeeded(newSize, newHeaderInBytes - headerInBytes);
 
-            // Move existing data (no-op when size == 0 for initial allocation)
-            Platform.copyMemory(
-                    getBuffer(), startingOffset + headerInBytes,
-                    getBuffer(), startingOffset + newHeaderInBytes,
-                    (long) size * elementSize
-            );
-
-            // Zero out new header portion
-            for (int i = headerInBytes; i < newHeaderInBytes; i += 8) {
-                Platform.putLong(getBuffer(), startingOffset + i, 0L);
-            }
-
             // Update header state
             this.headerCapacity = newHeaderCapacity;
-            this.headerInBytes = newHeaderInBytes;
         }
 
         // Common: update size (cursor update deferred to complete())
@@ -263,11 +274,6 @@ public final class GrowableArrayWriter extends UnsafeWriter {
             // Slow path: multi-element jump or header growth needed
             growToSize(ordinal + 1);
         }
-    }
-
-    private int wordAlignedSpace(int addedBytes) {
-        int newBytes = elementSize * size + addedBytes;
-        return (addedBytes + ((-newBytes) & 7)) & ~7;
     }
 
     private long getElementOffset(int ordinal) {
