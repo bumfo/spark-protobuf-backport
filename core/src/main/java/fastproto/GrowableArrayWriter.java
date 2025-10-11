@@ -213,12 +213,15 @@ public final class GrowableArrayWriter extends UnsafeWriter {
     /**
      * Conditionally grow buffer if needed, updating cursor first to preserve data.
      * Checks if newSize exceeds current element capacity before calling grow().
+     * Computes word-aligned element growth internally.
      *
      * @param newSize the target size after growth
-     * @param neededSize the additional space needed
+     * @param headerGrowth additional header bytes needed (must be word-aligned)
      */
-    private void growIfNeeded(int newSize, int neededSize) {
+    private void growIfNeeded(int newSize, int headerGrowth) {
         if (newSize > elementCapacity) {
+            int elementGrowth = wordAlignedSpace(elementSize * (newSize - size));
+            int neededSize = headerGrowth + elementGrowth;
             int targetCursor = startingOffset + headerInBytes + roundToWord(elementSize * size);
             setCursor(targetCursor);
             grow(neededSize);
@@ -236,15 +239,9 @@ public final class GrowableArrayWriter extends UnsafeWriter {
         assert newSize >= this.size;
 
         int newHeaderCapacity = Math.max(64, ceilPow2(newSize));
-
-        int additionalSpace;
-
         if (newHeaderCapacity == headerCapacity) {
-            // Header capacity unchanged - only grow element space
-            additionalSpace = neededBytes(elementSize * (newSize - size));
-
-            // Update cursor to current data end before grow() to preserve existing data
-            growIfNeeded(newSize, additionalSpace);
+            // Header capacity unchanged - only element growth
+            growIfNeeded(newSize, 0);
         } else {
             // Header capacity changed - handle header growth and data movement
             int newHeaderInBytes = calculateHeaderPortionInBytes(newHeaderCapacity);
@@ -256,14 +253,15 @@ public final class GrowableArrayWriter extends UnsafeWriter {
             }
 
             int oldHeaderInBytes = headerInBytes;
-            additionalSpace = (newHeaderInBytes - oldHeaderInBytes) + neededBytes(elementSize * (newSize - size));
+            int headerGrowth = newHeaderInBytes - oldHeaderInBytes;
 
             if (isInitialAllocation) {
-                grow(additionalSpace);
+                int elementGrowth = wordAlignedSpace(elementSize * newSize);
+                grow(headerGrowth + elementGrowth);
                 updateElementCapacity();
             } else {
                 // Update cursor to current data end before grow() to preserve existing data
-                growIfNeeded(newSize, additionalSpace);
+                growIfNeeded(newSize, headerGrowth);
             }
 
             // Move existing data if not initial allocation
@@ -293,8 +291,8 @@ public final class GrowableArrayWriter extends UnsafeWriter {
         // Fast path: single-element growth within header capacity
         // Most common case for sequential writes
         if (ordinal == size && ordinal < headerCapacity) {
-            // Update cursor to current data end before grow() to preserve existing data
-            growIfNeeded(size + 1, neededBytes(elementSize));
+            // No header growth needed
+            growIfNeeded(size + 1, 0);
             this.size++;
         } else if (ordinal >= size) {
             // Slow path: multi-element jump or header growth needed
@@ -302,7 +300,7 @@ public final class GrowableArrayWriter extends UnsafeWriter {
         }
     }
 
-    private int neededBytes(int addedBytes) {
+    private int wordAlignedSpace(int addedBytes) {
         int newBytes = elementSize * size + addedBytes;
         return (addedBytes + ((-newBytes) & 7)) & ~7;
     }
