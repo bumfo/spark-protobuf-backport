@@ -200,11 +200,12 @@ public final class GrowableArrayWriter extends UnsafeWriter {
     /**
      * Conditionally grow buffer if needed, updating cursor first to preserve data.
      * Checks if buffer has sufficient capacity before calling grow().
+     * Computes target cursor from current array state (header + existing elements).
      *
-     * @param targetCursor the target cursor position
      * @param neededSize the additional space needed
      */
-    private void growIfNeeded(int targetCursor, int neededSize) {
+    private void growIfNeeded(int neededSize) {
+        int targetCursor = startingOffset + headerInBytes + roundToWord(elementSize * size);
         if (getBuffer().length < targetCursor + neededSize - Platform.BYTE_ARRAY_OFFSET) {
             setCursor(targetCursor);
             grow(neededSize);
@@ -221,21 +222,17 @@ public final class GrowableArrayWriter extends UnsafeWriter {
         assert newSize >= this.size;
 
         int newHeaderCapacity = Math.max(64, ceilPow2(newSize));
-        int oldFixedPartInBytes = roundToWord(elementSize * size);
         int newFixedPartInBytes = roundToWord(elementSize * newSize);
 
         int additionalSpace;
 
         if (newHeaderCapacity == headerCapacity) {
             // Header capacity unchanged - only grow element space
+            int oldFixedPartInBytes = roundToWord(elementSize * size);
             additionalSpace = newFixedPartInBytes - oldFixedPartInBytes;
 
             // Update cursor to current data end before grow() to preserve existing data
-            if (headerCapacity > 0) {
-                growIfNeeded(startingOffset + headerInBytes + oldFixedPartInBytes, additionalSpace);
-            } else {
-                grow(additionalSpace);
-            }
+            growIfNeeded(additionalSpace);
         } else {
             // Header capacity changed - handle header growth and data movement
             int newHeaderInBytes = calculateHeaderPortionInBytes(newHeaderCapacity);
@@ -247,13 +244,14 @@ public final class GrowableArrayWriter extends UnsafeWriter {
             }
 
             int oldHeaderInBytes = headerInBytes;
+            int oldFixedPartInBytes = roundToWord(elementSize * size);
             additionalSpace = (newHeaderInBytes - oldHeaderInBytes) + (newFixedPartInBytes - oldFixedPartInBytes);
 
             if (isInitialAllocation) {
                 grow(additionalSpace);
             } else {
                 // Update cursor to current data end before grow() to preserve existing data
-                growIfNeeded(startingOffset + headerInBytes + oldFixedPartInBytes, additionalSpace);
+                growIfNeeded(additionalSpace);
             }
 
             // Move existing data if not initial allocation
@@ -283,12 +281,11 @@ public final class GrowableArrayWriter extends UnsafeWriter {
         // Fast path: single-element growth within header capacity
         // Most common case for sequential writes
         if (ordinal == size && ordinal < headerCapacity) {
-            int oldFixedPartInBytes = roundToWord(elementSize * size);
             int newBytes = elementSize * size + elementSize;
             int additionalSpace = (elementSize + ((-newBytes) & 7)) & ~7;
 
             // Update cursor to current data end before grow() to preserve existing data
-            growIfNeeded(startingOffset + headerInBytes + oldFixedPartInBytes, additionalSpace);
+            growIfNeeded(additionalSpace);
             this.size++;
         } else if (ordinal >= size) {
             // Slow path: multi-element jump or header growth needed
