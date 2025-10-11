@@ -140,15 +140,13 @@ public final class GrowableArrayWriter extends UnsafeWriter {
             this.startingOffset = cursor();
             grow(8);
             increaseCursor(8);
-            this.headerInBytes = 8;
-            updateElementCapacity();
         } else {
             // Verify cursor hasn't been modified externally
             if (cursor() != savedCursor) {
                 throw new IllegalStateException("cursor() != savedCursor: cursor was modified externally");
             }
             // Apply final cursor adjustment: move cursor to end of all allocated data
-            setCursor(startingOffset + headerInBytes + roundToWord(elementSize * size));
+            increaseCursor(startingOffset + headerInBytes + roundToWord(elementSize * size) - cursor());
         }
 
         // Update the numElements field in the header with the actual size
@@ -191,17 +189,6 @@ public final class GrowableArrayWriter extends UnsafeWriter {
     // ========== Private Helpers ==========
 
     /**
-     * Update cursor position and save it for verification.
-     * Should be called instead of increaseCursor() when cursor needs to be moved.
-     *
-     * @param targetCursor the target cursor position
-     */
-    private void setCursor(int targetCursor) {
-        increaseCursor(targetCursor - cursor());
-        this.savedCursor = targetCursor;
-    }
-
-    /**
      * Update element capacity based on current buffer size.
      * Called after buffer grows to track how many elements fit.
      */
@@ -223,7 +210,8 @@ public final class GrowableArrayWriter extends UnsafeWriter {
             int elementGrowth = wordAlignedSpace(elementSize * (newSize - size));
             int neededSize = headerGrowth + elementGrowth;
             int targetCursor = startingOffset + headerInBytes + roundToWord(elementSize * size);
-            setCursor(targetCursor);
+            increaseCursor(targetCursor - cursor());
+            savedCursor = targetCursor;
             grow(neededSize);
             updateElementCapacity();
         }
