@@ -189,15 +189,6 @@ public final class GrowableArrayWriter extends UnsafeWriter {
     // ========== Private Helpers ==========
 
     /**
-     * Update element capacity based on current buffer size.
-     * Called after buffer grows to track how many elements fit.
-     */
-    private void updateElementCapacity() {
-        int availableBytes = getBuffer().length - Platform.BYTE_ARRAY_OFFSET - startingOffset - headerInBytes;
-        this.elementCapacity = availableBytes / elementSize;
-    }
-
-    /**
      * Conditionally grow buffer if needed, updating cursor first to preserve data.
      * Checks if newSize exceeds current element capacity before calling grow().
      * Computes word-aligned element growth internally.
@@ -207,13 +198,12 @@ public final class GrowableArrayWriter extends UnsafeWriter {
      */
     private void growIfNeeded(int newSize, int headerGrowth) {
         if (newSize > elementCapacity) {
-            int elementGrowth = wordAlignedSpace(elementSize * (newSize - size));
-            int neededSize = headerGrowth + elementGrowth;
             int targetCursor = startingOffset + headerInBytes + roundToWord(elementSize * size);
             increaseCursor(targetCursor - cursor());
             savedCursor = targetCursor;
-            grow(neededSize);
-            updateElementCapacity();
+            grow(headerGrowth + wordAlignedSpace(elementSize * (newSize - size)));
+            int availableBytes = getBuffer().length - Platform.BYTE_ARRAY_OFFSET - startingOffset - headerInBytes - headerGrowth;
+            elementCapacity = availableBytes / elementSize;
         }
     }
 
