@@ -72,7 +72,7 @@ public final class GrowableArrayWriter extends UnsafeWriter {
     private int size;
 
     // The element size in this array
-    private int elementSize;
+    private final int elementSize;
 
     private int headerInBytes;
 
@@ -81,6 +81,24 @@ public final class GrowableArrayWriter extends UnsafeWriter {
 
     private void assertIndexIsValid(int index) {
         assert index >= 0 : "index (" + index + ") should >= 0";
+    }
+
+    /**
+     * Compute the ceiling power of 2 for a given value.
+     * Uses bit manipulation for O(1) computation.
+     *
+     * @param x the input value
+     * @return the smallest power of 2 >= x
+     */
+    private static int ceilPow2(int x) {
+        x -= 1;
+        x |= x >> 1;
+        x |= x >> 2;
+        x |= x >> 4;
+        x |= x >> 8;
+        x |= x >> 16;
+        x += 1;
+        return x;
     }
 
     public GrowableArrayWriter(UnsafeWriter writer, int elementSize) {
@@ -106,19 +124,16 @@ public final class GrowableArrayWriter extends UnsafeWriter {
     /**
      * Grow the array to accommodate at least minSize elements.
      * Handles initial allocation when headerCapacity == 0.
-     * Header capacity grows exponentially (doubles) to minimize header resizes.
+     * Header capacity grows exponentially (powers of 2) to minimize header resizes.
      * Element space allocated exactly for minSize elements.
      * BufferHolder.grow() handles actual buffer allocation with its own 2x growth.
      *
      * @param minSize the minimum size required (for header capacity calculation)
      */
     private void growToSize(int minSize) {
-        // Double headerCapacity until it satisfies minSize
-        // Start with 64 for initial allocation (first boundary where header includes null bits)
-        int newHeaderCapacity = headerCapacity == 0 ? 64 : headerCapacity;
-        while (newHeaderCapacity < minSize) {
-            newHeaderCapacity = newHeaderCapacity << 1;  // Double
-        }
+        // Compute next power of 2 >= minSize, with minimum 64
+        // Using bit manipulation for O(1) computation
+        int newHeaderCapacity = Math.max(64, ceilPow2(minSize));
 
         // Allocate space for exactly minSize elements
         int newSize = minSize;
