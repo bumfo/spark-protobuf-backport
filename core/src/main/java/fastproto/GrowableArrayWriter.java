@@ -244,7 +244,19 @@ public final class GrowableArrayWriter extends UnsafeWriter {
 
     private void ensureSize(int ordinal) {
         if (ordinal >= size) {
-            growToSize(ordinal + 1);
+            // Fast path: single-element growth within header capacity
+            // Most common case for sequential writes
+            if (ordinal == size && ordinal < headerCapacity) {
+                int newBytes = elementSize * size + elementSize;
+                int additionalSpace = (elementSize + ((-newBytes) & 7)) & ~7;
+
+                grow(additionalSpace);
+                increaseCursor(additionalSpace);
+                this.size++;
+            } else {
+                // Slow path: multi-element jump or header growth needed
+                growToSize(ordinal + 1);
+            }
         }
     }
 
