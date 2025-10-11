@@ -8,55 +8,55 @@ import org.scalatest.flatspec.AnyFlatSpec
 import org.scalatest.matchers.should.Matchers
 
 /**
- * Test suite for GrowableArrayWriter to verify dynamic capacity expansion
+ * Test suite for GrowableArrayWriter to verify dynamic size expansion
  * and data preservation during growth.
  */
 class GrowableArrayWriterSpec extends AnyFlatSpec with Matchers {
 
-  "GrowableArrayWriter" should "accept capacity hint via sizeHint" in {
+  "GrowableArrayWriter" should "accept size hint via sizeHint" in {
     val rowWriter = new UnsafeRowWriter(1, 64)
     val writer = new GrowableArrayWriter(rowWriter, 8)
 
     writer.sizeHint(10)
-    writer.getCapacity shouldBe 64  // Header capacity rounds up to next power of 2 (min 64)
-    writer.getCount shouldBe 10  // Allocated space for 10 elements
+    writer.getHeaderCapacity shouldBe 64  // Header capacity rounds up to next power of 2 (min 64)
+    writer.getSize shouldBe 10  // Allocated space for 10 elements
   }
 
-  it should "track count as allocated space (grows to highest ordinal + 1)" in {
+  it should "track size as allocated space (grows to highest ordinal + 1)" in {
     val rowWriter = new UnsafeRowWriter(1, 256)
     val writer = new GrowableArrayWriter(rowWriter, 8)
 
-    // No sizeHint - count grows on demand
+    // No sizeHint - size grows on demand
     writer.write(0, 100L)
-    writer.getCount shouldBe 1  // Allocated 1 slot for ordinal 0
+    writer.getSize shouldBe 1  // Allocated 1 slot for ordinal 0
 
     writer.write(5, 200L)
-    writer.getCount shouldBe 6  // Grew to 6 slots for ordinal 5
+    writer.getSize shouldBe 6  // Grew to 6 slots for ordinal 5
 
     writer.write(3, 150L)
-    writer.getCount shouldBe 6  // Still 6, ordinal 3 within capacity
+    writer.getSize shouldBe 6  // Still 6, ordinal 3 within size
 
     writer.write(10, 250L)
-    writer.getCount shouldBe 11  // Grew to 11 slots for ordinal 10
+    writer.getSize shouldBe 11  // Grew to 11 slots for ordinal 10
   }
 
-  it should "auto-grow when writing beyond capacity" in {
+  it should "auto-grow when writing beyond size" in {
     val rowWriter = new UnsafeRowWriter(1, 512)
     val writer = new GrowableArrayWriter(rowWriter, 8)
 
     writer.sizeHint(5)  // Allocate 5 slots, header capacity=64
-    writer.getCapacity shouldBe 64
-    writer.getCount shouldBe 5
+    writer.getHeaderCapacity shouldBe 64
+    writer.getSize shouldBe 5
 
-    // Write within allocated capacity
+    // Write within allocated size
     writer.write(0, 10)
     writer.write(4, 50)
-    writer.getCount shouldBe 5  // Still 5, within capacity
+    writer.getSize shouldBe 5  // Still 5, within size
 
-    // Write beyond allocated capacity - should trigger growth
+    // Write beyond allocated size - should trigger growth
     writer.write(100, 100)
-    writer.getCapacity shouldBe 128  // Header capacity doubled to accommodate
-    writer.getCount shouldBe 101  // Allocated 101 slots for ordinal 100
+    writer.getHeaderCapacity shouldBe 128  // Header capacity doubled to accommodate
+    writer.getSize shouldBe 101  // Allocated 101 slots for ordinal 100
   }
 
   it should "preserve existing data when growing" in {
@@ -70,7 +70,7 @@ class GrowableArrayWriterSpec extends AnyFlatSpec with Matchers {
     writer.write(1, 200L)
     writer.write(2, 300L)
 
-    // Trigger growth by writing beyond capacity
+    // Trigger growth by writing beyond size
     writer.write(10, 999L)
 
     // Complete to finalize the array
@@ -93,18 +93,18 @@ class GrowableArrayWriterSpec extends AnyFlatSpec with Matchers {
     val writer = new GrowableArrayWriter(rowWriter, 4)  // 4-byte elements (int)
 
     writer.sizeHint(2)
-    writer.getCapacity shouldBe 64  // Min capacity
+    writer.getHeaderCapacity shouldBe 64  // Min header capacity
 
     // First growth - stays at 64
     writer.write(5, 50)
-    val capacity1 = writer.getCapacity
-    capacity1 shouldBe 64
+    val headerCapacity1 = writer.getHeaderCapacity
+    headerCapacity1 shouldBe 64
 
     // Second growth - doubles to 128
     writer.write(100, 150)
-    val capacity2 = writer.getCapacity
-    capacity2 shouldBe 128
-    capacity2 should be > capacity1
+    val headerCapacity2 = writer.getHeaderCapacity
+    headerCapacity2 shouldBe 128
+    headerCapacity2 should be > headerCapacity1
 
     // Verify all data preserved
     val count = writer.complete()
@@ -205,7 +205,7 @@ class GrowableArrayWriterSpec extends AnyFlatSpec with Matchers {
     val rowWriter = new UnsafeRowWriter(1, 256)
     val writer = new GrowableArrayWriter(rowWriter, 8)
 
-    // Don't call sizeHint - count starts at 0
+    // Don't call sizeHint - size starts at 0
 
     // UTF8String writes should throw UnsupportedOperationException
     val utf8 = UTF8String.fromString("test")
@@ -219,11 +219,11 @@ class GrowableArrayWriterSpec extends AnyFlatSpec with Matchers {
       writer.write(0, Array[Byte](1, 2, 3))
     }
 
-    // Count should still be 0 since no successful writes
-    writer.getCount shouldBe 0
+    // Size should still be 0 since no successful writes
+    writer.getSize shouldBe 0
   }
 
-  it should "handle Decimal values within capacity" in {
+  it should "handle Decimal values correctly" in {
     val rowWriter = new UnsafeRowWriter(1, 256)
     val writer = new GrowableArrayWriter(rowWriter, 8)
 
@@ -241,24 +241,24 @@ class GrowableArrayWriterSpec extends AnyFlatSpec with Matchers {
     result.toJavaBigDecimal shouldBe smallDecimal.toJavaBigDecimal
   }
 
-  it should "use exponential growth strategy (double capacity)" in {
+  it should "use exponential growth strategy (double header capacity)" in {
     val rowWriter = new UnsafeRowWriter(1, 256)
     val writer = new GrowableArrayWriter(rowWriter, 8)
 
     writer.sizeHint(4)
-    writer.getCapacity shouldBe 64  // Min capacity
+    writer.getHeaderCapacity shouldBe 64  // Min header capacity
 
-    // Write within capacity - no growth
+    // Write within size - no header growth
     writer.write(5, 100L)
-    writer.getCapacity shouldBe 64
+    writer.getHeaderCapacity shouldBe 64
 
-    // Write within capacity - no growth
+    // Write within size - no header growth
     writer.write(15, 200L)
-    writer.getCapacity shouldBe 64
+    writer.getHeaderCapacity shouldBe 64
 
-    // Write beyond capacity - doubles to 128
+    // Write beyond header capacity - doubles to 128
     writer.write(100, 300L)
-    writer.getCapacity shouldBe 128
+    writer.getHeaderCapacity shouldBe 128
   }
 
   it should "handle large jumps in ordinal efficiently" in {
@@ -266,15 +266,15 @@ class GrowableArrayWriterSpec extends AnyFlatSpec with Matchers {
     val writer = new GrowableArrayWriter(rowWriter, 8)
 
     writer.sizeHint(4)
-    writer.getCapacity shouldBe 64  // Min capacity
+    writer.getHeaderCapacity shouldBe 64  // Min header capacity
 
-    // Jump to ordinal 20 - within capacity
+    // Jump to ordinal 20 - within header capacity
     writer.write(20, 100L)
-    writer.getCapacity shouldBe 64  // No growth needed
+    writer.getHeaderCapacity shouldBe 64  // No header growth needed
 
-    // Jump to ordinal 200 - exceeds capacity, doubles to 256
+    // Jump to ordinal 200 - exceeds header capacity, doubles to 256
     writer.write(200, 200L)
-    writer.getCapacity shouldBe 256
+    writer.getHeaderCapacity shouldBe 256
   }
 
   it should "allocate on sizeHint" in {
@@ -299,9 +299,9 @@ class GrowableArrayWriterSpec extends AnyFlatSpec with Matchers {
     // Cursor should not have moved significantly (no reallocation)
     cursorAfterWrite shouldBe cursorAfterHint
 
-    // Verify capacity is correct (rounds up to 64)
-    writer.getCapacity shouldBe 64
-    writer.getCount shouldBe 10
+    // Verify header capacity is correct (rounds up to 64)
+    writer.getHeaderCapacity shouldBe 64
+    writer.getSize shouldBe 10
   }
 
   it should "handle empty arrays without wasting space" in {
@@ -311,7 +311,7 @@ class GrowableArrayWriterSpec extends AnyFlatSpec with Matchers {
     // Don't call sizeHint or write anything
     val cursorBefore = rowWriter.cursor()
 
-    // Complete without any writes - allocates minimal capacity (0)
+    // Complete without any writes - allocates minimal header (0)
     val count = writer.complete()
     count shouldBe 0
 
@@ -319,8 +319,8 @@ class GrowableArrayWriterSpec extends AnyFlatSpec with Matchers {
     val cursorAfter = rowWriter.cursor()
     cursorAfter should be > cursorBefore
 
-    // Verify it's a valid empty array with minimal capacity
-    writer.getCapacity shouldBe 0
+    // Verify it's a valid empty array with minimal header capacity
+    writer.getHeaderCapacity shouldBe 0
 
     val arrayData = new UnsafeArrayData()
     arrayData.pointTo(rowWriter.getBuffer, writer.getStartingOffset, rowWriter.totalSize())
@@ -336,8 +336,8 @@ class GrowableArrayWriterSpec extends AnyFlatSpec with Matchers {
     writer.write(0, 100L)
     writer.write(5, 500L)
 
-    // After growth, capacity should be 64 (min capacity)
-    writer.getCapacity shouldBe 64
+    // After growth, header capacity should be 64 (min header capacity)
+    writer.getHeaderCapacity shouldBe 64
 
     val count = writer.complete()
     count shouldBe 6
@@ -353,19 +353,19 @@ class GrowableArrayWriterSpec extends AnyFlatSpec with Matchers {
     val rowWriter = new UnsafeRowWriter(1, 512)
     val writer = new GrowableArrayWriter(rowWriter, 8)
 
-    // Multiple hints - rounds to min capacity (64)
+    // Multiple hints - header capacity rounds to min (64)
     writer.sizeHint(5)
     writer.sizeHint(3)   // Smaller hint is ignored (already at 64)
     writer.sizeHint(10)  // Still rounds to 64
-    writer.getCapacity shouldBe 64
+    writer.getHeaderCapacity shouldBe 64
 
     // Write to trigger allocation
     writer.write(0, 100L)
     writer.write(5, 500L)
 
-    // Can still call sizeHint after allocation - grows if needed (rounds to 128)
+    // Can still call sizeHint after allocation - grows if needed (header capacity rounds to 128)
     writer.sizeHint(100)
-    writer.getCapacity shouldBe 128
+    writer.getHeaderCapacity shouldBe 128
 
     // Data should be preserved
     writer.write(100, 1500L)
@@ -383,20 +383,20 @@ class GrowableArrayWriterSpec extends AnyFlatSpec with Matchers {
     val rowWriter = new UnsafeRowWriter(1, 32768)  // Need large buffer for large array
     val writer = new GrowableArrayWriter(rowWriter, 8)
 
-    // Build up to large capacity
+    // Build up to large header capacity
     writer.sizeHint(800)
     writer.write(0, 1L)  // Trigger allocation
-    writer.getCapacity shouldBe 1024  // Rounds up to next power of 2
+    writer.getHeaderCapacity shouldBe 1024  // Rounds up to next power of 2
 
-    // Write within capacity - no growth
+    // Write within header capacity - no header growth
     writer.write(500, 500L)
-    writer.getCapacity shouldBe 1024
+    writer.getHeaderCapacity shouldBe 1024
 
-    // Write beyond capacity - doubles to 2048
+    // Write beyond header capacity - doubles to 2048
     writer.write(1500, 1500L)
-    writer.getCapacity shouldBe 2048
+    writer.getHeaderCapacity shouldBe 2048
 
-    // Verify growth strategy used
+    // Verify exponential growth strategy
     val count = writer.complete()
     count shouldBe 1501
   }
