@@ -87,16 +87,25 @@ object InlineParserGenerator {
     |    ${if (repeatedVarLength.nonEmpty) s"BufferList[] bufferLists = new BufferList[${repeatedVarLength.size}];" else ""}
     |
     |    // Parse loop with switch for JIT optimization
-    |    while (!input.isAtEnd()) {
-    |      int tag = input.readTag();
-    |
-    |      switch (tag) {
-    |        ${generateSwitchCases(fields, fieldMapping, repeatedVarLength)}
-    |        default:
-    |          input.skipField(tag);
-    |          break;
-    |      }
-    |    }
+    |    ${if (fieldMapping.isEmpty) {
+          // Empty schema: skip all fields without switch
+          "while (!input.isAtEnd()) {\n" +
+          "      int tag = input.readTag();\n" +
+          "      input.skipField(tag);\n" +
+          "    }"
+        } else {
+          // Normal parsing with switch
+          s"while (!input.isAtEnd()) {\n" +
+          "      int tag = input.readTag();\n" +
+          "\n" +
+          "      switch (tag) {\n" +
+          s"        ${generateSwitchCases(fields, fieldMapping, repeatedVarLength)}\n" +
+          "        default:\n" +
+          "          input.skipField(tag);\n" +
+          "          break;\n" +
+          "      }\n" +
+          "    }"
+        }}
     |
     |    // Complete any pending primitive array
     |    arrayCtx.completeIfActive(w);
@@ -138,13 +147,20 @@ object InlineParserGenerator {
     |
     |  writer.resetRowWriter();
     |
-    |  while (!input.isAtEnd()) {
-    |    int tag = input.readTag();
-    |    switch (tag) {
-    |      ${generateSwitchCases(fields, fieldMapping, repeatedVarLength)}
-    |      default: input.skipField(tag); break;
-    |    }
-    |  }
+    |  ${if (fieldMapping.isEmpty) {
+        "while (!input.isAtEnd()) {\n" +
+        "    int tag = input.readTag();\n" +
+        "    input.skipField(tag);\n" +
+        "  }"
+      } else {
+        s"while (!input.isAtEnd()) {\n" +
+        "    int tag = input.readTag();\n" +
+        "    switch (tag) {\n" +
+        s"      ${generateSwitchCases(fields, fieldMapping, repeatedVarLength)}\n" +
+        "      default: input.skipField(tag); break;\n" +
+        "    }\n" +
+        "  }"
+      }}
     |
     |  arrayCtx.completeIfActive(writer);
     |  ${generateFlushCode(repeatedVarLength, fieldMapping, nestedParsers)}

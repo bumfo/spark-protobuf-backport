@@ -406,6 +406,23 @@ public final class ProtoRuntime {
     in.popLimit(limit);
   }
 
+  public static void collectEnum(CodedInputStream in, ArrayContext ctx,
+                                  NullDefaultRowWriter parent, int ordinal) throws IOException {
+    PrimitiveArrayWriter w = ctx.getOrCreate(parent, ordinal, 4);
+    w.writeInt(in.readEnum());
+  }
+
+  public static void collectPackedEnum(CodedInputStream in, ArrayContext ctx,
+                                        NullDefaultRowWriter parent, int ordinal) throws IOException {
+    PrimitiveArrayWriter w = ctx.getOrCreate(parent, ordinal, 4);
+    int length = in.readRawVarint32();
+    int limit = in.pushLimit(length);
+    while (!in.isAtEnd()) {
+      w.writeInt(in.readEnum());
+    }
+    in.popLimit(limit);
+  }
+
   // Repeated string/bytes - must complete any active array first
   public static void collectString(CodedInputStream in, BufferList[] lists,
                                     int listIndex, ArrayContext arrayCtx,
