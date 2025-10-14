@@ -259,17 +259,19 @@ object InlineParserGenerator {
 
     if (repeatedVarLength.isEmpty) return ""
 
-    repeatedVarLength.zipWithIndex.map { case (field, idx) =>
-      val ordinal = fieldMapping(field.getNumber)
-      field.getType match {
-        case FieldDescriptor.Type.STRING =>
-          s"ProtoRuntime.flushStringArray(bufferLists[$idx], $ordinal, w);"
-        case FieldDescriptor.Type.BYTES =>
-          s"ProtoRuntime.flushBytesArray(bufferLists[$idx], $ordinal, w);"
-        case FieldDescriptor.Type.MESSAGE =>
-          val parser = nestedParsers(field.getNumber)
-          s"ProtoRuntime.flushMessageArray(bufferLists[$idx], $ordinal, $parser, w);"
-        case _ => ""
+    repeatedVarLength.zipWithIndex.flatMap { case (field, idx) =>
+      // Only generate flush code for fields that are in the schema
+      fieldMapping.get(field.getNumber).map { ordinal =>
+        field.getType match {
+          case FieldDescriptor.Type.STRING =>
+            s"ProtoRuntime.flushStringArray(bufferLists[$idx], $ordinal, w);"
+          case FieldDescriptor.Type.BYTES =>
+            s"ProtoRuntime.flushBytesArray(bufferLists[$idx], $ordinal, w);"
+          case FieldDescriptor.Type.MESSAGE =>
+            val parser = nestedParsers(field.getNumber)
+            s"ProtoRuntime.flushMessageArray(bufferLists[$idx], $ordinal, $parser, w);"
+          case _ => ""
+        }
       }
     }.mkString("\n    ")
   }
