@@ -215,22 +215,22 @@ object InlineParserGenerator {
   private def generateRepeatedCases(
       field: FieldDescriptor,
       ordinal: Int,
-      bufferListIndex: Option[Int]): String = {
+      bufferListIndex: Option[Int]): List[String] = {
 
     val unpackedTag = makeTag(field.getNumber, getWireType(field))
 
     field.getType match {
       case FieldDescriptor.Type.STRING =>
         val idx = bufferListIndex.get
-        s"case $unpackedTag: ProtoRuntime.collectString(input, bufferLists, $idx, arrayCtx, w); break; // ${field.getName}[]"
+        List(s"case $unpackedTag: ProtoRuntime.collectString(input, bufferLists, $idx, arrayCtx, w); break; // ${field.getName}[]")
 
       case FieldDescriptor.Type.BYTES =>
         val idx = bufferListIndex.get
-        s"case $unpackedTag: ProtoRuntime.collectBytes(input, bufferLists, $idx, arrayCtx, w); break; // ${field.getName}[]"
+        List(s"case $unpackedTag: ProtoRuntime.collectBytes(input, bufferLists, $idx, arrayCtx, w); break; // ${field.getName}[]")
 
       case FieldDescriptor.Type.MESSAGE =>
         val idx = bufferListIndex.get
-        s"case $unpackedTag: ProtoRuntime.collectMessage(input, bufferLists, $idx, arrayCtx, w); break; // ${field.getName}[]"
+        List(s"case $unpackedTag: ProtoRuntime.collectMessage(input, bufferLists, $idx, arrayCtx, w); break; // ${field.getName}[]")
 
       case FieldDescriptor.Type.GROUP =>
         throw new UnsupportedOperationException("GROUP type is deprecated and not supported")
@@ -241,12 +241,14 @@ object InlineParserGenerator {
         val unpackedMethod = s"ProtoRuntime.collect$typeName(input, arrayCtx, w, $ordinal);"
         val packedMethod = s"ProtoRuntime.collectPacked$typeName(input, arrayCtx, w, $ordinal);"
 
-        s"""case $unpackedTag: $unpackedMethod break; // ${field.getName}[]
-           |        case $packedTag: $packedMethod break; // ${field.getName}[] packed""".stripMargin
+        List(
+          s"case $unpackedTag: $unpackedMethod break; // ${field.getName}[]",
+          s"case $packedTag: $packedMethod break; // ${field.getName}[] packed"
+        )
 
       case primitiveType =>
         val typeName = primitiveType.toString.split("_").map(_.toLowerCase.capitalize).mkString
-        s"case $unpackedTag: ProtoRuntime.collect$typeName(input, arrayCtx, w, $ordinal); break; // ${field.getName}[]"
+        List(s"case $unpackedTag: ProtoRuntime.collect$typeName(input, arrayCtx, w, $ordinal); break; // ${field.getName}[]")
     }
   }
 
