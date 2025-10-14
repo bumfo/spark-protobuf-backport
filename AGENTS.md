@@ -21,7 +21,7 @@ sbt allTestTiers        # All tiers sequentially
 
 # Run JMH benchmarks
 sbt jmh                 # Full JMH benchmark suite
-sbt jmhQuick            # Quick benchmark (fewer iterations)
+sbt -Djmh.mode=quick jmh # Quick benchmark (fewer iterations)
 
 # Build shaded JAR with all dependencies
 sbt assembly
