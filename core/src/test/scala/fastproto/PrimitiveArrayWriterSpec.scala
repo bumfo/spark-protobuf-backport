@@ -258,4 +258,31 @@ class PrimitiveArrayWriterSpec extends AnyFlatSpec with Matchers {
 
     writer.complete() shouldBe 5
   }
+
+  it should "handle 1000+ elements with small initial buffer" in {
+    // Start with small buffer (256 bytes) to force multiple buffer growth operations
+    val rowWriter = new UnsafeRowWriter(1, 256)
+    val writer = new PrimitiveArrayWriter(rowWriter, 8, 0)
+
+    // Write 1000 long values
+    for (i <- 0 until 1000) {
+      writer.writeLong(i * 100L)
+    }
+
+    val offset = writer.getStartingOffset
+    val count = writer.complete()
+    count shouldBe 1000
+
+    // Verify output is valid UnsafeArrayData
+    val size = rowWriter.cursor() - offset
+    val arrayData = new UnsafeArrayData
+    arrayData.pointTo(rowWriter.getBuffer, offset, size)
+    arrayData.numElements() shouldBe 1000
+
+    // Spot check some values
+    arrayData.getLong(0) shouldBe 0L
+    arrayData.getLong(100) shouldBe 10000L
+    arrayData.getLong(500) shouldBe 50000L
+    arrayData.getLong(999) shouldBe 99900L
+  }
 }

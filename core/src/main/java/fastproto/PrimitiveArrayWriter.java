@@ -45,8 +45,8 @@ public final class PrimitiveArrayWriter extends UnsafeWriter {
     private int count = 0;
     private int capacity;
 
-    // Simple layout: [8-byte count][data...]
-    private final int dataOffset;      // Always startingOffset + 8
+    // Simple layout: [8-byte count][8-byte bitmap for ≤64 elements][data...]
+    private final int dataOffset;      // Always startingOffset + 16
     private int writePosition;         // Current write position
     private int elementCapacity;       // Max elements in current buffer
 
@@ -64,8 +64,9 @@ public final class PrimitiveArrayWriter extends UnsafeWriter {
         // Pre-allocate for at least 64 elements (avoids movement for small arrays)
         this.capacity = initialCapacity > 0 ? Math.max(64, initialCapacity) : 64;
 
-        // Simple layout during writes: skip null bitmap
-        this.dataOffset = startingOffset + 8;  // Just after count field
+        // Pre-allocate header space for 64 elements: 8 bytes count + 8 bytes bitmap
+        // This ensures zero data movement for arrays ≤64 elements
+        this.dataOffset = startingOffset + 16;
         this.writePosition = dataOffset;
 
         // Calculate current buffer capacity
@@ -235,7 +236,7 @@ public final class PrimitiveArrayWriter extends UnsafeWriter {
     }
 
     /**
-     * Complete the array, inserting null bitmap if needed.
+     * Complete the array, writing header and moving data if needed.
      * @return the number of elements written
      */
     public int complete() {
@@ -243,23 +244,20 @@ public final class PrimitiveArrayWriter extends UnsafeWriter {
 
         // Calculate final header size based on actual count
         int headerBytes = calculateHeaderPortionInBytes(count);
-        int nullBitmapBytes = headerBytes - 8;
 
-        if (nullBitmapBytes > 0) {
-            // Need to insert null bitmap between count and data
+        if (headerBytes > 16) {
+            // Arrays >64 elements need larger header - move data forward
             int dataSize = count * elementSize;
-
-            // Move data forward to make room for null bitmap
             Platform.copyMemory(
-                buffer, dataOffset,           // from: current data location
+                buffer, dataOffset,                    // from: current data at offset+16
                 buffer, startingOffset + headerBytes,  // to: after full header
                 dataSize
             );
+        }
 
-            // Zero out the null bitmap (no nulls)
-            for (int i = 0; i < nullBitmapBytes; i += 8) {
-                Platform.putLong(buffer, startingOffset + 8 + i, 0L);
-            }
+        // Zero out the entire null bitmap (pre-allocated 8 bytes covers ≤64 elements)
+        for (int i = 8; i < headerBytes; i += 8) {
+            Platform.putLong(buffer, startingOffset + i, 0L);
         }
 
         // Write element count
