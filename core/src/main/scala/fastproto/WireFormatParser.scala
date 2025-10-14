@@ -30,6 +30,7 @@ class WireFormatParser(
   extends StreamWireParser(schema) {
 
   import WireFormatParser._
+  import Constants._
 
   // Build field mappings using primitive arrays for better cache locality
   private val maxFieldNumber = if (descriptor.getFields.isEmpty) 0 else {
@@ -285,7 +286,7 @@ class WireFormatParser(
 
     val currentState = state.getFieldState(fieldNumber)
 
-    if (currentState == 3) { // STATE_FALLBACK
+    if (USE_FALLBACK_MODE || currentState == 3) { // STATE_FALLBACK
       // Use FastList
       val list = state.getOrCreateAccumulator(fieldNumber, fieldType).asInstanceOf[IntList]
       list.add(value)
@@ -336,7 +337,7 @@ class WireFormatParser(
 
     val currentState = state.getFieldState(fieldNumber)
 
-    if (currentState == 3) { // STATE_FALLBACK
+    if (USE_FALLBACK_MODE || currentState == 3) { // STATE_FALLBACK
       val list = state.getOrCreateAccumulator(fieldNumber, fieldType).asInstanceOf[LongList]
       list.add(value)
 
@@ -381,7 +382,7 @@ class WireFormatParser(
 
     val currentState = state.getFieldState(fieldNumber)
 
-    if (currentState == 3) { // STATE_FALLBACK
+    if (USE_FALLBACK_MODE || currentState == 3) { // STATE_FALLBACK
       val list = state.getOrCreateAccumulator(fieldNumber, fieldType).asInstanceOf[FloatList]
       list.add(value)
 
@@ -426,7 +427,7 @@ class WireFormatParser(
 
     val currentState = state.getFieldState(fieldNumber)
 
-    if (currentState == 3) { // STATE_FALLBACK
+    if (USE_FALLBACK_MODE || currentState == 3) { // STATE_FALLBACK
       val list = state.getOrCreateAccumulator(fieldNumber, fieldType).asInstanceOf[DoubleList]
       list.add(value)
 
@@ -471,7 +472,7 @@ class WireFormatParser(
 
     val currentState = state.getFieldState(fieldNumber)
 
-    if (currentState == 3) { // STATE_FALLBACK
+    if (USE_FALLBACK_MODE || currentState == 3) { // STATE_FALLBACK
       val list = state.getOrCreateAccumulator(fieldNumber, fieldType).asInstanceOf[BooleanList]
       list.add(value)
 
@@ -517,7 +518,7 @@ class WireFormatParser(
 
     val currentState = state.getFieldState(fieldNumber)
 
-    if (currentState == 3) { // STATE_FALLBACK
+    if (USE_FALLBACK_MODE || currentState == 3) { // STATE_FALLBACK
       // Use existing FastList method
       val list = state.getOrCreateAccumulator(fieldNumber, fieldType).asInstanceOf[IntList]
       if (fieldType == FieldDescriptor.Type.SINT32) {
@@ -567,7 +568,7 @@ class WireFormatParser(
 
     val currentState = state.getFieldState(fieldNumber)
 
-    if (currentState == 3) { // STATE_FALLBACK
+    if (USE_FALLBACK_MODE || currentState == 3) { // STATE_FALLBACK
       val list = state.getOrCreateAccumulator(fieldNumber, fieldType).asInstanceOf[LongList]
       if (fieldType == FieldDescriptor.Type.SINT64) {
         parsePackedSInt64s(input, list)
@@ -614,7 +615,7 @@ class WireFormatParser(
 
     val currentState = state.getFieldState(fieldNumber)
 
-    if (currentState == 3) { // STATE_FALLBACK
+    if (USE_FALLBACK_MODE || currentState == 3) { // STATE_FALLBACK
       val list = state.getOrCreateAccumulator(fieldNumber, fieldType).asInstanceOf[FloatList]
       val packedLength = input.readRawVarint32()
       list.array = parsePackedFloats(input, list.array, list.count, packedLength)
@@ -653,7 +654,7 @@ class WireFormatParser(
 
     val currentState = state.getFieldState(fieldNumber)
 
-    if (currentState == 3) { // STATE_FALLBACK
+    if (USE_FALLBACK_MODE || currentState == 3) { // STATE_FALLBACK
       val list = state.getOrCreateAccumulator(fieldNumber, fieldType).asInstanceOf[DoubleList]
       val packedLength = input.readRawVarint32()
       list.array = parsePackedDoubles(input, list.array, list.count, packedLength)
@@ -692,7 +693,7 @@ class WireFormatParser(
 
     val currentState = state.getFieldState(fieldNumber)
 
-    if (currentState == 3) { // STATE_FALLBACK
+    if (USE_FALLBACK_MODE || currentState == 3) { // STATE_FALLBACK
       val list = state.getOrCreateAccumulator(fieldNumber, fieldType).asInstanceOf[BooleanList]
       val packedLength = input.readRawVarint32()
       list.array = parsePackedBooleans(input, list.array, list.count, packedLength)
@@ -735,7 +736,7 @@ class WireFormatParser(
 
     // Complete active PrimitiveArrayWriter if this is a variable-length field
     // Variable-length writes grow the buffer and invalidate PrimitiveArrayWriter's writePosition
-    if (state.getActiveWriterField != -1 && isVariableLengthType(fieldType)) {
+    if (!USE_FALLBACK_MODE && state.getActiveWriterField != -1 && isVariableLengthType(fieldType)) {
       completePrimitiveArrayWriter(state.getActiveWriterField, state, writer)
     }
 
@@ -897,7 +898,7 @@ class WireFormatParser(
     import FieldDescriptor.Type._
 
     // Complete any active PrimitiveArrayWriter first
-    if (state.getActiveWriterField != -1) {
+    if (!USE_FALLBACK_MODE && state.getActiveWriterField != -1) {
       completePrimitiveArrayWriter(state.getActiveWriterField, state, writer)
     }
 
@@ -912,7 +913,7 @@ class WireFormatParser(
 
           // PrimitiveArrayWriter fields are already written in completePrimitiveArrayWriter
           // Just clear the reference for completed writers
-          if (fieldState == 2 && accumulator.isInstanceOf[PrimitiveArrayWriter]) { // STATE_COMPLETED
+          if (!USE_FALLBACK_MODE && fieldState == 2 && accumulator.isInstanceOf[PrimitiveArrayWriter]) { // STATE_COMPLETED
             state.setWriter(fieldNumber, null)
           } else {
             // FastList fallback path
@@ -1013,12 +1014,7 @@ class WireFormatParser(
 }
 
 object WireFormatParser {
-
-  /**
-   * When true, always use FastList fallback mode instead of PrimitiveArrayWriter optimization.
-   * Set to true to disable PrimitiveArrayWriter and simplify debugging/testing.
-   */
-  private val USE_FALLBACK_MODE = true
+  import Constants._
 
   /**
    * Parse state that holds all accumulators for a single parse operation.
