@@ -294,7 +294,11 @@ public final class PrimitiveArrayWriter extends UnsafeWriter {
         return startingOffset;
     }
 
-    int getDataOffset() {
+    /**
+     * Get the data offset (where actual element data starts, after header).
+     * Needed for fallback conversion to extract accumulated values.
+     */
+    public int getDataOffset() {
         return dataOffset;
     }
 
