@@ -2,6 +2,7 @@ package fastproto
 
 import org.apache.spark.sql.catalyst.expressions.UnsafeArrayData
 import org.apache.spark.sql.catalyst.expressions.codegen.UnsafeRowWriter
+import org.apache.spark.unsafe.Platform
 import org.scalatest.flatspec.AnyFlatSpec
 import org.scalatest.matchers.should.Matchers
 
@@ -332,12 +333,17 @@ class PrimitiveArrayWriterSpec extends AnyFlatSpec with Matchers {
     // writing 65 longs will fill the buffer, and complete()'s header expansion will
     // trigger reallocation.
 
+    val initialBufSize = 16 + 65 * 8
     // Buffer layout for 64 longs:
     // - 16 bytes header (8 count + 8 bitmap)
     // - 512 bytes data (64 * 8)
     // - Total: 528 bytes minimum
     // Use 600 bytes to have some space but still force reallocation at complete()
-    val rowWriter = new UnsafeRowWriter(1, 600)
+    val rowWriter = new UnsafeRowWriter(0, initialBufSize)
+    rowWriter.reset()
+    rowWriter.cursor() shouldBe Platform.BYTE_ARRAY_OFFSET
+    rowWriter.getBuffer.length shouldBe initialBufSize
+
     val writer = new PrimitiveArrayWriter(rowWriter, 8, 0)
 
     // Write 65 elements to cross 64-element boundary
@@ -345,9 +351,18 @@ class PrimitiveArrayWriterSpec extends AnyFlatSpec with Matchers {
       writer.writeLong(i.toLong)
     }
 
+    writer.getDataOffset shouldBe writer.getStartingOffset + 16
+    writer.getBuffer.length shouldBe initialBufSize
+
     val offset = writer.getStartingOffset
     val count = writer.complete()
+
     count shouldBe 65
+
+    writer.getDataOffset shouldBe writer.getStartingOffset + 24
+    (writer.getBuffer.length - (writer.getDataOffset - Platform.BYTE_ARRAY_OFFSET)) / 8 >= 65 shouldBe true
+
+    writer.getBuffer.length > initialBufSize shouldBe true
 
     // Verify data integrity after reallocation
     val size = rowWriter.cursor() - offset

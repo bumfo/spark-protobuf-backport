@@ -294,6 +294,10 @@ public final class PrimitiveArrayWriter extends UnsafeWriter {
         return startingOffset;
     }
 
+    int getDataOffset() {
+        return dataOffset;
+    }
+
     // ===== Utility Methods =====
 
     private static int roundToWord(int bytes) {
