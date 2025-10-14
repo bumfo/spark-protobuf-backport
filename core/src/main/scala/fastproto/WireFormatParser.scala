@@ -171,29 +171,48 @@ class WireFormatParser(
     val fieldType = fieldTypes(fieldNumber)
 
     // Packed repeated fields - wire type is always LENGTH_DELIMITED
-    // Delegate to type-specific helpers that implement state machine
     fieldType match {
-      // Variable-length int32 types - use state machine helpers
-      case INT32 | UINT32 | ENUM | SINT32 =>
-        parsePackedPrimitiveInt32(input, fieldNumber, fieldType, writer, state)
+      case INT32 | UINT32 | ENUM =>
+        if (USE_FALLBACK_MODE) {
+          val list = state.getOrCreateAccumulator(fieldNumber, fieldType).asInstanceOf[IntList]
+          parsePackedVarint32s(input, list)
+        } else {
+          parsePackedPrimitiveInt32(input, fieldNumber, fieldType, writer, state)
+        }
 
-      // Variable-length int64 types - use state machine helpers
-      case INT64 | UINT64 | SINT64 =>
-        parsePackedPrimitiveInt64(input, fieldNumber, fieldType, writer, state)
+      case SINT32 =>
+        if (USE_FALLBACK_MODE) {
+          val list = state.getOrCreateAccumulator(fieldNumber, fieldType).asInstanceOf[IntList]
+          parsePackedSInt32s(input, list)
+        } else {
+          parsePackedPrimitiveInt32(input, fieldNumber, fieldType, writer, state)
+        }
 
-      // Float/Double - use state machine helpers
+      case INT64 | UINT64 =>
+        if (USE_FALLBACK_MODE) {
+          val list = state.getOrCreateAccumulator(fieldNumber, fieldType).asInstanceOf[LongList]
+          parsePackedVarint64s(input, list)
+        } else {
+          parsePackedPrimitiveInt64(input, fieldNumber, fieldType, writer, state)
+        }
+
+      case SINT64 =>
+        if (USE_FALLBACK_MODE) {
+          val list = state.getOrCreateAccumulator(fieldNumber, fieldType).asInstanceOf[LongList]
+          parsePackedSInt64s(input, list)
+        } else {
+          parsePackedPrimitiveInt64(input, fieldNumber, fieldType, writer, state)
+        }
+
       case FLOAT =>
         parsePackedPrimitiveFloat(input, fieldNumber, fieldType, writer, state)
 
       case DOUBLE =>
         parsePackedPrimitiveDouble(input, fieldNumber, fieldType, writer, state)
 
-      // Boolean - use state machine helper
       case BOOL =>
         parsePackedPrimitiveBool(input, fieldNumber, fieldType, writer, state)
 
-      // Fixed-size types - keep existing FastList implementation for now
-      // TODO: Can be optimized with Platform.copyMemory for bulk copy
       case FIXED32 | SFIXED32 =>
         val list = state.getOrCreateAccumulator(fieldNumber, fieldType).asInstanceOf[IntList]
         val packedLength = input.readRawVarint32()
