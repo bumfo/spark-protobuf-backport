@@ -45,18 +45,19 @@ object InlineParserGenerator {
     val fields = descriptor.getFields.asScala.toSeq
     val fieldMapping = buildFieldMapping(descriptor, schema)
 
-    // Separate fields by type
-    val repeatedPrimitives = fields.filter(f => f.isRepeated && isPrimitive(f))
-    val repeatedStrings = fields.filter(f => f.isRepeated && isString(f))
-    val repeatedBytes = fields.filter(f => f.isRepeated && isBytes(f))
-    val repeatedMessages = fields.filter(f => f.isRepeated && isMessage(f))
+    // Separate fields by type - only include fields that are in the schema
+    val schemaFieldNames = schema.fieldNames.toSet
+    val repeatedPrimitives = fields.filter(f => f.isRepeated && isPrimitive(f) && schemaFieldNames.contains(f.getName))
+    val repeatedStrings = fields.filter(f => f.isRepeated && isString(f) && schemaFieldNames.contains(f.getName))
+    val repeatedBytes = fields.filter(f => f.isRepeated && isBytes(f) && schemaFieldNames.contains(f.getName))
+    val repeatedMessages = fields.filter(f => f.isRepeated && isMessage(f) && schemaFieldNames.contains(f.getName))
 
-    // All repeated variable-length fields (strings, bytes, messages)
+    // All repeated variable-length fields (strings, bytes, messages) that are in the schema
     val repeatedVarLength = repeatedStrings ++ repeatedBytes ++ repeatedMessages
 
-    // Build nested parsers map
+    // Build nested parsers map - only include fields that are in the schema
     val nestedParsers = fields
-      .filter(f => isMessage(f))
+      .filter(f => isMessage(f) && schemaFieldNames.contains(f.getName))
       .map(f => f.getNumber -> s"parser_${f.getName}")
       .toMap
 
@@ -119,12 +120,13 @@ object InlineParserGenerator {
     val fields = descriptor.getFields.asScala.toSeq
     val fieldMapping = buildFieldMapping(descriptor, schema)
 
-    // Separate fields by type
+    // Separate fields by type - only include fields that are in the schema
+    val schemaFieldNames = schema.fieldNames.toSet
     val repeatedVarLength = fields.filter(f =>
-      f.isRepeated && (isString(f) || isBytes(f) || isMessage(f)))
+      f.isRepeated && (isString(f) || isBytes(f) || isMessage(f)) && schemaFieldNames.contains(f.getName))
 
     val nestedParsers = fields
-      .filter(f => isMessage(f))
+      .filter(f => isMessage(f) && schemaFieldNames.contains(f.getName))
       .map(f => f.getNumber -> s"${methodName}_${f.getName}")
       .toMap
 
@@ -237,7 +239,7 @@ object InlineParserGenerator {
 
       case primitiveType if isPackable(field) =>
         val packedTag = makeTag(field.getNumber, WireFormat.WIRETYPE_LENGTH_DELIMITED)
-        val typeName = primitiveType.toString.split("_").map(_.toLowerCase.capitalize).mkString
+        val typeName = getTypeMethodName(primitiveType)
         val unpackedMethod = s"ProtoRuntime.collect$typeName(input, arrayCtx, w, $ordinal);"
         val packedMethod = s"ProtoRuntime.collectPacked$typeName(input, arrayCtx, w, $ordinal);"
 
@@ -247,7 +249,7 @@ object InlineParserGenerator {
         )
 
       case primitiveType =>
-        val typeName = primitiveType.toString.split("_").map(_.toLowerCase.capitalize).mkString
+        val typeName = getTypeMethodName(primitiveType)
         List(s"case $unpackedTag: ProtoRuntime.collect$typeName(input, arrayCtx, w, $ordinal); break; // ${field.getName}[]")
     }
   }
@@ -348,6 +350,31 @@ object InlineParserGenerator {
            FIXED32 | FIXED64 | SFIXED32 | SFIXED64 |
            FLOAT | DOUBLE | BOOL | ENUM => true
       case _ => false
+    }
+  }
+
+  /**
+   * Get the ProtoRuntime method name suffix for a field type.
+   * Handles special cases like UInt32, SInt64, SFixed32, etc.
+   */
+  private def getTypeMethodName(fieldType: FieldDescriptor.Type): String = {
+    import FieldDescriptor.Type._
+    fieldType match {
+      case INT32 => "Int32"
+      case INT64 => "Int64"
+      case UINT32 => "UInt32"
+      case UINT64 => "UInt64"
+      case SINT32 => "SInt32"
+      case SINT64 => "SInt64"
+      case FIXED32 => "Fixed32"
+      case FIXED64 => "Fixed64"
+      case SFIXED32 => "SFixed32"
+      case SFIXED64 => "SFixed64"
+      case FLOAT => "Float"
+      case DOUBLE => "Double"
+      case BOOL => "Bool"
+      case ENUM => "Enum"
+      case _ => throw new IllegalArgumentException(s"Unsupported type: $fieldType")
     }
   }
 }
