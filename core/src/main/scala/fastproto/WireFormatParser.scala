@@ -264,40 +264,80 @@ class WireFormatParser(
       // Primitive types: INT32/64, FLOAT, DOUBLE, BOOL - use PrimitiveArrayWriter
       // Variable-length int32 types
       case INT32 | UINT32 =>
-        parseUnpackedPrimitiveInt32(input, fieldNumber, fieldType, writer, state, input.readRawVarint32())
+        // if (USE_FALLBACK_MODE) {
+        val list = state.getOrCreateAccumulator(fieldNumber, fieldType).asInstanceOf[IntList]
+        list.add(input.readRawVarint32())
+      // } else
+      //   parseUnpackedPrimitiveInt32(input, fieldNumber, fieldType, writer, state, input.readRawVarint32())
 
       case ENUM =>
-        parseUnpackedPrimitiveInt32(input, fieldNumber, fieldType, writer, state, input.readEnum())
+        // if (USE_FALLBACK_MODE) {
+        val list = state.getOrCreateAccumulator(fieldNumber, fieldType).asInstanceOf[IntList]
+        list.add(input.readEnum())
+      // } else
+      //   parseUnpackedPrimitiveInt32(input, fieldNumber, fieldType, writer, state, input.readEnum())
 
       case SINT32 =>
-        parseUnpackedPrimitiveInt32(input, fieldNumber, fieldType, writer, state, input.readSInt32())
+        // if (USE_FALLBACK_MODE) {
+        val list = state.getOrCreateAccumulator(fieldNumber, fieldType).asInstanceOf[IntList]
+        list.add(input.readSInt32())
+      // } else
+      //   parseUnpackedPrimitiveInt32(input, fieldNumber, fieldType, writer, state, input.readSInt32())
 
       // Variable-length int64 types
       case INT64 | UINT64 =>
-        parseUnpackedPrimitiveInt64(input, fieldNumber, fieldType, writer, state, input.readRawVarint64())
+        // if (USE_FALLBACK_MODE) {
+        val list = state.getOrCreateAccumulator(fieldNumber, fieldType).asInstanceOf[LongList]
+        list.add(input.readRawVarint64())
+      // } else
+      //   parseUnpackedPrimitiveInt64(input, fieldNumber, fieldType, writer, state, input.readRawVarint64())
 
       case SINT64 =>
-        parseUnpackedPrimitiveInt64(input, fieldNumber, fieldType, writer, state, input.readSInt64())
+        // if (USE_FALLBACK_MODE) {
+        val list = state.getOrCreateAccumulator(fieldNumber, fieldType).asInstanceOf[LongList]
+        list.add(input.readSInt64())
+      // } else
+      //   parseUnpackedPrimitiveInt64(input, fieldNumber, fieldType, writer, state, input.readSInt64())
 
       // Fixed-size int32 types
       case FIXED32 | SFIXED32 =>
-        parseUnpackedPrimitiveInt32(input, fieldNumber, fieldType, writer, state, input.readRawLittleEndian32())
+        // if (USE_FALLBACK_MODE) {
+        val list = state.getOrCreateAccumulator(fieldNumber, fieldType).asInstanceOf[IntList]
+        list.add(input.readRawLittleEndian32())
+      // } else
+      //   parseUnpackedPrimitiveInt32(input, fieldNumber, fieldType, writer, state, input.readRawLittleEndian32())
 
       // Fixed-size int64 types
       case FIXED64 | SFIXED64 =>
-        parseUnpackedPrimitiveInt64(input, fieldNumber, fieldType, writer, state, input.readRawLittleEndian64())
+        // if (USE_FALLBACK_MODE) {
+        val list = state.getOrCreateAccumulator(fieldNumber, fieldType).asInstanceOf[LongList]
+        list.add(input.readRawLittleEndian64())
+      // } else
+      //   parseUnpackedPrimitiveInt64(input, fieldNumber, fieldType, writer, state, input.readRawLittleEndian64())
 
       // Float type
       case FLOAT =>
-        parseUnpackedPrimitiveFloat(input, fieldNumber, fieldType, writer, state, input.readFloat())
+        // if (USE_FALLBACK_MODE) {
+        val list = state.getOrCreateAccumulator(fieldNumber, fieldType).asInstanceOf[FloatList]
+        list.add(input.readFloat())
+      // } else
+      //   parseUnpackedPrimitiveFloat(input, fieldNumber, fieldType, writer, state, input.readFloat())
 
       // Double type
       case DOUBLE =>
-        parseUnpackedPrimitiveDouble(input, fieldNumber, fieldType, writer, state, input.readDouble())
+        // if (USE_FALLBACK_MODE) {
+        val list = state.getOrCreateAccumulator(fieldNumber, fieldType).asInstanceOf[DoubleList]
+        list.add(input.readDouble())
+      // } else
+      //   parseUnpackedPrimitiveDouble(input, fieldNumber, fieldType, writer, state, input.readDouble())
 
       // Boolean type
       case BOOL =>
-        parseUnpackedPrimitiveBool(input, fieldNumber, fieldType, writer, state, input.readBool())
+        // if (USE_FALLBACK_MODE) {
+        val list = state.getOrCreateAccumulator(fieldNumber, fieldType).asInstanceOf[BooleanList]
+        list.add(input.readBool())
+      // } else
+      //   parseUnpackedPrimitiveBool(input, fieldNumber, fieldType, writer, state, input.readBool())
 
       // String/Bytes types - variable-length, use FastList directly
       case STRING | BYTES =>
