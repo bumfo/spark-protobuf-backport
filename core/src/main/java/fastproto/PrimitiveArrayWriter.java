@@ -25,9 +25,11 @@ import org.apache.spark.unsafe.Platform;
  *
  * <p>Optimized for sequential writes with minimal overhead:
  * <ul>
- *   <li>Arrays ≤64 elements: Zero data movement</li>
+ *   <li>Pre-allocates header for 64 elements (16 bytes)</li>
+ *   <li>Arrays ≤64 elements: Zero data movement at complete()</li>
  *   <li>Arrays >64 elements: One data movement at complete()</li>
  *   <li>No null support - simpler and faster</li>
+ *   <li>BufferHolder manages buffer growth with exponential doubling</li>
  * </ul>
  *
  * <p><b>Usage:</b>
@@ -43,7 +45,6 @@ public final class PrimitiveArrayWriter extends UnsafeWriter {
 
     private final int elementSize;
     private int count = 0;
-    private int capacity;
 
     // Simple layout: [8-byte count][8-byte bitmap for ≤64 elements][data...]
     private final int dataOffset;      // Always startingOffset + 16
@@ -54,15 +55,12 @@ public final class PrimitiveArrayWriter extends UnsafeWriter {
      * Create array writer with optional capacity hint.
      * @param parent the parent writer
      * @param elementSize size of each element (1,2,4,8 bytes)
-     * @param initialCapacity expected elements (0 = start with 64)
+     * @param initialCapacity expected elements (0 for no hint)
      */
     public PrimitiveArrayWriter(UnsafeWriter parent, int elementSize, int initialCapacity) {
         super(parent.getBufferHolder());
         this.elementSize = elementSize;
         this.startingOffset = cursor();
-
-        // Pre-allocate for at least 64 elements (avoids movement for small arrays)
-        this.capacity = initialCapacity > 0 ? Math.max(64, initialCapacity) : 64;
 
         // Pre-allocate header space for 64 elements: 8 bytes count + 8 bytes bitmap
         // This ensures zero data movement for arrays ≤64 elements
@@ -73,9 +71,9 @@ public final class PrimitiveArrayWriter extends UnsafeWriter {
         int availableBytes = getBuffer().length - Platform.BYTE_ARRAY_OFFSET - dataOffset;
         this.elementCapacity = availableBytes / elementSize;
 
-        // Grow if needed for initial capacity
-        if (capacity > elementCapacity) {
-            growBuffer();
+        // Grow if needed for initial capacity hint
+        if (initialCapacity > elementCapacity) {
+            growBuffer(initialCapacity);
         }
     }
 
@@ -214,23 +212,21 @@ public final class PrimitiveArrayWriter extends UnsafeWriter {
     // ===== Internal Methods =====
 
     private void ensureCapacity() {
-        if (count >= capacity) {
-            capacity = capacity * 2;
-            if (capacity > elementCapacity) {
-                growBuffer();
-            }
+        if (count >= elementCapacity) {
+            growBuffer(count + 1);
         }
     }
 
-    private void growBuffer() {
+    private void growBuffer(int targetCapacity) {
         // Update cursor to current end of data
         increaseCursor(writePosition - cursor());
 
-        // Grow buffer for additional elements
-        int neededBytes = roundToWord((capacity - count) * elementSize);
+        // Grow buffer to accommodate target capacity
+        // BufferHolder.grow() handles exponential growth internally
+        int neededBytes = roundToWord((targetCapacity - count) * elementSize);
         grow(neededBytes);
 
-        // Recalculate capacity
+        // Recalculate element capacity after buffer growth
         int availableBytes = getBuffer().length - Platform.BYTE_ARRAY_OFFSET - dataOffset;
         this.elementCapacity = availableBytes / elementSize;
     }
