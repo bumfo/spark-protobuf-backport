@@ -709,4 +709,105 @@ public abstract class StreamWireParser extends BufferSharingParser {
         nestedWriter.resetRowWriter();  // resetRowWriter automatically calls setAllNullBytes()
         parser.parseInto(buffer, nestedWriter);
     }
+
+    // ========== Packed Field Parsing Direct to PrimitiveArrayWriter ==========
+
+    /**
+     * Parse packed repeated INT32/UINT32 values directly to PrimitiveArrayWriter.
+     * Reads packed length, pushes limit, and writes values directly without intermediate FastList.
+     */
+    protected static void parsePackedInt32sDirect(CodedInputStream input, PrimitiveArrayWriter writer) throws IOException {
+        int packedLength = input.readRawVarint32();
+        int oldLimit = input.pushLimit(packedLength);
+
+        while (input.getBytesUntilLimit() > 0) {
+            writer.writeInt(input.readRawVarint32());
+        }
+
+        input.popLimit(oldLimit);
+    }
+
+    /**
+     * Parse packed repeated SINT32 values (zigzag encoded) directly to PrimitiveArrayWriter.
+     */
+    protected static void parsePackedSInt32sDirect(CodedInputStream input, PrimitiveArrayWriter writer) throws IOException {
+        int packedLength = input.readRawVarint32();
+        int oldLimit = input.pushLimit(packedLength);
+
+        while (input.getBytesUntilLimit() > 0) {
+            writer.writeInt(input.readSInt32());
+        }
+
+        input.popLimit(oldLimit);
+    }
+
+    /**
+     * Parse packed repeated INT64/UINT64 values directly to PrimitiveArrayWriter.
+     */
+    protected static void parsePackedInt64sDirect(CodedInputStream input, PrimitiveArrayWriter writer) throws IOException {
+        int packedLength = input.readRawVarint32();
+        int oldLimit = input.pushLimit(packedLength);
+
+        while (input.getBytesUntilLimit() > 0) {
+            writer.writeLong(input.readRawVarint64());
+        }
+
+        input.popLimit(oldLimit);
+    }
+
+    /**
+     * Parse packed repeated SINT64 values (zigzag encoded) directly to PrimitiveArrayWriter.
+     */
+    protected static void parsePackedSInt64sDirect(CodedInputStream input, PrimitiveArrayWriter writer) throws IOException {
+        int packedLength = input.readRawVarint32();
+        int oldLimit = input.pushLimit(packedLength);
+
+        while (input.getBytesUntilLimit() > 0) {
+            writer.writeLong(input.readSInt64());
+        }
+
+        input.popLimit(oldLimit);
+    }
+
+    /**
+     * Parse packed repeated FLOAT values directly to PrimitiveArrayWriter.
+     */
+    protected static void parsePackedFloatsDirect(CodedInputStream input, PrimitiveArrayWriter writer) throws IOException {
+        int packedLength = input.readRawVarint32();
+        int oldLimit = input.pushLimit(packedLength);
+
+        while (input.getBytesUntilLimit() > 0) {
+            writer.writeFloat(input.readFloat());
+        }
+
+        input.popLimit(oldLimit);
+    }
+
+    /**
+     * Parse packed repeated DOUBLE values directly to PrimitiveArrayWriter.
+     */
+    protected static void parsePackedDoublesDirect(CodedInputStream input, PrimitiveArrayWriter writer) throws IOException {
+        int packedLength = input.readRawVarint32();
+        int oldLimit = input.pushLimit(packedLength);
+
+        while (input.getBytesUntilLimit() > 0) {
+            writer.writeDouble(input.readDouble());
+        }
+
+        input.popLimit(oldLimit);
+    }
+
+    /**
+     * Parse packed repeated BOOL values directly to PrimitiveArrayWriter.
+     */
+    protected static void parsePackedBooleansDirect(CodedInputStream input, PrimitiveArrayWriter writer) throws IOException {
+        int packedLength = input.readRawVarint32();
+        int oldLimit = input.pushLimit(packedLength);
+
+        while (input.getBytesUntilLimit() > 0) {
+            writer.writeBoolean(input.readBool());
+        }
+
+        input.popLimit(oldLimit);
+    }
 }
