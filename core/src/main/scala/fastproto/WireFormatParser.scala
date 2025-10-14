@@ -977,10 +977,10 @@ class WireFormatParser(
   private def writeAccumulatedRepeatedFields(writer: RowWriter, state: ParseState): Unit = {
     import FieldDescriptor.Type._
 
-    // Complete any active PrimitiveArrayWriter first
-    if (!USE_FALLBACK_MODE && state.getActiveWriterField != -1) {
-      completePrimitiveArrayWriter(state.getActiveWriterField, state, writer)
-    }
+    // // Complete any active PrimitiveArrayWriter first
+    // if (!USE_FALLBACK_MODE && state.getActiveWriterField != -1) {
+    //   completePrimitiveArrayWriter(state.getActiveWriterField, state, writer)
+    // }
 
     var fieldNumber = 0
     while (fieldNumber <= maxFieldNumber) {
@@ -991,46 +991,46 @@ class WireFormatParser(
           val fieldType = fieldTypes(fieldNumber)
           val fieldState = state.getFieldState(fieldNumber)
 
-          // PrimitiveArrayWriter fields are already written in completePrimitiveArrayWriter
-          // Just clear the reference for completed writers
-          if (!USE_FALLBACK_MODE && fieldState == 2 && accumulator.isInstanceOf[PrimitiveArrayWriter]) { // STATE_COMPLETED
-            state.setWriter(fieldNumber, null)
-          } else {
-            // FastList fallback path
-            accumulator match {
-              case list: IntList if list.count > 0 =>
-                writeIntArray(list.array, list.count, rowOrdinal, writer)
+          // // PrimitiveArrayWriter fields are already written in completePrimitiveArrayWriter
+          // // Just clear the reference for completed writers
+          // if (!USE_FALLBACK_MODE && fieldState == 2 && accumulator.isInstanceOf[PrimitiveArrayWriter]) { // STATE_COMPLETED
+          //   state.setWriter(fieldNumber, null)
+          // } else {
+          // FastList fallback path
+          accumulator match {
+            case list: IntList if list.count > 0 =>
+              writeIntArray(list.array, list.count, rowOrdinal, writer)
 
-              case list: LongList if list.count > 0 =>
-                writeLongArray(list.array, list.count, rowOrdinal, writer)
+            case list: LongList if list.count > 0 =>
+              writeLongArray(list.array, list.count, rowOrdinal, writer)
 
-              case list: FloatList if list.count > 0 =>
-                writeFloatArray(list.array, list.count, rowOrdinal, writer)
+            case list: FloatList if list.count > 0 =>
+              writeFloatArray(list.array, list.count, rowOrdinal, writer)
 
-              case list: DoubleList if list.count > 0 =>
-                writeDoubleArray(list.array, list.count, rowOrdinal, writer)
+            case list: DoubleList if list.count > 0 =>
+              writeDoubleArray(list.array, list.count, rowOrdinal, writer)
 
-              case list: BooleanList if list.count > 0 =>
-                writeBooleanArray(list.array, list.count, rowOrdinal, writer)
+            case list: BooleanList if list.count > 0 =>
+              writeBooleanArray(list.array, list.count, rowOrdinal, writer)
 
-              case list: BytesList if list.count > 0 =>
-                fieldType match {
-                  case BYTES | STRING =>
-                    writeBytesArray(list.array, list.count, rowOrdinal, writer)
-                  case _ =>
-                    throw new IllegalStateException(s"Unexpected field type $fieldType for BytesList")
-                }
+            case list: BytesList if list.count > 0 =>
+              fieldType match {
+                case BYTES | STRING =>
+                  writeBytesArray(list.array, list.count, rowOrdinal, writer)
+                case _ =>
+                  throw new IllegalStateException(s"Unexpected field type $fieldType for BytesList")
+              }
 
-              case list: BufferList if list.count > 0 =>
-                val parserRef = nestedParsersArray(fieldNumber)
-                if ((parserRef ne null) && (parserRef.parser ne null)) {
-                  val parser = parserRef.parser
-                  writeMessageArrayFromBuffers(list.array, list.count, rowOrdinal, parser, writer)
-                }
+            case list: BufferList if list.count > 0 =>
+              val parserRef = nestedParsersArray(fieldNumber)
+              if ((parserRef ne null) && (parserRef.parser ne null)) {
+                val parser = parserRef.parser
+                writeMessageArrayFromBuffers(list.array, list.count, rowOrdinal, parser, writer)
+              }
 
-              case _ => // Empty lists, PrimitiveArrayWriter with size 0, or null - skip
-            }
+            case _ => // Empty lists, PrimitiveArrayWriter with size 0, or null - skip
           }
+          // }
         }
       }
       fieldNumber += 1
@@ -1123,10 +1123,10 @@ object WireFormatParser {
     private val STATE_COMPLETED: Byte = 2
     private val STATE_FALLBACK: Byte = 3
 
-    // Initialize field state based on mode
-    if (USE_FALLBACK_MODE) {
-      java.util.Arrays.fill(fieldState, STATE_FALLBACK)
-    }
+    // // Initialize field state based on mode
+    // if (USE_FALLBACK_MODE) {
+    //   java.util.Arrays.fill(fieldState, STATE_FALLBACK)
+    // }
 
     def getOrCreateAccumulator(fieldNumber: Int, fieldType: FieldDescriptor.Type): FastList = {
       import FieldDescriptor.Type._
@@ -1181,9 +1181,9 @@ object WireFormatParser {
         if (list ne null) {
           list.reset()
         }
-        // Clear PrimitiveArrayWriter references (not reusable)
-        writers(i) = null
-        fieldState(i) = initialState
+        // // Clear PrimitiveArrayWriter references (not reusable)
+        // writers(i) = null
+        // fieldState(i) = initialState
         i += 1
       }
       activeWriterField = -1
