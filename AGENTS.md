@@ -2,28 +2,39 @@
 
 ## Project Structure & Module Organization
 
-- Scala core: `core/src/main/scala/...`
-- Tests: `core/src/test/scala/**/*Spec.scala`
-- Uber (shaded) JAR: `uber/` via sbt-assembly
-- Python wrapper/tests: `python/` with a PySpark functional test
+- **`core/`** - Scala implementation of the protobuf backport
+- **`python/`** - PySpark wrapper with comprehensive testing
+- **`shaded/`** - Shaded protobuf dependencies for conflict avoidance
+- **`uber/`** - Assembled JAR with all dependencies
 
 ## Build, Test, and Development Commands
 
-- `sbt core/test` — run ScalaTest suite (benchmarks excluded by build)
-- `sbt uber/assembly` — build shaded JAR at `uber/target/scala-2.12/spark-protobuf-backport-shaded-<ver>.jar`
-- `cd python && ./run_test.sh` — run PySpark functional test (expects venv with PySpark 3.2–3.3)
+```bash
+# Compile the project
+sbt compile
 
-## Testing Guidelines
+# Run tests (3-tier testing system)
+sbt unitTests           # Tier 1: Fast unit tests (<5s)
+sbt propertyTests       # Tier 2: Property-based tests (<30s)
+sbt integrationTests    # Tier 3: Spark integration tests (<60s)
+sbt allTestTiers        # All tiers sequentially
 
-- Scala tests live under `core/src/test/scala` with `*Spec.scala` naming.
-- Python test runner validates the shaded JAR works with PySpark; ensure the JAR is built first.
+# Run JMH benchmarks
+sbt jmh                 # Full JMH benchmark suite
+sbt jmhQuick            # Quick benchmark (fewer iterations)
+
+# Build shaded JAR with all dependencies
+sbt assembly
+
+# Clean build artifacts
+sbt clean
+```
 
 ## Commit Process
 
 ### Workflow
 
 - Use an imperative subject under 72 chars and include a short body explaining motivation, impact, and validation steps.
-- Append `Co-Authored-By: Codex <codex@users.noreply.github.com>` to every commit message.
 - Prefer new commits over amending existing history unless the user requests otherwise.
 
 ### Guidelines
@@ -36,3 +47,15 @@
 
 - Stage files in a single command with all changed files from current session - avoid repeated `git add <file>`,
   `git add .`, or `git add -A`.
+
+## Troubleshooting
+
+### sbt Sandboxing Issues
+
+Run sbt with all caches and IPC sockets inside the repo sandbox:
+
+```bash
+sbt -Dsbt.global.base=./.sbt -Dsbt.ivy.home=./.ivy2 -Dsbt.server.dir=./.sbt/server <task>
+```
+
+Example: `sbt ... unitTests` to run fast tests without permission errors.

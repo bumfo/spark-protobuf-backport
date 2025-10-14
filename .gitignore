@@ -5,6 +5,8 @@
 !.claude/settings.json
 
 .idea/*
+.sbt
+.ivy2
 
 /*.txt
 
