@@ -52,14 +52,10 @@ sbt clean
 
 ### sbt Sandboxing Issues
 
-If you encounter issues with `sbt` due to sandboxing, you can try setting the following flags to keep the sbt and ivy caches local to the project:
+Run sbt with all caches and IPC sockets inside the repo sandbox:
 
 ```bash
-sbt -Dsbt.global.base=./.sbt -Dsbt.ivy.home=./.ivy2 <task>
+sbt -Dsbt.global.base=./.sbt -Dsbt.ivy.home=./.ivy2 -Dsbt.server.dir=./.sbt/server <task>
 ```
 
-For unit tests in sandboxed environments, you may also need to pin the sbt server socket inside the workspace:
-
-```bash
-sbt -Dsbt.global.base=./.sbt -Dsbt.ivy.home=./.ivy2 -Dsbt.server.dir=./.sbt/server unitTests
-```
+Example: `sbt ... unitTests` to run fast tests without permission errors.
