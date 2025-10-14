@@ -68,11 +68,13 @@ public final class PrimitiveArrayWriter extends UnsafeWriter {
         this.writePosition = dataOffset;
 
         // Calculate current buffer capacity
-        int availableBytes = getBuffer().length - Platform.BYTE_ARRAY_OFFSET - dataOffset;
+        // dataOffset already includes Platform.BYTE_ARRAY_OFFSET, so subtract it
+        int availableBytes = getBuffer().length - (dataOffset - Platform.BYTE_ARRAY_OFFSET);
         this.elementCapacity = availableBytes / elementSize;
 
         // Grow if needed for initial capacity hint
-        if (initialCapacity > elementCapacity) {
+        // Use byte comparison to handle negative elementCapacity correctly
+        if (elementSize * initialCapacity > availableBytes) {
             growBuffer(initialCapacity);
         }
     }
@@ -227,7 +229,8 @@ public final class PrimitiveArrayWriter extends UnsafeWriter {
         grow(neededBytes);
 
         // Recalculate element capacity after buffer growth
-        int availableBytes = getBuffer().length - Platform.BYTE_ARRAY_OFFSET - dataOffset;
+        // dataOffset already includes Platform.BYTE_ARRAY_OFFSET, so subtract it
+        int availableBytes = getBuffer().length - (dataOffset - Platform.BYTE_ARRAY_OFFSET);
         this.elementCapacity = availableBytes / elementSize;
     }
 
