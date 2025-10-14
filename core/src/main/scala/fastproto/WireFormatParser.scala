@@ -310,7 +310,7 @@ class WireFormatParser(
       if (state.getActiveWriterField != fieldNumber) {
         // Switching repeated fields
         if (state.getActiveWriterField != -1) {
-          completePrimitiveArrayWriter(state.getActiveWriterField, state)
+          completePrimitiveArrayWriter(state.getActiveWriterField, state, writer)
         }
 
         if (currentState == 0) { // STATE_UNUSED
@@ -357,7 +357,7 @@ class WireFormatParser(
 
       if (state.getActiveWriterField != fieldNumber) {
         if (state.getActiveWriterField != -1) {
-          completePrimitiveArrayWriter(state.getActiveWriterField, state)
+          completePrimitiveArrayWriter(state.getActiveWriterField, state, writer)
         }
         if (currentState == 0) { // STATE_UNUSED
           state.setWriter(fieldNumber, new PrimitiveArrayWriter(writer.toUnsafeWriter, 8, 0))
@@ -402,7 +402,7 @@ class WireFormatParser(
 
       if (state.getActiveWriterField != fieldNumber) {
         if (state.getActiveWriterField != -1) {
-          completePrimitiveArrayWriter(state.getActiveWriterField, state)
+          completePrimitiveArrayWriter(state.getActiveWriterField, state, writer)
         }
         if (currentState == 0) { // STATE_UNUSED
           state.setWriter(fieldNumber, new PrimitiveArrayWriter(writer.toUnsafeWriter, 4, 0))
@@ -447,7 +447,7 @@ class WireFormatParser(
 
       if (state.getActiveWriterField != fieldNumber) {
         if (state.getActiveWriterField != -1) {
-          completePrimitiveArrayWriter(state.getActiveWriterField, state)
+          completePrimitiveArrayWriter(state.getActiveWriterField, state, writer)
         }
         if (currentState == 0) { // STATE_UNUSED
           state.setWriter(fieldNumber, new PrimitiveArrayWriter(writer.toUnsafeWriter, 8, 0))
@@ -492,7 +492,7 @@ class WireFormatParser(
 
       if (state.getActiveWriterField != fieldNumber) {
         if (state.getActiveWriterField != -1) {
-          completePrimitiveArrayWriter(state.getActiveWriterField, state)
+          completePrimitiveArrayWriter(state.getActiveWriterField, state, writer)
         }
         if (currentState == 0) { // STATE_UNUSED
           state.setWriter(fieldNumber, new PrimitiveArrayWriter(writer.toUnsafeWriter, 1, 0))
@@ -541,7 +541,7 @@ class WireFormatParser(
       val existingAcc = state.getAccumulator(fieldNumber)
       if ((existingAcc ne null) && existingAcc.isInstanceOf[PrimitiveArrayWriter]) {
         // Unpacked data encountered first - convert to fallback
-        completePrimitiveArrayWriter(fieldNumber, state)
+        completePrimitiveArrayWriter(fieldNumber, state, writer)
         convertToFallback(fieldNumber, fieldType, writer, state)
         val list = state.getAccumulator(fieldNumber).asInstanceOf[IntList]
         if (fieldType == FieldDescriptor.Type.SINT32) {
@@ -555,7 +555,7 @@ class WireFormatParser(
       // Optimistic path: PrimitiveArrayWriter
       if (state.getActiveWriterField != fieldNumber) {
         if (state.getActiveWriterField != -1) {
-          completePrimitiveArrayWriter(state.getActiveWriterField, state)
+          completePrimitiveArrayWriter(state.getActiveWriterField, state, writer)
         }
         if (currentState == 0) { // STATE_UNUSED
           state.setWriter(fieldNumber, new PrimitiveArrayWriter(writer.toUnsafeWriter, 4, 0))
@@ -602,7 +602,7 @@ class WireFormatParser(
     } else {
       val existingAcc = state.getAccumulator(fieldNumber)
       if ((existingAcc ne null) && existingAcc.isInstanceOf[PrimitiveArrayWriter]) {
-        completePrimitiveArrayWriter(fieldNumber, state)
+        completePrimitiveArrayWriter(fieldNumber, state, writer)
         convertToFallback(fieldNumber, fieldType, writer, state)
         val list = state.getAccumulator(fieldNumber).asInstanceOf[LongList]
         if (fieldType == FieldDescriptor.Type.SINT64) {
@@ -615,7 +615,7 @@ class WireFormatParser(
 
       if (state.getActiveWriterField != fieldNumber) {
         if (state.getActiveWriterField != -1) {
-          completePrimitiveArrayWriter(state.getActiveWriterField, state)
+          completePrimitiveArrayWriter(state.getActiveWriterField, state, writer)
         }
         if (currentState == 0) { // STATE_UNUSED
           state.setWriter(fieldNumber, new PrimitiveArrayWriter(writer.toUnsafeWriter, 8, 0))
@@ -658,7 +658,7 @@ class WireFormatParser(
     } else {
       val existingAcc = state.getAccumulator(fieldNumber)
       if ((existingAcc ne null) && existingAcc.isInstanceOf[PrimitiveArrayWriter]) {
-        completePrimitiveArrayWriter(fieldNumber, state)
+        completePrimitiveArrayWriter(fieldNumber, state, writer)
         convertToFallback(fieldNumber, fieldType, writer, state)
         val list = state.getAccumulator(fieldNumber).asInstanceOf[FloatList]
         val packedLength = input.readRawVarint32()
@@ -669,7 +669,7 @@ class WireFormatParser(
 
       if (state.getActiveWriterField != fieldNumber) {
         if (state.getActiveWriterField != -1) {
-          completePrimitiveArrayWriter(state.getActiveWriterField, state)
+          completePrimitiveArrayWriter(state.getActiveWriterField, state, writer)
         }
         if (currentState == 0) { // STATE_UNUSED
           state.setWriter(fieldNumber, new PrimitiveArrayWriter(writer.toUnsafeWriter, 4, 0))
@@ -708,7 +708,7 @@ class WireFormatParser(
     } else {
       val existingAcc = state.getAccumulator(fieldNumber)
       if ((existingAcc ne null) && existingAcc.isInstanceOf[PrimitiveArrayWriter]) {
-        completePrimitiveArrayWriter(fieldNumber, state)
+        completePrimitiveArrayWriter(fieldNumber, state, writer)
         convertToFallback(fieldNumber, fieldType, writer, state)
         val list = state.getAccumulator(fieldNumber).asInstanceOf[DoubleList]
         val packedLength = input.readRawVarint32()
@@ -719,7 +719,7 @@ class WireFormatParser(
 
       if (state.getActiveWriterField != fieldNumber) {
         if (state.getActiveWriterField != -1) {
-          completePrimitiveArrayWriter(state.getActiveWriterField, state)
+          completePrimitiveArrayWriter(state.getActiveWriterField, state, writer)
         }
         if (currentState == 0) { // STATE_UNUSED
           state.setWriter(fieldNumber, new PrimitiveArrayWriter(writer.toUnsafeWriter, 8, 0))
@@ -758,7 +758,7 @@ class WireFormatParser(
     } else {
       val existingAcc = state.getAccumulator(fieldNumber)
       if ((existingAcc ne null) && existingAcc.isInstanceOf[PrimitiveArrayWriter]) {
-        completePrimitiveArrayWriter(fieldNumber, state)
+        completePrimitiveArrayWriter(fieldNumber, state, writer)
         convertToFallback(fieldNumber, fieldType, writer, state)
         val list = state.getAccumulator(fieldNumber).asInstanceOf[BooleanList]
         val packedLength = input.readRawVarint32()
@@ -769,7 +769,7 @@ class WireFormatParser(
 
       if (state.getActiveWriterField != fieldNumber) {
         if (state.getActiveWriterField != -1) {
-          completePrimitiveArrayWriter(state.getActiveWriterField, state)
+          completePrimitiveArrayWriter(state.getActiveWriterField, state, writer)
         }
         if (currentState == 0) { // STATE_UNUSED
           state.setWriter(fieldNumber, new PrimitiveArrayWriter(writer.toUnsafeWriter, 1, 0))
@@ -797,7 +797,7 @@ class WireFormatParser(
     // Complete active PrimitiveArrayWriter if this is a variable-length field
     // Variable-length writes grow the buffer and invalidate PrimitiveArrayWriter's writePosition
     if (state.getActiveWriterField != -1 && isVariableLengthType(fieldType)) {
-      completePrimitiveArrayWriter(state.getActiveWriterField, state)
+      completePrimitiveArrayWriter(state.getActiveWriterField, state, writer)
     }
 
     // Convert raw values based on field type
@@ -838,13 +838,19 @@ class WireFormatParser(
   }
 
   /**
-   * Complete the active PrimitiveArrayWriter by calling complete() and marking it as completed.
+   * Complete the active PrimitiveArrayWriter by calling complete(), writing the variable field,
+   * and marking it as completed.
    */
-  private def completePrimitiveArrayWriter(fieldNumber: Int, state: ParseState): Unit = {
+  private def completePrimitiveArrayWriter(fieldNumber: Int, state: ParseState, writer: RowWriter): Unit = {
     val acc = state.getAccumulator(fieldNumber)
     acc match {
-      case writer: PrimitiveArrayWriter =>
-        writer.complete()
+      case pw: PrimitiveArrayWriter =>
+        pw.complete()
+        // Write the variable field immediately while cursor is at the correct position
+        if (pw.size() > 0) {
+          val rowOrdinal = rowOrdinals(fieldNumber)
+          writer.writeVariableField(rowOrdinal, pw.getStartingOffset)
+        }
         state.setFieldState(fieldNumber, 2) // STATE_COMPLETED
         state.setActiveWriterField(-1)
       case _ =>
@@ -953,7 +959,7 @@ class WireFormatParser(
 
     // Complete any active PrimitiveArrayWriter first
     if (state.getActiveWriterField != -1) {
-      completePrimitiveArrayWriter(state.getActiveWriterField, state)
+      completePrimitiveArrayWriter(state.getActiveWriterField, state, writer)
     }
 
     var fieldNumber = 0
@@ -965,16 +971,10 @@ class WireFormatParser(
           val fieldType = fieldTypes(fieldNumber)
           val fieldState = state.getFieldState(fieldNumber)
 
-          // Check if this is a completed PrimitiveArrayWriter
+          // PrimitiveArrayWriter fields are already written in completePrimitiveArrayWriter
+          // Just clear the reference for completed writers
           if (fieldState == 2 && accumulator.isInstanceOf[PrimitiveArrayWriter]) { // STATE_COMPLETED
-            // PrimitiveArrayWriter - already completed, just write offset
-            val pw = accumulator.asInstanceOf[PrimitiveArrayWriter]
-            if (pw.size() > 0) {
-              writer.writeVariableField(rowOrdinal, pw.getStartingOffset)
-            }
-            // Clear reference - PrimitiveArrayWriter instances are not reusable
             state.setWriter(fieldNumber, null)
-
           } else {
             // FastList fallback path
             accumulator match {
