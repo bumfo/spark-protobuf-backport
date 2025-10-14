@@ -241,6 +241,54 @@ trait ParserBehaviors extends InternalRowMatchers { this: AnyFlatSpec with Match
         row.getArray(4).numElements() shouldBe 0
       }
     }
+
+    it should "correctly size UnsafeArrayData for multiple repeated fields" in {
+      import org.apache.spark.sql.catalyst.expressions.{UnsafeArrayData, UnsafeRow}
+
+      val message = TestData.createFullRepeated()
+      val binary = message.toByteArray
+      val descriptor = message.getDescriptorForType
+      val schema = RecursiveSchemaConverters.toSqlTypeWithTrueRecursion(descriptor, enumAsInt = true)
+      val parser = createParser(descriptor, schema, Some(classOf[AllRepeatedTypes]))
+
+      val row = parser.parse(binary)
+
+      // Verify row is UnsafeRow
+      row shouldBe a[UnsafeRow]
+
+      // Test multiple repeated fields to ensure each array has correct size
+      // int32_list: [1, 2, 3, 4, 5]
+      val int32Array = row.getArray(0).asInstanceOf[UnsafeArrayData]
+      int32Array.numElements() shouldBe 5
+      // Header: 8 bytes (count) + 8 bytes (null bitmap for ≤64 elements) = 16 bytes
+      // Data: 5 * 4 bytes = 20 bytes, rounded to 8-byte boundary = 24 bytes
+      // Total: 16 + 24 = 40 bytes
+      int32Array.getSizeInBytes shouldBe 40
+
+      // int64_list: [10L, 20L, 30L]
+      val int64Array = row.getArray(1).asInstanceOf[UnsafeArrayData]
+      int64Array.numElements() shouldBe 3
+      // Header: 8 bytes (count) + 8 bytes (null bitmap) = 16 bytes
+      // Data: 3 * 8 bytes = 24 bytes (already 8-byte aligned)
+      // Total: 16 + 24 = 40 bytes
+      int64Array.getSizeInBytes shouldBe 40
+
+      // float_list: [1.1f, 2.2f, 3.3f, 4.4f]
+      val floatArray = row.getArray(10).asInstanceOf[UnsafeArrayData]
+      floatArray.numElements() shouldBe 4
+      // Header: 8 bytes (count) + 8 bytes (null bitmap) = 16 bytes
+      // Data: 4 * 4 bytes = 16 bytes (already 8-byte aligned)
+      // Total: 16 + 16 = 32 bytes (different size from the others)
+      floatArray.getSizeInBytes shouldBe 32
+
+      // Verify the arrays contain correct values (not just size)
+      int32Array.getInt(0) shouldBe 1
+      int32Array.getInt(4) shouldBe 5
+      int64Array.getLong(0) shouldBe 10L
+      int64Array.getLong(2) shouldBe 30L
+      floatArray.getFloat(0) shouldBe 1.1f +- 0.01f
+      floatArray.getFloat(3) shouldBe 4.4f +- 0.01f
+    }
   }
 
   // ========== Unpacked Repeated Fields Behavior ==========
