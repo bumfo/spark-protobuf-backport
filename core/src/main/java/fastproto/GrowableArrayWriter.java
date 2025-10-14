@@ -189,26 +189,26 @@ public final class GrowableArrayWriter extends UnsafeWriter {
     // ========== Private Helpers ==========
 
     /**
-     * Conditionally grow buffer if needed, updating cursor first to preserve data.
-     * Checks if newSize exceeds current element capacity before calling grow().
-     * Computes word-aligned element growth internally.
+     * Perform buffer growth to accommodate newSize elements.
+     * Caller must verify newSize > elementCapacity before calling.
+     * Updates cursor first to preserve data, then allocates space and updates capacity.
      *
-     * @param newSize the target size after growth
+     * @param newSize the target size after growth (must be > elementCapacity)
      * @param headerGrowth additional header bytes needed (must be word-aligned)
      */
-    private void growIfNeeded(int newSize, int headerGrowth) {
-        if (newSize > elementCapacity) {
-            int elementStart = startingOffset + headerInBytes;
-            int oldSpace = elementSize * size;
-            setCursor(elementStart + roundToWord(oldSpace));
+    private void growBuffer(int newSize, int headerGrowth) {
+        if (newSize <= elementCapacity) throw new AssertionError();
 
-            int addedBytes = elementSize * (newSize - size);
-            int newSpace = oldSpace + addedBytes;
-            grow(headerGrowth + ((addedBytes + ((-newSpace) & 7)) & ~7));
+        int elementStart = startingOffset + headerInBytes;
+        int oldSpace = elementSize * size;
+        setCursor(elementStart + roundToWord(oldSpace));
 
-            int newElementStart = elementStart + headerGrowth;
-            elementCapacity = (getBuffer().length - Platform.BYTE_ARRAY_OFFSET - newElementStart) / elementSize;
-        }
+        int addedBytes = elementSize * (newSize - size);
+        int newSpace = oldSpace + addedBytes;
+        grow(headerGrowth + ((addedBytes + ((-newSpace) & 7)) & ~7));
+
+        int newElementStart = elementStart + headerGrowth;
+        elementCapacity = (getBuffer().length - Platform.BYTE_ARRAY_OFFSET - newElementStart) / elementSize;
     }
 
     private void setCursor(int targetCursor) {
@@ -228,7 +228,9 @@ public final class GrowableArrayWriter extends UnsafeWriter {
         int newHeaderCapacity = Math.max(64, ceilPow2(newSize));
         if (newHeaderCapacity == headerCapacity) {
             // Header capacity unchanged - only element growth
-            growIfNeeded(newSize, 0);
+            if (newSize > elementCapacity) {
+                growBuffer(newSize, 0);
+            }
         } else {
             // Header capacity changed - handle header growth and data movement
             int newHeaderInBytes = calculateHeaderPortionInBytes(newHeaderCapacity);
@@ -238,7 +240,9 @@ public final class GrowableArrayWriter extends UnsafeWriter {
                 this.savedCursor = cursor();
             }
 
-            growIfNeeded(newSize, newHeaderInBytes - headerInBytes);
+            if (newSize > elementCapacity) {
+                growBuffer(newSize, newHeaderInBytes - headerInBytes);
+            }
             byte[] buffer = getBuffer();
 
             // Move existing data (no-op when size == 0 for initial allocation)
@@ -266,9 +270,9 @@ public final class GrowableArrayWriter extends UnsafeWriter {
         // Fast path: single-element growth within header capacity
         // Most common case for sequential writes
         if (ordinal == size && ordinal < headerCapacity) {
-            // Check if growth is actually needed before calling growIfNeeded
+            // Check if growth is actually needed before calling growBuffer
             if (size + 1 > elementCapacity) {
-                growIfNeeded(size + 1, 0);
+                growBuffer(size + 1, 0);
             }
             this.size++;
         } else if (ordinal >= size) {
