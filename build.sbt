@@ -198,10 +198,16 @@ lazy val root = (project in file("."))
     sourcesInBase := false
   )
 
+// Define JMH command-line arguments based on a system property
+// Usage: sbt -Djmh.mode=quick jmh
+lazy val jmhMode = sys.props.get("jmh.mode") match {
+  case Some("quick") => "-wi 2 -i 3 -f 1"
+  case _ => ""
+}
+
 // Command aliases for convenience
-addCommandAlias("jmh", "bench/Test/compile; bench/Jmh/run")
-addCommandAlias("jmhQuick", "bench/Test/compile; bench/Jmh/run -wi 2 -i 3 -f 1")
-addCommandAlias("jmhSimple", "bench/Test/compile; bench/Jmh/run .*ProtobufConversionJmhBenchmarkSimple.*")
-addCommandAlias("jmhComplex", "bench/Test/compile; bench/Jmh/run .*ProtobufConversionJmhBenchmarkComplex.*")
-addCommandAlias("jmhDom", "bench/Test/compile; bench/Jmh/run .*ProtobufConversionJmhBenchmarkDom.*")
-addCommandAlias("jmhArray", "bench/Test/compile; bench/Jmh/run .*ArrayWriterBenchmark.*")
+addCommandAlias("jmh", s"bench/Test/compile; bench/Jmh/run $jmhMode")
+addCommandAlias("jmhSimple", s"bench/Test/compile; bench/Jmh/run .*ProtobufConversionJmhBenchmarkSimple.* $jmhMode")
+addCommandAlias("jmhComplex", s"bench/Test/compile; bench/Jmh/run .*ProtobufConversionJmhBenchmarkComplex.* $jmhMode")
+addCommandAlias("jmhDom", s"bench/Test/compile; bench/Jmh/run .*ProtobufConversionJmhBenchmarkDom.* $jmhMode")
+addCommandAlias("jmhArray", s"bench/Test/compile; bench/Jmh/run .*ArrayWriterBenchmark.* $jmhMode")
