@@ -528,10 +528,12 @@ class WireFormatParser(
    */
   private def completePrimitiveArrayWriter(fieldNumber: Int, state: ParseState): Unit = {
     val acc = state.getAccumulator(fieldNumber)
-    if (acc.isInstanceOf[PrimitiveArrayWriter]) {
-      acc.asInstanceOf[PrimitiveArrayWriter].complete()
-      state.setFieldState(fieldNumber, 2) // STATE_COMPLETED
-      state.setActiveWriterField(-1)
+    acc match {
+      case writer: PrimitiveArrayWriter =>
+        writer.complete()
+        state.setFieldState(fieldNumber, 2) // STATE_COMPLETED
+        state.setActiveWriterField(-1)
+      case _ =>
     }
   }
 
@@ -563,7 +565,7 @@ class WireFormatParser(
     // Extract values from buffer
     val writer = state.getWriter
     val buffer = writer.toUnsafeWriter.getBuffer
-    val dataOffset = pw.getDataOffset()
+    val dataOffset = pw.getDataOffset
 
     fieldType match {
       case INT32 | SINT32 | UINT32 | ENUM | FIXED32 | SFIXED32 =>
