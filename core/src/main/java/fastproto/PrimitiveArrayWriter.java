@@ -239,13 +239,18 @@ public final class PrimitiveArrayWriter extends UnsafeWriter {
      * @return the number of elements written
      */
     public int complete() {
-        byte[] buffer = getBuffer();
-
         // Calculate final header size based on actual count
         int headerBytes = calculateHeaderPortionInBytes(count);
 
         if (headerBytes > 16) {
-            // Arrays >64 elements need larger header - move data forward
+            // Arrays >64 elements need larger header - ensure buffer has space
+            grow(headerBytes - 16);
+        }
+
+        byte[] buffer = getBuffer();
+
+        if (headerBytes > 16) {
+            // Move data forward to make room for expanded header
             int dataSize = count * elementSize;
             Platform.copyMemory(
                 buffer, dataOffset,                    // from: current data at offset+16
