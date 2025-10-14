@@ -244,6 +244,9 @@ public final class PrimitiveArrayWriter extends UnsafeWriter {
         int currentHeader = dataOffset - startingOffset;
 
         if (headerBytes > currentHeader) {
+            // Update cursor to preserve data during potential reallocation
+            increaseCursor(writePosition - cursor());
+
             // Arrays >64 elements need larger header - ensure buffer has space
             grow(headerBytes - currentHeader);
         }

@@ -324,4 +324,40 @@ class PrimitiveArrayWriterSpec extends AnyFlatSpec with Matchers {
       arrayData2.getLong(i) shouldBe i * 10L
     }
   }
+
+  it should "preserve data when complete() triggers buffer reallocation" in {
+    // Regression test for cursor update bug: complete() must update cursor before
+    // calling grow() to ensure BufferHolder preserves all written data during reallocation.
+    // Use a buffer size that is just barely enough for 64 longs + header, so that
+    // writing 65 longs will fill the buffer, and complete()'s header expansion will
+    // trigger reallocation.
+
+    // Buffer layout for 64 longs:
+    // - 16 bytes header (8 count + 8 bitmap)
+    // - 512 bytes data (64 * 8)
+    // - Total: 528 bytes minimum
+    // Use 600 bytes to have some space but still force reallocation at complete()
+    val rowWriter = new UnsafeRowWriter(1, 600)
+    val writer = new PrimitiveArrayWriter(rowWriter, 8, 0)
+
+    // Write 65 elements to cross 64-element boundary
+    for (i <- 0 until 65) {
+      writer.writeLong(i.toLong)
+    }
+
+    val offset = writer.getStartingOffset
+    val count = writer.complete()
+    count shouldBe 65
+
+    // Verify data integrity after reallocation
+    val size = rowWriter.cursor() - offset
+    val arrayData = new UnsafeArrayData
+    arrayData.pointTo(rowWriter.getBuffer, offset, size)
+    arrayData.numElements() shouldBe 65
+
+    // All values should be preserved (would be corrupted without cursor update)
+    for (i <- 0 until 65) {
+      arrayData.getLong(i) shouldBe i.toLong
+    }
+  }
 }
