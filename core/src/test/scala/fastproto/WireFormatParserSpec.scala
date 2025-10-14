@@ -512,4 +512,292 @@ class WireFormatParserSpec extends AnyFlatSpec with Matchers {
     row.numFields should equal(2)
     row.getUTF8String(0).toString should equal("wire_type_test")
   }
+
+  // ==== Interleaving Tests for PrimitiveArrayWriter ====
+
+  it should "handle packed-then-unpacked encoding for repeated int32" in {
+    val baos = new ByteArrayOutputStream()
+    val output = CodedOutputStream.newInstance(baos)
+
+    // Field 1: packed repeated int32 [1, 2, 3]
+    output.writeTag(1, WireFormat.WIRETYPE_LENGTH_DELIMITED)
+    output.writeUInt32NoTag(3) // 3 bytes for 3 varints (1 byte each)
+    output.writeInt32NoTag(1)
+    output.writeInt32NoTag(2)
+    output.writeInt32NoTag(3)
+
+    // Field 1: unpacked repeated int32 [4, 5]
+    output.writeTag(1, WireFormat.WIRETYPE_VARINT)
+    output.writeInt32NoTag(4)
+    output.writeTag(1, WireFormat.WIRETYPE_VARINT)
+    output.writeInt32NoTag(5)
+
+    output.flush()
+    val binary = baos.toByteArray
+
+    val fileDesc = Descriptors.FileDescriptor.buildFrom(
+      com.google.protobuf.DescriptorProtos.FileDescriptorProto.newBuilder()
+        .setName("test.proto")
+        .addMessageType(com.google.protobuf.DescriptorProtos.DescriptorProto.newBuilder()
+          .setName("TestMessage")
+          .addField(com.google.protobuf.DescriptorProtos.FieldDescriptorProto.newBuilder()
+            .setName("values")
+            .setNumber(1)
+            .setType(com.google.protobuf.DescriptorProtos.FieldDescriptorProto.Type.TYPE_INT32)
+            .setLabel(com.google.protobuf.DescriptorProtos.FieldDescriptorProto.Label.LABEL_REPEATED)))
+        .build(),
+      Array.empty[Descriptors.FileDescriptor]
+    )
+
+    val msgDescriptor = fileDesc.getMessageTypes.get(0)
+    val testSchema = StructType(Seq(
+      StructField("values", ArrayType(IntegerType), nullable = true)
+    ))
+
+    val parser = new WireFormatParser(msgDescriptor, testSchema)
+    val row = parser.parse(binary)
+
+    // Should have all 5 values: [1,2,3,4,5]
+    val valuesArray = row.getArray(0)
+    valuesArray.numElements() should equal(5)
+    valuesArray.getInt(0) should equal(1)
+    valuesArray.getInt(1) should equal(2)
+    valuesArray.getInt(2) should equal(3)
+    valuesArray.getInt(3) should equal(4)
+    valuesArray.getInt(4) should equal(5)
+  }
+
+  it should "handle unpacked-then-packed encoding for repeated int64" in {
+    val baos = new ByteArrayOutputStream()
+    val output = CodedOutputStream.newInstance(baos)
+
+    // Field 1: unpacked repeated int64 [10, 20]
+    output.writeTag(1, WireFormat.WIRETYPE_VARINT)
+    output.writeInt64NoTag(10L)
+    output.writeTag(1, WireFormat.WIRETYPE_VARINT)
+    output.writeInt64NoTag(20L)
+
+    // Field 1: packed repeated int64 [30, 40, 50]
+    output.writeTag(1, WireFormat.WIRETYPE_LENGTH_DELIMITED)
+    output.writeUInt32NoTag(3) // 3 bytes for 3 varints (1 byte each)
+    output.writeInt64NoTag(30L)
+    output.writeInt64NoTag(40L)
+    output.writeInt64NoTag(50L)
+
+    output.flush()
+    val binary = baos.toByteArray
+
+    val fileDesc = Descriptors.FileDescriptor.buildFrom(
+      com.google.protobuf.DescriptorProtos.FileDescriptorProto.newBuilder()
+        .setName("test.proto")
+        .addMessageType(com.google.protobuf.DescriptorProtos.DescriptorProto.newBuilder()
+          .setName("TestMessage")
+          .addField(com.google.protobuf.DescriptorProtos.FieldDescriptorProto.newBuilder()
+            .setName("values")
+            .setNumber(1)
+            .setType(com.google.protobuf.DescriptorProtos.FieldDescriptorProto.Type.TYPE_INT64)
+            .setLabel(com.google.protobuf.DescriptorProtos.FieldDescriptorProto.Label.LABEL_REPEATED)))
+        .build(),
+      Array.empty[Descriptors.FileDescriptor]
+    )
+
+    val msgDescriptor = fileDesc.getMessageTypes.get(0)
+    val testSchema = StructType(Seq(
+      StructField("values", ArrayType(LongType), nullable = true)
+    ))
+
+    val parser = new WireFormatParser(msgDescriptor, testSchema)
+    val row = parser.parse(binary)
+
+    // Should have all 5 values: [10,20,30,40,50]
+    val valuesArray = row.getArray(0)
+    valuesArray.numElements() should equal(5)
+    valuesArray.getLong(0) should equal(10L)
+    valuesArray.getLong(1) should equal(20L)
+    valuesArray.getLong(2) should equal(30L)
+    valuesArray.getLong(3) should equal(40L)
+    valuesArray.getLong(4) should equal(50L)
+  }
+
+  it should "handle interleaved repeated fields (field1 -> field2 -> field1)" in {
+    val baos = new ByteArrayOutputStream()
+    val output = CodedOutputStream.newInstance(baos)
+
+    // Field 1: unpacked [1, 2]
+    output.writeTag(1, WireFormat.WIRETYPE_VARINT)
+    output.writeInt32NoTag(1)
+    output.writeTag(1, WireFormat.WIRETYPE_VARINT)
+    output.writeInt32NoTag(2)
+
+    // Field 2: unpacked [100, 200]
+    output.writeTag(2, WireFormat.WIRETYPE_VARINT)
+    output.writeInt32NoTag(100)
+    output.writeTag(2, WireFormat.WIRETYPE_VARINT)
+    output.writeInt32NoTag(200)
+
+    // Field 1: unpacked [3, 4] - interleaving! Should trigger fallback
+    output.writeTag(1, WireFormat.WIRETYPE_VARINT)
+    output.writeInt32NoTag(3)
+    output.writeTag(1, WireFormat.WIRETYPE_VARINT)
+    output.writeInt32NoTag(4)
+
+    output.flush()
+    val binary = baos.toByteArray
+
+    val fileDesc = Descriptors.FileDescriptor.buildFrom(
+      com.google.protobuf.DescriptorProtos.FileDescriptorProto.newBuilder()
+        .setName("test.proto")
+        .addMessageType(com.google.protobuf.DescriptorProtos.DescriptorProto.newBuilder()
+          .setName("TestMessage")
+          .addField(com.google.protobuf.DescriptorProtos.FieldDescriptorProto.newBuilder()
+            .setName("field1")
+            .setNumber(1)
+            .setType(com.google.protobuf.DescriptorProtos.FieldDescriptorProto.Type.TYPE_INT32)
+            .setLabel(com.google.protobuf.DescriptorProtos.FieldDescriptorProto.Label.LABEL_REPEATED))
+          .addField(com.google.protobuf.DescriptorProtos.FieldDescriptorProto.newBuilder()
+            .setName("field2")
+            .setNumber(2)
+            .setType(com.google.protobuf.DescriptorProtos.FieldDescriptorProto.Type.TYPE_INT32)
+            .setLabel(com.google.protobuf.DescriptorProtos.FieldDescriptorProto.Label.LABEL_REPEATED)))
+        .build(),
+      Array.empty[Descriptors.FileDescriptor]
+    )
+
+    val msgDescriptor = fileDesc.getMessageTypes.get(0)
+    val testSchema = StructType(Seq(
+      StructField("field1", ArrayType(IntegerType), nullable = true),
+      StructField("field2", ArrayType(IntegerType), nullable = true)
+    ))
+
+    val parser = new WireFormatParser(msgDescriptor, testSchema)
+    val row = parser.parse(binary)
+
+    // Field 1: [1,2,3,4]
+    val field1Array = row.getArray(0)
+    field1Array.numElements() should equal(4)
+    field1Array.getInt(0) should equal(1)
+    field1Array.getInt(1) should equal(2)
+    field1Array.getInt(2) should equal(3)
+    field1Array.getInt(3) should equal(4)
+
+    // Field 2: [100,200]
+    val field2Array = row.getArray(1)
+    field2Array.numElements() should equal(2)
+    field2Array.getInt(0) should equal(100)
+    field2Array.getInt(1) should equal(200)
+  }
+
+  it should "handle interleaving with singular variable-length field" in {
+    val baos = new ByteArrayOutputStream()
+    val output = CodedOutputStream.newInstance(baos)
+
+    // Field 1: repeated int32 [1, 2]
+    output.writeTag(1, WireFormat.WIRETYPE_VARINT)
+    output.writeInt32NoTag(1)
+    output.writeTag(1, WireFormat.WIRETYPE_VARINT)
+    output.writeInt32NoTag(2)
+
+    // Field 2: singular string "test"
+    output.writeTag(2, WireFormat.WIRETYPE_LENGTH_DELIMITED)
+    output.writeStringNoTag("test")
+
+    // Field 1: repeated int32 [3, 4] - interleaving with variable-length write!
+    output.writeTag(1, WireFormat.WIRETYPE_VARINT)
+    output.writeInt32NoTag(3)
+    output.writeTag(1, WireFormat.WIRETYPE_VARINT)
+    output.writeInt32NoTag(4)
+
+    output.flush()
+    val binary = baos.toByteArray
+
+    val fileDesc = Descriptors.FileDescriptor.buildFrom(
+      com.google.protobuf.DescriptorProtos.FileDescriptorProto.newBuilder()
+        .setName("test.proto")
+        .addMessageType(com.google.protobuf.DescriptorProtos.DescriptorProto.newBuilder()
+          .setName("TestMessage")
+          .addField(com.google.protobuf.DescriptorProtos.FieldDescriptorProto.newBuilder()
+            .setName("values")
+            .setNumber(1)
+            .setType(com.google.protobuf.DescriptorProtos.FieldDescriptorProto.Type.TYPE_INT32)
+            .setLabel(com.google.protobuf.DescriptorProtos.FieldDescriptorProto.Label.LABEL_REPEATED))
+          .addField(com.google.protobuf.DescriptorProtos.FieldDescriptorProto.newBuilder()
+            .setName("name")
+            .setNumber(2)
+            .setType(com.google.protobuf.DescriptorProtos.FieldDescriptorProto.Type.TYPE_STRING)
+            .setLabel(com.google.protobuf.DescriptorProtos.FieldDescriptorProto.Label.LABEL_OPTIONAL)))
+        .build(),
+      Array.empty[Descriptors.FileDescriptor]
+    )
+
+    val msgDescriptor = fileDesc.getMessageTypes.get(0)
+    val testSchema = StructType(Seq(
+      StructField("values", ArrayType(IntegerType), nullable = true),
+      StructField("name", StringType, nullable = true)
+    ))
+
+    val parser = new WireFormatParser(msgDescriptor, testSchema)
+    val row = parser.parse(binary)
+
+    // Field 1: [1,2,3,4] - should trigger fallback after string write
+    val valuesArray = row.getArray(0)
+    valuesArray.numElements() should equal(4)
+    valuesArray.getInt(0) should equal(1)
+    valuesArray.getInt(1) should equal(2)
+    valuesArray.getInt(2) should equal(3)
+    valuesArray.getInt(3) should equal(4)
+
+    // Field 2: "test"
+    row.getUTF8String(1).toString should equal("test")
+  }
+
+  it should "handle contiguous unpacked repeated values (no interleaving)" in {
+    val baos = new ByteArrayOutputStream()
+    val output = CodedOutputStream.newInstance(baos)
+
+    // Field 1: unpacked repeated [1, 2, 3, 4, 5] - all contiguous
+    output.writeTag(1, WireFormat.WIRETYPE_VARINT)
+    output.writeInt32NoTag(1)
+    output.writeTag(1, WireFormat.WIRETYPE_VARINT)
+    output.writeInt32NoTag(2)
+    output.writeTag(1, WireFormat.WIRETYPE_VARINT)
+    output.writeInt32NoTag(3)
+    output.writeTag(1, WireFormat.WIRETYPE_VARINT)
+    output.writeInt32NoTag(4)
+    output.writeTag(1, WireFormat.WIRETYPE_VARINT)
+    output.writeInt32NoTag(5)
+
+    output.flush()
+    val binary = baos.toByteArray
+
+    val fileDesc = Descriptors.FileDescriptor.buildFrom(
+      com.google.protobuf.DescriptorProtos.FileDescriptorProto.newBuilder()
+        .setName("test.proto")
+        .addMessageType(com.google.protobuf.DescriptorProtos.DescriptorProto.newBuilder()
+          .setName("TestMessage")
+          .addField(com.google.protobuf.DescriptorProtos.FieldDescriptorProto.newBuilder()
+            .setName("values")
+            .setNumber(1)
+            .setType(com.google.protobuf.DescriptorProtos.FieldDescriptorProto.Type.TYPE_INT32)
+            .setLabel(com.google.protobuf.DescriptorProtos.FieldDescriptorProto.Label.LABEL_REPEATED)))
+        .build(),
+      Array.empty[Descriptors.FileDescriptor]
+    )
+
+    val msgDescriptor = fileDesc.getMessageTypes.get(0)
+    val testSchema = StructType(Seq(
+      StructField("values", ArrayType(IntegerType), nullable = true)
+    ))
+
+    val parser = new WireFormatParser(msgDescriptor, testSchema)
+    val row = parser.parse(binary)
+
+    // Should use PrimitiveArrayWriter (no fallback) for optimal performance
+    val valuesArray = row.getArray(0)
+    valuesArray.numElements() should equal(5)
+    valuesArray.getInt(0) should equal(1)
+    valuesArray.getInt(1) should equal(2)
+    valuesArray.getInt(2) should equal(3)
+    valuesArray.getInt(3) should equal(4)
+    valuesArray.getInt(4) should equal(5)
+  }
 }

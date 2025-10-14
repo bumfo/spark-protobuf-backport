@@ -160,6 +160,15 @@ class WireFormatParser(
     import FieldDescriptor.Type._
     val fieldType = fieldTypes(fieldNumber)
 
+    // If there's an active or completed PrimitiveArrayWriter, convert to fallback first
+    val currentState = state.getFieldState(fieldNumber)
+    if (currentState == 1 || currentState == 2) { // STATE_ACTIVE or STATE_COMPLETED
+      if (state.getActiveWriterField == fieldNumber) {
+        completePrimitiveArrayWriter(fieldNumber, state)
+      }
+      convertToFallback(fieldNumber, fieldType, state)
+    }
+
     // Packed repeated fields - wire type is always LENGTH_DELIMITED
     fieldType match {
       // Variable-length int32 types
@@ -309,6 +318,15 @@ class WireFormatParser(
       list.add(value)
 
     } else {
+      // Check if there's already a FastList from packed encoding
+      val existingAcc = state.getAccumulator(fieldNumber)
+      if ((existingAcc ne null) && existingAcc.isInstanceOf[IntList]) {
+        // Packed data encountered first - use fallback path
+        existingAcc.asInstanceOf[IntList].add(value)
+        state.setFieldState(fieldNumber, 3) // STATE_FALLBACK
+        return
+      }
+
       // Optimistic path: PrimitiveArrayWriter
       if (state.getActiveWriterField != fieldNumber) {
         // Switching repeated fields
@@ -348,6 +366,15 @@ class WireFormatParser(
       list.add(value)
 
     } else {
+      // Check if there's already a FastList from packed encoding
+      val existingAcc = state.getAccumulator(fieldNumber)
+      if ((existingAcc ne null) && existingAcc.isInstanceOf[LongList]) {
+        // Packed data encountered first - use fallback path
+        existingAcc.asInstanceOf[LongList].add(value)
+        state.setFieldState(fieldNumber, 3) // STATE_FALLBACK
+        return
+      }
+
       if (state.getActiveWriterField != fieldNumber) {
         if (state.getActiveWriterField != -1) {
           completePrimitiveArrayWriter(state.getActiveWriterField, state)
@@ -383,6 +410,15 @@ class WireFormatParser(
       list.add(value)
 
     } else {
+      // Check if there's already a FastList from packed encoding
+      val existingAcc = state.getAccumulator(fieldNumber)
+      if ((existingAcc ne null) && existingAcc.isInstanceOf[FloatList]) {
+        // Packed data encountered first - use fallback path
+        existingAcc.asInstanceOf[FloatList].add(value)
+        state.setFieldState(fieldNumber, 3) // STATE_FALLBACK
+        return
+      }
+
       if (state.getActiveWriterField != fieldNumber) {
         if (state.getActiveWriterField != -1) {
           completePrimitiveArrayWriter(state.getActiveWriterField, state)
@@ -418,6 +454,15 @@ class WireFormatParser(
       list.add(value)
 
     } else {
+      // Check if there's already a FastList from packed encoding
+      val existingAcc = state.getAccumulator(fieldNumber)
+      if ((existingAcc ne null) && existingAcc.isInstanceOf[DoubleList]) {
+        // Packed data encountered first - use fallback path
+        existingAcc.asInstanceOf[DoubleList].add(value)
+        state.setFieldState(fieldNumber, 3) // STATE_FALLBACK
+        return
+      }
+
       if (state.getActiveWriterField != fieldNumber) {
         if (state.getActiveWriterField != -1) {
           completePrimitiveArrayWriter(state.getActiveWriterField, state)
@@ -453,6 +498,15 @@ class WireFormatParser(
       list.add(value)
 
     } else {
+      // Check if there's already a FastList from packed encoding
+      val existingAcc = state.getAccumulator(fieldNumber)
+      if ((existingAcc ne null) && existingAcc.isInstanceOf[BooleanList]) {
+        // Packed data encountered first - use fallback path
+        existingAcc.asInstanceOf[BooleanList].add(value)
+        state.setFieldState(fieldNumber, 3) // STATE_FALLBACK
+        return
+      }
+
       if (state.getActiveWriterField != fieldNumber) {
         if (state.getActiveWriterField != -1) {
           completePrimitiveArrayWriter(state.getActiveWriterField, state)
