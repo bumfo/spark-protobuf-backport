@@ -57,3 +57,9 @@ If you encounter issues with `sbt` due to sandboxing, you can try setting the fo
 ```bash
 sbt -Dsbt.global.base=./.sbt -Dsbt.ivy.home=./.ivy2 <task>
 ```
+
+For unit tests in sandboxed environments, you may also need to pin the sbt server socket inside the workspace:
+
+```bash
+sbt -Dsbt.global.base=./.sbt -Dsbt.ivy.home=./.ivy2 -Dsbt.server.dir=./.sbt/server unitTests
+```
