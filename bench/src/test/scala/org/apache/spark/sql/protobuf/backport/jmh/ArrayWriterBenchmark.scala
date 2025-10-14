@@ -1,6 +1,6 @@
 package org.apache.spark.sql.protobuf.backport.jmh
 
-import fastproto.{GrowableArrayWriter, IntList, LongList}
+import fastproto.{GrowableArrayWriter, IntList, LongList, PrimitiveArrayWriter}
 import org.apache.spark.sql.catalyst.expressions.UnsafeArrayData
 import org.apache.spark.sql.catalyst.expressions.codegen.{UnsafeArrayWriter, UnsafeRowWriter}
 import org.openjdk.jmh.annotations._
@@ -13,8 +13,9 @@ import java.util.concurrent.TimeUnit
  *
  * 1. FastList (IntList/LongList) + UnsafeArrayWriter loop
  * 2. GrowableArrayWriter with direct writes
+ * 3. PrimitiveArrayWriter with append-only writes
  *
- * Both approaches produce identical UnsafeArrayData output.
+ * All approaches produce identical UnsafeArrayData output.
  *
  * Usage:
  *   sbt "bench/Jmh/run .*ArrayWriterBenchmark.*"
@@ -223,6 +224,63 @@ class ArrayWriterBenchmark {
     // Verify output is valid UnsafeArrayData
     val size = rowWriter.cursor() - offset
     val arrayData = new UnsafeArrayData()
+    arrayData.pointTo(rowWriter.getBuffer, offset, size)
+    bh.consume(arrayData.numElements())
+  }
+
+  // ========== PrimitiveArrayWriter Benchmarks ==========
+
+  /**
+   * PrimitiveArrayWriter: Optimized append-only writer with size hint
+   * - No null support for maximum performance
+   * - Pre-allocates based on hint
+   * - Zero data movement for arrays ≤64 elements
+   */
+  @Benchmark
+  def longArrayPrimitive(bh: Blackhole): Unit = {
+    val rowWriter = new UnsafeRowWriter(1, 8192)
+
+    // Single phase: Direct append-only writes
+    val writer = new PrimitiveArrayWriter(rowWriter, 8, arraySize)
+
+    var i = 0
+    while (i < arraySize) {
+      writer.writeLong(longValues(i))
+      i += 1
+    }
+
+    val offset = writer.getStartingOffset
+    val count = writer.complete()
+
+    // Verify output is valid UnsafeArrayData
+    val size = rowWriter.cursor() - offset
+    val arrayData = new UnsafeArrayData
+    arrayData.pointTo(rowWriter.getBuffer, offset, size)
+    bh.consume(arrayData.numElements())
+  }
+
+  /**
+   * PrimitiveArrayWriter without size hint - tests automatic growth
+   */
+  @Benchmark
+  def longArrayPrimitiveNoHint(bh: Blackhole): Unit = {
+    val rowWriter = new UnsafeRowWriter(1, 8192)
+
+    // No size hint - starts with default 64 element capacity
+    val writer = new PrimitiveArrayWriter(rowWriter, 8, 0)
+
+    var i = 0
+    while (i < arraySize) {
+      writer.writeLong(longValues(i))
+      i += 1
+    }
+
+    val offset = writer.getStartingOffset
+    val count = writer.complete()
+
+    // Verify output is valid UnsafeArrayData
+    val size = rowWriter.cursor() - offset
+    val arrayData = new UnsafeArrayData
     arrayData.pointTo(rowWriter.getBuffer, offset, size)
     bh.consume(arrayData.numElements())
   }
