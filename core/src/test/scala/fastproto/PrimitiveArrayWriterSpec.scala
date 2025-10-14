@@ -285,4 +285,43 @@ class PrimitiveArrayWriterSpec extends AnyFlatSpec with Matchers {
     arrayData.getLong(500) shouldBe 50000L
     arrayData.getLong(999) shouldBe 99900L
   }
+
+  it should "handle complete() called twice with correct data and header growth" in {
+    val rowWriter = new UnsafeRowWriter(1, 8192)
+    val writer = new PrimitiveArrayWriter(rowWriter, 8, 0)
+
+    // Write 65 longs to trigger header expansion (crosses 64-element boundary)
+    for (i <- 0 until 65) {
+      writer.writeLong(i * 10L)
+    }
+
+    val offset = writer.getStartingOffset
+
+    // First complete() - should expand header from 16 to 24 bytes
+    val count1 = writer.complete()
+    count1 shouldBe 65
+
+    // Verify array after first complete()
+    val size1 = rowWriter.cursor() - offset
+    val arrayData1 = new UnsafeArrayData
+    arrayData1.pointTo(rowWriter.getBuffer, offset, size1)
+    arrayData1.numElements() shouldBe 65
+    arrayData1.getLong(0) shouldBe 0L
+    arrayData1.getLong(64) shouldBe 640L
+
+    // Second complete() - should maintain consistency without corruption
+    val count2 = writer.complete()
+    count2 shouldBe 65
+
+    // Verify array after second complete() - data should remain correct
+    val size2 = rowWriter.cursor() - offset
+    val arrayData2 = new UnsafeArrayData
+    arrayData2.pointTo(rowWriter.getBuffer, offset, size2)
+    arrayData2.numElements() shouldBe 65
+
+    // All values should still be correct
+    for (i <- 0 until 65) {
+      arrayData2.getLong(i) shouldBe i * 10L
+    }
+  }
 }

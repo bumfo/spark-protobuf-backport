@@ -47,7 +47,7 @@ public final class PrimitiveArrayWriter extends UnsafeWriter {
     private int count = 0;
 
     // Simple layout: [8-byte count][8-byte bitmap for ≤64 elements][data...]
-    private final int dataOffset;      // Always startingOffset + 16
+    private int dataOffset;            // Initially startingOffset + 16
     private int writePosition;         // Current write position
     private int elementCapacity;       // Max elements in current buffer
 
@@ -241,15 +241,16 @@ public final class PrimitiveArrayWriter extends UnsafeWriter {
     public int complete() {
         // Calculate final header size based on actual count
         int headerBytes = calculateHeaderPortionInBytes(count);
+        int currentHeader = dataOffset - startingOffset;
 
-        if (headerBytes > 16) {
+        if (headerBytes > currentHeader) {
             // Arrays >64 elements need larger header - ensure buffer has space
-            grow(headerBytes - 16);
+            grow(headerBytes - currentHeader);
         }
 
         byte[] buffer = getBuffer();
 
-        if (headerBytes > 16) {
+        if (headerBytes > currentHeader) {
             // Move data forward to make room for expanded header
             int dataSize = count * elementSize;
             Platform.copyMemory(
@@ -257,6 +258,8 @@ public final class PrimitiveArrayWriter extends UnsafeWriter {
                 buffer, startingOffset + headerBytes,  // to: after full header
                 dataSize
             );
+            dataOffset = startingOffset + headerBytes;
+            writePosition += headerBytes - currentHeader;
         }
 
         // Zero out the entire null bitmap (pre-allocated 8 bytes covers ≤64 elements)
