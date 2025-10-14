@@ -266,8 +266,10 @@ public final class GrowableArrayWriter extends UnsafeWriter {
         // Fast path: single-element growth within header capacity
         // Most common case for sequential writes
         if (ordinal == size && ordinal < headerCapacity) {
-            // No header growth needed
-            growIfNeeded(size + 1, 0);
+            // Check if growth is actually needed before calling growIfNeeded
+            if (size + 1 > elementCapacity) {
+                growIfNeeded(size + 1, 0);
+            }
             this.size++;
         } else if (ordinal >= size) {
             // Slow path: multi-element jump or header growth needed
