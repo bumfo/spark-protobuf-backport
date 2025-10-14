@@ -176,7 +176,7 @@ public final class ProtoRuntime {
     ByteBuffer bb = in.readByteBuffer();
     if (parser != null) {
       int offset = w.cursor();
-      RowWriter nestedWriter = parser.acquireNestedWriter(w);
+      RowWriter nestedWriter = parser.acquireNestedWriter((RowWriter) w);
       nestedWriter.resetRowWriter();
       parser.parseInto(bb, nestedWriter);
       w.writeVariableField(ord, offset);
@@ -443,36 +443,94 @@ public final class ProtoRuntime {
 
   /**
    * Write collected message buffers as an array.
-   * Uses existing StreamWireParser batch method.
+   * Duplicated logic from StreamWireParser.writeMessageArrayFromBuffers.
    */
   public static void flushMessageArray(BufferList list, int ordinal,
                                         StreamWireParser parser,
                                         NullDefaultRowWriter writer) {
-    if (list != null && list.count > 0) {
-      StreamWireParser.writeMessageArrayFromBuffers(
-        list.array, list.count, ordinal, parser, writer);
+    if (list == null || list.count == 0) return;
+
+    ByteBuffer[] messageBuffers = list.array;
+    int size = list.count;
+
+    int offset = writer.cursor();
+    org.apache.spark.sql.catalyst.expressions.codegen.UnsafeArrayWriter arrayWriter =
+        new org.apache.spark.sql.catalyst.expressions.codegen.UnsafeArrayWriter(writer.toUnsafeWriter(), 8);
+    arrayWriter.initialize(size);
+
+    // Lift writer acquisition outside loop for O(1) allocations instead of O(n)
+    RowWriter nestedWriter = parser.acquireNestedWriter((RowWriter) writer);
+    for (int i = 0; i < size; i++) {
+      int elemOffset = arrayWriter.cursor();
+      nestedWriter.resetRowWriter();
+      parser.parseInto(messageBuffers[i], nestedWriter);
+      arrayWriter.setOffsetAndSizeFromPreviousCursor(i, elemOffset);
     }
+
+    writer.writeVariableField(ordinal, offset);
   }
 
   /**
    * Write collected string buffers as an array.
+   * Duplicated logic from StreamWireParser.writeStringArrayFromBuffers.
    */
   public static void flushStringArray(BufferList list, int ordinal,
                                        NullDefaultRowWriter writer) {
-    if (list != null && list.count > 0) {
-      StreamWireParser.writeStringArrayFromBuffers(
-        list.array, list.count, ordinal, writer);
+    if (list == null || list.count == 0) return;
+
+    ByteBuffer[] buffers = list.array;
+    int size = list.count;
+
+    int offset = writer.cursor();
+    org.apache.spark.sql.catalyst.expressions.codegen.UnsafeArrayWriter arrayWriter =
+        new org.apache.spark.sql.catalyst.expressions.codegen.UnsafeArrayWriter(writer.toUnsafeWriter(), 8);
+    arrayWriter.initialize(size);
+
+    for (int i = 0; i < size; i++) {
+      ByteBuffer buffer = buffers[i];
+      if (buffer.hasArray()) {
+        // Direct array access for heap ByteBuffers
+        arrayWriter.write(i, buffer.array(), buffer.arrayOffset() + buffer.position(), buffer.remaining());
+      } else {
+        // Copy for direct ByteBuffers (less common case)
+        byte[] bytes = new byte[buffer.remaining()];
+        buffer.duplicate().get(bytes);
+        arrayWriter.write(i, bytes);
+      }
     }
+
+    writer.writeVariableField(ordinal, offset);
   }
 
   /**
    * Write collected bytes buffers as an array.
+   * Duplicated logic from StreamWireParser.writeBytesArrayFromBuffers.
    */
   public static void flushBytesArray(BufferList list, int ordinal,
                                       NullDefaultRowWriter writer) {
-    if (list != null && list.count > 0) {
-      StreamWireParser.writeBytesArrayFromBuffers(
-        list.array, list.count, ordinal, writer);
+    if (list == null || list.count == 0) return;
+
+    ByteBuffer[] buffers = list.array;
+    int size = list.count;
+
+    int offset = writer.cursor();
+    org.apache.spark.sql.catalyst.expressions.codegen.UnsafeArrayWriter arrayWriter =
+        new org.apache.spark.sql.catalyst.expressions.codegen.UnsafeArrayWriter(writer.toUnsafeWriter(), 8);
+    arrayWriter.initialize(size);
+
+    for (int i = 0; i < size; i++) {
+      ByteBuffer buffer = buffers[i];
+      if (buffer.hasArray()) {
+        // Direct array access for heap ByteBuffers
+        arrayWriter.write(i, buffer.array(), buffer.arrayOffset() + buffer.position(), buffer.remaining());
+      } else {
+        // Copy for direct ByteBuffers (less common case)
+        byte[] bytes = new byte[buffer.remaining()];
+        buffer.duplicate().get(bytes);
+        arrayWriter.write(i, bytes);
+      }
     }
+
+    writer.writeVariableField(ordinal, offset);
   }
 }

@@ -709,4 +709,5 @@ public abstract class StreamWireParser extends BufferSharingParser {
         nestedWriter.resetRowWriter();  // resetRowWriter automatically calls setAllNullBytes()
         parser.parseInto(buffer, nestedWriter);
     }
+
 }
