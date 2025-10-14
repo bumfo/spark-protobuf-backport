@@ -29,8 +29,8 @@ class WireFormatParser(
     nestedParsersArrayOpt: Option[Array[WireFormatParser.ParserRef]] = None)
   extends StreamWireParser(schema) {
 
-  import WireFormatParser._
   import Constants._
+  import WireFormatParser._
 
   // Build field mappings using primitive arrays for better cache locality
   private val maxFieldNumber = if (descriptor.getFields.isEmpty) 0 else {
@@ -173,45 +173,36 @@ class WireFormatParser(
     // Packed repeated fields - wire type is always LENGTH_DELIMITED
     fieldType match {
       case INT32 | UINT32 | ENUM =>
-        if (USE_FALLBACK_MODE) {
-          val list = state.getOrCreateAccumulator(fieldNumber, fieldType).asInstanceOf[IntList]
-          parsePackedVarint32s(input, list)
-        } else {
-          parsePackedPrimitiveInt32(input, fieldNumber, fieldType, writer, state)
-        }
+        // if (USE_FALLBACK_MODE) {
+        val list = state.getOrCreateAccumulator(fieldNumber, fieldType).asInstanceOf[IntList]
+        parsePackedVarint32s(input, list)
+      // } else {
+      //   parsePackedPrimitiveInt32(input, fieldNumber, fieldType, writer, state)
+      // }
 
       case SINT32 =>
-        if (USE_FALLBACK_MODE) {
-          val list = state.getOrCreateAccumulator(fieldNumber, fieldType).asInstanceOf[IntList]
-          parsePackedSInt32s(input, list)
-        } else {
-          parsePackedPrimitiveInt32(input, fieldNumber, fieldType, writer, state)
-        }
+        // if (USE_FALLBACK_MODE) {
+        val list = state.getOrCreateAccumulator(fieldNumber, fieldType).asInstanceOf[IntList]
+        parsePackedSInt32s(input, list)
+      // } else {
+      //   parsePackedPrimitiveInt32(input, fieldNumber, fieldType, writer, state)
+      // }
 
       case INT64 | UINT64 =>
-        if (USE_FALLBACK_MODE) {
-          val list = state.getOrCreateAccumulator(fieldNumber, fieldType).asInstanceOf[LongList]
-          parsePackedVarint64s(input, list)
-        } else {
-          parsePackedPrimitiveInt64(input, fieldNumber, fieldType, writer, state)
-        }
+        // if (USE_FALLBACK_MODE) {
+        val list = state.getOrCreateAccumulator(fieldNumber, fieldType).asInstanceOf[LongList]
+        parsePackedVarint64s(input, list)
+      // } else {
+      //   parsePackedPrimitiveInt64(input, fieldNumber, fieldType, writer, state)
+      // }
 
       case SINT64 =>
-        if (USE_FALLBACK_MODE) {
-          val list = state.getOrCreateAccumulator(fieldNumber, fieldType).asInstanceOf[LongList]
-          parsePackedSInt64s(input, list)
-        } else {
-          parsePackedPrimitiveInt64(input, fieldNumber, fieldType, writer, state)
-        }
-
-      case FLOAT =>
-        parsePackedPrimitiveFloat(input, fieldNumber, fieldType, writer, state)
-
-      case DOUBLE =>
-        parsePackedPrimitiveDouble(input, fieldNumber, fieldType, writer, state)
-
-      case BOOL =>
-        parsePackedPrimitiveBool(input, fieldNumber, fieldType, writer, state)
+        // if (USE_FALLBACK_MODE) {
+        val list = state.getOrCreateAccumulator(fieldNumber, fieldType).asInstanceOf[LongList]
+        parsePackedSInt64s(input, list)
+      // } else {
+      //   parsePackedPrimitiveInt64(input, fieldNumber, fieldType, writer, state)
+      // }
 
       case FIXED32 | SFIXED32 =>
         val list = state.getOrCreateAccumulator(fieldNumber, fieldType).asInstanceOf[IntList]
@@ -224,6 +215,36 @@ class WireFormatParser(
         val packedLength = input.readRawVarint32()
         list.array = parsePackedFixed64s(input, list.array, list.count, packedLength)
         list.count += packedLength / 8
+
+      case FLOAT =>
+        // if (USE_FALLBACK_MODE) {
+        val list = state.getOrCreateAccumulator(fieldNumber, fieldType).asInstanceOf[FloatList]
+        val packedLength = input.readRawVarint32()
+        list.array = parsePackedFloats(input, list.array, list.count, packedLength)
+        list.count += packedLength / 4
+      // } else {
+      //   parsePackedPrimitiveFloat(input, fieldNumber, fieldType, writer, state)
+      // }
+
+      case DOUBLE =>
+        // if (USE_FALLBACK_MODE) {
+        val list = state.getOrCreateAccumulator(fieldNumber, fieldType).asInstanceOf[DoubleList]
+        val packedLength = input.readRawVarint32()
+        list.array = parsePackedDoubles(input, list.array, list.count, packedLength)
+        list.count += packedLength / 8
+      // } else {
+      //   parsePackedPrimitiveDouble(input, fieldNumber, fieldType, writer, state)
+      // }
+
+      case BOOL =>
+        // if (USE_FALLBACK_MODE) {
+        val list = state.getOrCreateAccumulator(fieldNumber, fieldType).asInstanceOf[BooleanList]
+        val packedLength = input.readRawVarint32()
+        list.array = parsePackedBooleans(input, list.array, list.count, packedLength)
+        list.count += packedLength
+      // } else {
+      //   parsePackedPrimitiveBool(input, fieldNumber, fieldType, writer, state)
+      // }
 
       case _ =>
         throw new UnsupportedOperationException(s"Field type $fieldType is not packable")
@@ -1033,6 +1054,7 @@ class WireFormatParser(
 }
 
 object WireFormatParser {
+
   import Constants._
 
   /**
