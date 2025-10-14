@@ -117,7 +117,7 @@ public final class GrowableArrayWriter extends UnsafeWriter {
      * @param minSize the minimum size hint
      */
     public void sizeHint(int minSize) {
-        if (minSize > size) {
+        if (minSize > size || size == 0) {
             growToSize(minSize);
         }
     }
@@ -242,6 +242,8 @@ public final class GrowableArrayWriter extends UnsafeWriter {
 
             if (newSize > elementCapacity) {
                 growBuffer(newSize, newHeaderInBytes - headerInBytes);
+            } else if (elementCapacity == 0) {
+                elementCapacity = (getBuffer().length - Platform.BYTE_ARRAY_OFFSET - (startingOffset + headerInBytes)) / elementSize;
             }
             byte[] buffer = getBuffer();
 

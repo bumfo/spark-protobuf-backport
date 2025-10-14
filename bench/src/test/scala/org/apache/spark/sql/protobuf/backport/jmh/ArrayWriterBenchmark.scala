@@ -147,7 +147,7 @@ class ArrayWriterBenchmark {
   /**
    * GrowableArrayWriter: Direct single-phase approach for longs
    */
-  // @Benchmark
+  @Benchmark
   def longArrayGrowable(bh: Blackhole): Unit = {
     val rowWriter = new UnsafeRowWriter(1, 8192)
 
