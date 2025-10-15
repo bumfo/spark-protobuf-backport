@@ -140,8 +140,8 @@ class ArrayWriterBenchmark {
       i += 1
     }
 
-    val offset = writer.getStartingOffset
     val count = writer.complete()
+    val offset = writer.getStartingOffset
 
     // Verify output is valid UnsafeArrayData
     val size = rowWriter.cursor() - offset
@@ -166,8 +166,8 @@ class ArrayWriterBenchmark {
       i += 1
     }
 
-    val offset = writer.getStartingOffset
     val count = writer.complete()
+    val offset = writer.getStartingOffset
 
     // Verify output is valid UnsafeArrayData
     val size = rowWriter.cursor() - offset
