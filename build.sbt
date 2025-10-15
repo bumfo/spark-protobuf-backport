@@ -189,6 +189,15 @@ allTestTiers := Def.sequential(
   integrationTests
 ).value
 
+lazy val showGeneratedCode = inputKey[Unit]("Show generated InlineParser code (usage: showGeneratedCode [MessageName])")
+showGeneratedCode := Def.inputTaskDyn {
+  val args = Def.spaceDelimited("<message>").parsed
+  val messageArg = if (args.nonEmpty) s" ${args.head}" else ""
+  Def.taskDyn {
+    (tests / Test / runMain).toTask(s" ShowGeneratedParser$messageArg")
+  }
+}.evaluated
+
 lazy val root = (project in file("."))
   .disablePlugins(AssemblyPlugin)
   .aggregate(core, bench, tests, uberJar, shaded)
