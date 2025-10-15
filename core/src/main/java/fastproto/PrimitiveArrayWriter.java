@@ -52,6 +52,18 @@ public final class PrimitiveArrayWriter extends UnsafeWriter {
     private int elementCapacity;       // Max elements in current buffer
 
     /**
+     * Create array writer without initialization - must call reset() before use.
+     * Used by ArrayContext to create a final writer field that will be initialized
+     * lazily when the first repeated field is encountered.
+     * @param parent the parent writer
+     */
+    public PrimitiveArrayWriter(UnsafeWriter parent) {
+        super(parent.getBufferHolder());
+        // Don't set elementSize or call initializeForNewArray
+        // Will be initialized on first reset() call
+    }
+
+    /**
      * Create array writer with optional capacity hint.
      * @param parent the parent writer
      * @param elementSize size of each element (1,2,4,8 bytes)

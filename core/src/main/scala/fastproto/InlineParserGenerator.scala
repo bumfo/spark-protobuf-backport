@@ -165,7 +165,7 @@ object InlineParserGenerator {
 
     s"""
     |private static void $methodName(CodedInputStream input, NullDefaultRowWriter w$nestedParserParams) throws IOException {
-    |  ${if (needsArrayCtx) "ProtoRuntime.ArrayContext arrayCtx = new ProtoRuntime.ArrayContext();" else ""}
+    |  ${if (needsArrayCtx) "ProtoRuntime.ArrayContext arrayCtx = new ProtoRuntime.ArrayContext(w);" else ""}
     |  ${if (repeatedVarLength.nonEmpty) s"BufferList[] bufferLists = new BufferList[${repeatedVarLength.size}];" else ""}
     |
     |  ${if (fieldMapping.isEmpty) {

@@ -44,21 +44,24 @@ public final class ProtoRuntime {
      * interleaving in the variable-length buffer region.
      */
     public static final class ArrayContext {
-        private PrimitiveArrayWriter writer;
+        private final PrimitiveArrayWriter writer;
         private int fieldOrdinal = -1;
+
+        public ArrayContext(NullDefaultRowWriter parent) {
+            this.writer = new PrimitiveArrayWriter(parent);
+        }
 
         /**
          * Complete the current array if one is active.
          * Must be called before any variable-length write operation.
          */
         public void completeIfActive(NullDefaultRowWriter parent) {
-            if (writer == null) return;
+            if (fieldOrdinal == -1) return;  // No active field yet
             if (writer.size() > 0) {
                 int startOffset = writer.getStartingOffset();
                 writer.complete();
                 parent.writeVariableField(fieldOrdinal, startOffset);
             }
-            writer = null;
             fieldOrdinal = -1;
         }
 
@@ -74,11 +77,7 @@ public final class ProtoRuntime {
             }
             // Slow path: switching fields (rare)
             completeIfActive(parent);
-            if (writer == null) {
-                writer = new PrimitiveArrayWriter(parent, elementSize, sizeHint);
-            } else {
-                writer.reset(elementSize, sizeHint);
-            }
+            writer.reset(elementSize, sizeHint);
             fieldOrdinal = ordinal;
             return writer;
         }

@@ -95,7 +95,7 @@ class ScalarArrayBenchmark {
     bh.consume(dynamicParser.parse(scalarArrayBinary))
   }
 
-  @Benchmark
+  // @Benchmark
   def protoParsing(bh: Blackhole): Unit = {
     bh.consume(ScalarBenchmarkProtos.ScalarArrayMessage.parser().parseFrom(scalarArrayBinary))
   }
