@@ -199,14 +199,9 @@ public final class ProtoRuntime {
 
   // ===== Repeated Primitive Collectors =====
 
-  public static void collectInt32(CodedInputStream in, ArrayContext ctx,
-                                   NullDefaultRowWriter parent, int ordinal) throws IOException {
-    PrimitiveArrayWriter w = ctx.getOrCreate(parent, ordinal, 4);
-    w.writeInt(in.readInt32());
-  }
-
-  public static void collectPackedInt32(CodedInputStream in, ArrayContext ctx,
-                                         NullDefaultRowWriter parent, int ordinal) throws IOException {
+  // Shared packed collector for types using readRawVarint32 (int32, uint32, enum)
+  private static void collectPackedRawVarint32(CodedInputStream in, ArrayContext ctx,
+                                                NullDefaultRowWriter parent, int ordinal) throws IOException {
     int length = in.readRawVarint32();
     int sizeHint = length / 2;  // Conservative lower bound: ~2 bytes per varint on average
     PrimitiveArrayWriter w = ctx.getOrCreate(parent, ordinal, 4, sizeHint);
@@ -215,6 +210,30 @@ public final class ProtoRuntime {
       w.writeInt(in.readRawVarint32());
     }
     in.popLimit(limit);
+  }
+
+  // Shared packed collector for types using readRawVarint64 (int64, uint64)
+  private static void collectPackedRawVarint64(CodedInputStream in, ArrayContext ctx,
+                                                NullDefaultRowWriter parent, int ordinal) throws IOException {
+    int length = in.readRawVarint32();
+    int sizeHint = length / 4;  // Conservative lower bound: ~4 bytes per varint64 on average
+    PrimitiveArrayWriter w = ctx.getOrCreate(parent, ordinal, 8, sizeHint);
+    int limit = in.pushLimit(length);
+    while (in.getBytesUntilLimit() > 0) {
+      w.writeLong(in.readRawVarint64());
+    }
+    in.popLimit(limit);
+  }
+
+  public static void collectInt32(CodedInputStream in, ArrayContext ctx,
+                                   NullDefaultRowWriter parent, int ordinal) throws IOException {
+    PrimitiveArrayWriter w = ctx.getOrCreate(parent, ordinal, 4);
+    w.writeInt(in.readInt32());
+  }
+
+  public static void collectPackedInt32(CodedInputStream in, ArrayContext ctx,
+                                         NullDefaultRowWriter parent, int ordinal) throws IOException {
+    collectPackedRawVarint32(in, ctx, parent, ordinal);
   }
 
   public static void collectInt64(CodedInputStream in, ArrayContext ctx,
@@ -225,14 +244,7 @@ public final class ProtoRuntime {
 
   public static void collectPackedInt64(CodedInputStream in, ArrayContext ctx,
                                          NullDefaultRowWriter parent, int ordinal) throws IOException {
-    int length = in.readRawVarint32();
-    int sizeHint = length / 4;  // Conservative lower bound: ~4 bytes per varint64 on average
-    PrimitiveArrayWriter w = ctx.getOrCreate(parent, ordinal, 8, sizeHint);
-    int limit = in.pushLimit(length);
-    while (in.getBytesUntilLimit() > 0) {
-      w.writeLong(in.readRawVarint64());
-    }
-    in.popLimit(limit);
+    collectPackedRawVarint64(in, ctx, parent, ordinal);
   }
 
   public static void collectUInt32(CodedInputStream in, ArrayContext ctx,
@@ -243,14 +255,7 @@ public final class ProtoRuntime {
 
   public static void collectPackedUInt32(CodedInputStream in, ArrayContext ctx,
                                           NullDefaultRowWriter parent, int ordinal) throws IOException {
-    int length = in.readRawVarint32();
-    int sizeHint = length / 2;  // Conservative lower bound: ~2 bytes per varint on average
-    PrimitiveArrayWriter w = ctx.getOrCreate(parent, ordinal, 4, sizeHint);
-    int limit = in.pushLimit(length);
-    while (in.getBytesUntilLimit() > 0) {
-      w.writeInt(in.readRawVarint32());
-    }
-    in.popLimit(limit);
+    collectPackedRawVarint32(in, ctx, parent, ordinal);
   }
 
   public static void collectUInt64(CodedInputStream in, ArrayContext ctx,
@@ -261,14 +266,7 @@ public final class ProtoRuntime {
 
   public static void collectPackedUInt64(CodedInputStream in, ArrayContext ctx,
                                           NullDefaultRowWriter parent, int ordinal) throws IOException {
-    int length = in.readRawVarint32();
-    int sizeHint = length / 4;  // Conservative lower bound: ~4 bytes per varint64 on average
-    PrimitiveArrayWriter w = ctx.getOrCreate(parent, ordinal, 8, sizeHint);
-    int limit = in.pushLimit(length);
-    while (in.getBytesUntilLimit() > 0) {
-      w.writeLong(in.readRawVarint64());
-    }
-    in.popLimit(limit);
+    collectPackedRawVarint64(in, ctx, parent, ordinal);
   }
 
   public static void collectSInt32(CodedInputStream in, ArrayContext ctx,
@@ -441,14 +439,7 @@ public final class ProtoRuntime {
 
   public static void collectPackedEnum(CodedInputStream in, ArrayContext ctx,
                                         NullDefaultRowWriter parent, int ordinal) throws IOException {
-    int length = in.readRawVarint32();
-    int sizeHint = length / 2;  // Conservative lower bound: ~2 bytes per varint on average
-    PrimitiveArrayWriter w = ctx.getOrCreate(parent, ordinal, 4, sizeHint);
-    int limit = in.pushLimit(length);
-    while (in.getBytesUntilLimit() > 0) {
-      w.writeInt(in.readRawVarint32());
-    }
-    in.popLimit(limit);
+    collectPackedRawVarint32(in, ctx, parent, ordinal);
   }
 
   // Repeated string/bytes - must complete any active array first

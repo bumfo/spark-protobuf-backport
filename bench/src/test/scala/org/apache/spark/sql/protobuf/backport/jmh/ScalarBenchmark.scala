@@ -75,9 +75,9 @@ class ScalarBenchmark {
     dynamicParser = new DynamicMessageParser(scalarDescriptor, scalarSchema)
   }
 
-  // @Benchmark
-  def directWireFormatParser(bh: Blackhole): Unit = {
-    bh.consume(directParser.parse(scalarBinary))
+  @Benchmark
+  def inlineParser(bh: Blackhole): Unit = {
+    bh.consume(inlineParser.parse(scalarBinary))
   }
 
   @Benchmark
@@ -85,9 +85,9 @@ class ScalarBenchmark {
     bh.consume(generatedParser.parse(scalarBinary))
   }
 
-  @Benchmark
-  def inlineParser(bh: Blackhole): Unit = {
-    bh.consume(inlineParser.parse(scalarBinary))
+  // @Benchmark
+  def directWireFormatParser(bh: Blackhole): Unit = {
+    bh.consume(directParser.parse(scalarBinary))
   }
 
   // @Benchmark
