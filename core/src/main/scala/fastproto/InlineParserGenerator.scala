@@ -61,6 +61,8 @@ object InlineParserGenerator {
       .map(f => f.getNumber -> s"parser_${f.getName}")
       .toMap
 
+    val staticMethodName = s"${className}_parseIntoImpl"
+
     val code = s"""
     |package fastproto.generated;
     |import com.google.protobuf.CodedInputStream;
@@ -77,42 +79,10 @@ object InlineParserGenerator {
     |
     |  @Override
     |  protected void parseInto(CodedInputStream input, RowWriter writer) throws IOException {
-    |    // Cast to NullDefaultRowWriter for optimized null handling
-    |    NullDefaultRowWriter w = (NullDefaultRowWriter) writer;
-    |
-    |    // Single array context for all primitive arrays
-    |    ProtoRuntime.ArrayContext arrayCtx = new ProtoRuntime.ArrayContext();
-    |
-    |    // BufferLists for repeated variable-length fields
-    |    ${if (repeatedVarLength.nonEmpty) s"BufferList[] bufferLists = new BufferList[${repeatedVarLength.size}];" else ""}
-    |
-    |    // Parse loop with switch for JIT optimization
-    |    ${if (fieldMapping.isEmpty) {
-          // Empty schema: skip all fields without switch
-          "while (!input.isAtEnd()) {\n" +
-          "      int tag = input.readTag();\n" +
-          "      input.skipField(tag);\n" +
-          "    }"
-        } else {
-          // Normal parsing with switch
-          s"while (!input.isAtEnd()) {\n" +
-          "      int tag = input.readTag();\n" +
-          "\n" +
-          "      switch (tag) {\n" +
-          s"        ${generateSwitchCases(fields, fieldMapping, repeatedVarLength)}\n" +
-          "        default:\n" +
-          "          input.skipField(tag);\n" +
-          "          break;\n" +
-          "      }\n" +
-          "    }"
-        }}
-    |
-    |    // Complete any pending primitive array
-    |    arrayCtx.completeIfActive(w);
-    |
-    |    // Flush all collected arrays
-    |    ${generateFlushCode(repeatedVarLength, fieldMapping, nestedParsers)}
+    |    $staticMethodName(input, (NullDefaultRowWriter) writer${if (nestedParsers.nonEmpty) nestedParsers.keys.map(k => s", parser_${fields.find(_.getNumber == k).get.getName}").mkString("", "", "") else ""});
     |  }
+    |
+    |  ${generateParserMethodImpl(staticMethodName, fields, fieldMapping, repeatedVarLength, nestedParsers)}
     |
     |  ${generateNestedParserSetters(nestedParsers)}
     |}
@@ -144,27 +114,52 @@ object InlineParserGenerator {
     s"""
     |public static void $methodName(byte[] data, NullDefaultRowWriter writer) throws IOException {
     |  CodedInputStream input = CodedInputStream.newInstance(data);
+    |  writer.resetRowWriter();
+    |  ${methodName}_impl(input, writer${if (nestedParsers.nonEmpty) nestedParsers.values.map(p => s", $p").mkString("", "", "") else ""});
+    |}
+    |
+    |${generateParserMethodImpl(s"${methodName}_impl", fields, fieldMapping, repeatedVarLength, nestedParsers)}
+    """.stripMargin
+  }
+
+  /**
+   * Generate the static implementation method that does the actual parsing.
+   * This is shared by both generateParser and generateParserMethod.
+   */
+  private def generateParserMethodImpl(
+      methodName: String,
+      fields: Seq[FieldDescriptor],
+      fieldMapping: Map[Int, Int],
+      repeatedVarLength: Seq[FieldDescriptor],
+      nestedParsers: Map[Int, String]): String = {
+
+    val nestedParserParams = if (nestedParsers.nonEmpty) {
+      ", " + nestedParsers.values.map(name => s"StreamWireParser $name").mkString(", ")
+    } else {
+      ""
+    }
+
+    s"""
+    |private static void $methodName(CodedInputStream input, NullDefaultRowWriter w$nestedParserParams) throws IOException {
     |  ProtoRuntime.ArrayContext arrayCtx = new ProtoRuntime.ArrayContext();
     |  ${if (repeatedVarLength.nonEmpty) s"BufferList[] bufferLists = new BufferList[${repeatedVarLength.size}];" else ""}
     |
-    |  writer.resetRowWriter();
-    |
     |  ${if (fieldMapping.isEmpty) {
-        "while (!input.isAtEnd()) {\n" +
-        "    int tag = input.readTag();\n" +
-        "    input.skipField(tag);\n" +
-        "  }"
-      } else {
-        s"while (!input.isAtEnd()) {\n" +
-        "    int tag = input.readTag();\n" +
-        "    switch (tag) {\n" +
-        s"      ${generateSwitchCases(fields, fieldMapping, repeatedVarLength)}\n" +
-        "      default: input.skipField(tag); break;\n" +
-        "    }\n" +
-        "  }"
-      }}
+          "while (!input.isAtEnd()) {\n" +
+          "    int tag = input.readTag();\n" +
+          "    input.skipField(tag);\n" +
+          "  }"
+        } else {
+          s"while (!input.isAtEnd()) {\n" +
+          "    int tag = input.readTag();\n" +
+          "    switch (tag) {\n" +
+          s"      ${generateSwitchCases(fields, fieldMapping, repeatedVarLength)}\n" +
+          "      default: input.skipField(tag); break;\n" +
+          "    }\n" +
+          "  }"
+        }}
     |
-    |  arrayCtx.completeIfActive(writer);
+    |  arrayCtx.completeIfActive(w);
     |  ${generateFlushCode(repeatedVarLength, fieldMapping, nestedParsers)}
     |}
     """.stripMargin
