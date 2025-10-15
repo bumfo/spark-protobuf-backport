@@ -326,7 +326,7 @@ object InlineParserGenerator {
     if (uniqueParserNames.isEmpty) return ""
     uniqueParserNames.map { name =>
       s"""
-      |public void set${name.capitalize}(StreamWireParser parser) {
+      |public void set${name.head.toUpper}${name.tail}(StreamWireParser parser) {
       |  if (this.$name != null) throw new IllegalStateException("$name already set");
       |  this.$name = parser;
       |}
