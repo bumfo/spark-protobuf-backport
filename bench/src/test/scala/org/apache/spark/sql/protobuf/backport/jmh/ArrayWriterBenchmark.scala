@@ -29,7 +29,8 @@ import java.util.concurrent.TimeUnit
 class ArrayWriterBenchmark {
 
   // Test data sizes
-  @Param(Array("10", "11"))
+  // @Param(Array("10", "11"))
+  @Param(Array("1", "100", "10000"))
   var arraySize: Int = _
 
   // Reusable test data

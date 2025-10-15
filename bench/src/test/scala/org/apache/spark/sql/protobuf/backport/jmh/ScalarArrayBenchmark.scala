@@ -40,7 +40,7 @@ class ScalarArrayBenchmark {
   var size: Int = _
 
   // @Param(Array("int32", "int64", "float", "double", "all"))
-  @Param(Array("int32"))
+  @Param(Array("float"))
   var field: String = _
 
   var scalarArrayBinary: Array[Byte] = _
