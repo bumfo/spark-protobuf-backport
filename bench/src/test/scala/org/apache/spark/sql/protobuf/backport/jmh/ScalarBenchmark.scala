@@ -76,7 +76,7 @@ class ScalarBenchmark {
   }
 
   @Benchmark
-  def inlineParser(bh: Blackhole): Unit = {
+  def anInlineParser(bh: Blackhole): Unit = {
     bh.consume(inlineParser.parse(scalarBinary))
   }
 
