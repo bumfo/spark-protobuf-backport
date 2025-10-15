@@ -18,6 +18,7 @@
 package fastproto;
 
 import com.google.protobuf.CodedInputStream;
+
 import java.io.IOException;
 import java.nio.ByteBuffer;
 
@@ -37,512 +38,512 @@ import java.nio.ByteBuffer;
 @SuppressWarnings("unused")
 public final class ProtoRuntime {
 
-  /**
-   * Context for managing a single active PrimitiveArrayWriter.
-   * Only one primitive array can be accumulated at a time to prevent
-   * interleaving in the variable-length buffer region.
-   */
-  public static final class ArrayContext {
-    private PrimitiveArrayWriter writer;
-    private int fieldOrdinal = -1;
-
     /**
-     * Complete the current array if one is active.
-     * Must be called before any variable-length write operation.
+     * Context for managing a single active PrimitiveArrayWriter.
+     * Only one primitive array can be accumulated at a time to prevent
+     * interleaving in the variable-length buffer region.
      */
-    public void completeIfActive(NullDefaultRowWriter parent) {
-      if (writer != null && writer.size() > 0) {
-        int startOffset = writer.getStartingOffset();
-        writer.complete();
-        parent.writeVariableField(fieldOrdinal, startOffset);
-      }
-      writer = null;
-      fieldOrdinal = -1;
+    public static final class ArrayContext {
+        private PrimitiveArrayWriter writer;
+        private int fieldOrdinal = -1;
+
+        /**
+         * Complete the current array if one is active.
+         * Must be called before any variable-length write operation.
+         */
+        public void completeIfActive(NullDefaultRowWriter parent) {
+            if (writer != null && writer.size() > 0) {
+                int startOffset = writer.getStartingOffset();
+                writer.complete();
+                parent.writeVariableField(fieldOrdinal, startOffset);
+            }
+            writer = null;
+            fieldOrdinal = -1;
+        }
+
+        /**
+         * Get or create a PrimitiveArrayWriter for the specified field with a size hint.
+         * If switching to a different field, completes the previous array first.
+         * The size hint helps pre-allocate the right capacity for packed fields.
+         */
+        public PrimitiveArrayWriter getOrCreate(NullDefaultRowWriter parent, int ordinal, int elementSize, int sizeHint) {
+            if (fieldOrdinal != ordinal) {
+                completeIfActive(parent);
+                writer = new PrimitiveArrayWriter(parent, elementSize, sizeHint);
+                fieldOrdinal = ordinal;
+            }
+            return writer;
+        }
+
+        /**
+         * Get or create a PrimitiveArrayWriter for the specified field.
+         * If switching to a different field, completes the previous array first.
+         */
+        public PrimitiveArrayWriter getOrCreate(NullDefaultRowWriter parent, int ordinal, int elementSize) {
+            return getOrCreate(parent, ordinal, elementSize, 32);
+        }
+
+        /**
+         * Reset the context, completing any active array.
+         */
+        public void reset(NullDefaultRowWriter parent) {
+            completeIfActive(parent);
+        }
     }
 
-    /**
-     * Get or create a PrimitiveArrayWriter for the specified field with a size hint.
-     * If switching to a different field, completes the previous array first.
-     * The size hint helps pre-allocate the right capacity for packed fields.
-     */
-    public PrimitiveArrayWriter getOrCreate(NullDefaultRowWriter parent, int ordinal, int elementSize, int sizeHint) {
-      if (fieldOrdinal != ordinal) {
-        completeIfActive(parent);
-        writer = new PrimitiveArrayWriter(parent, elementSize, sizeHint);
-        fieldOrdinal = ordinal;
-      }
-      return writer;
+    // ===== Single Field Writers (Primitives - no array completion needed) =====
+
+    public static void writeInt32(CodedInputStream in, NullDefaultRowWriter w, int ord)
+            throws IOException {
+        w.write(ord, in.readInt32());
     }
 
-    /**
-     * Get or create a PrimitiveArrayWriter for the specified field.
-     * If switching to a different field, completes the previous array first.
-     */
-    public PrimitiveArrayWriter getOrCreate(NullDefaultRowWriter parent, int ordinal, int elementSize) {
-      return getOrCreate(parent, ordinal, elementSize, 32);
+    public static void writeInt64(CodedInputStream in, NullDefaultRowWriter w, int ord)
+            throws IOException {
+        w.write(ord, in.readInt64());
     }
 
-    /**
-     * Reset the context, completing any active array.
-     */
-    public void reset(NullDefaultRowWriter parent) {
-      completeIfActive(parent);
+    public static void writeUInt32(CodedInputStream in, NullDefaultRowWriter w, int ord)
+            throws IOException {
+        w.write(ord, in.readUInt32());
     }
-  }
 
-  // ===== Single Field Writers (Primitives - no array completion needed) =====
+    public static void writeUInt64(CodedInputStream in, NullDefaultRowWriter w, int ord)
+            throws IOException {
+        w.write(ord, in.readUInt64());
+    }
 
-  public static void writeInt32(CodedInputStream in, NullDefaultRowWriter w, int ord)
-      throws IOException {
-    w.write(ord, in.readInt32());
-  }
+    public static void writeSInt32(CodedInputStream in, NullDefaultRowWriter w, int ord)
+            throws IOException {
+        w.write(ord, in.readSInt32());
+    }
 
-  public static void writeInt64(CodedInputStream in, NullDefaultRowWriter w, int ord)
-      throws IOException {
-    w.write(ord, in.readInt64());
-  }
+    public static void writeSInt64(CodedInputStream in, NullDefaultRowWriter w, int ord)
+            throws IOException {
+        w.write(ord, in.readSInt64());
+    }
 
-  public static void writeUInt32(CodedInputStream in, NullDefaultRowWriter w, int ord)
-      throws IOException {
-    w.write(ord, in.readUInt32());
-  }
+    public static void writeFixed32(CodedInputStream in, NullDefaultRowWriter w, int ord)
+            throws IOException {
+        w.write(ord, in.readFixed32());
+    }
 
-  public static void writeUInt64(CodedInputStream in, NullDefaultRowWriter w, int ord)
-      throws IOException {
-    w.write(ord, in.readUInt64());
-  }
+    public static void writeFixed64(CodedInputStream in, NullDefaultRowWriter w, int ord)
+            throws IOException {
+        w.write(ord, in.readFixed64());
+    }
 
-  public static void writeSInt32(CodedInputStream in, NullDefaultRowWriter w, int ord)
-      throws IOException {
-    w.write(ord, in.readSInt32());
-  }
+    public static void writeSFixed32(CodedInputStream in, NullDefaultRowWriter w, int ord)
+            throws IOException {
+        w.write(ord, in.readSFixed32());
+    }
 
-  public static void writeSInt64(CodedInputStream in, NullDefaultRowWriter w, int ord)
-      throws IOException {
-    w.write(ord, in.readSInt64());
-  }
+    public static void writeSFixed64(CodedInputStream in, NullDefaultRowWriter w, int ord)
+            throws IOException {
+        w.write(ord, in.readSFixed64());
+    }
 
-  public static void writeFixed32(CodedInputStream in, NullDefaultRowWriter w, int ord)
-      throws IOException {
-    w.write(ord, in.readFixed32());
-  }
+    public static void writeFloat(CodedInputStream in, NullDefaultRowWriter w, int ord)
+            throws IOException {
+        w.write(ord, in.readFloat());
+    }
 
-  public static void writeFixed64(CodedInputStream in, NullDefaultRowWriter w, int ord)
-      throws IOException {
-    w.write(ord, in.readFixed64());
-  }
+    public static void writeDouble(CodedInputStream in, NullDefaultRowWriter w, int ord)
+            throws IOException {
+        w.write(ord, in.readDouble());
+    }
 
-  public static void writeSFixed32(CodedInputStream in, NullDefaultRowWriter w, int ord)
-      throws IOException {
-    w.write(ord, in.readSFixed32());
-  }
+    public static void writeBool(CodedInputStream in, NullDefaultRowWriter w, int ord)
+            throws IOException {
+        w.write(ord, in.readBool());
+    }
 
-  public static void writeSFixed64(CodedInputStream in, NullDefaultRowWriter w, int ord)
-      throws IOException {
-    w.write(ord, in.readSFixed64());
-  }
+    public static void writeEnum(CodedInputStream in, NullDefaultRowWriter w, int ord)
+            throws IOException {
+        w.write(ord, in.readEnum());
+    }
 
-  public static void writeFloat(CodedInputStream in, NullDefaultRowWriter w, int ord)
-      throws IOException {
-    w.write(ord, in.readFloat());
-  }
+    // ===== Single Field Writers (Variable-length - must complete array first) =====
 
-  public static void writeDouble(CodedInputStream in, NullDefaultRowWriter w, int ord)
-      throws IOException {
-    w.write(ord, in.readDouble());
-  }
+    public static void writeString(CodedInputStream in, NullDefaultRowWriter w,
+                                   int ord, ArrayContext arrayCtx) throws IOException {
+        arrayCtx.completeIfActive(w);
+        w.writeBytes(ord, in.readByteBuffer());
+    }
 
-  public static void writeBool(CodedInputStream in, NullDefaultRowWriter w, int ord)
-      throws IOException {
-    w.write(ord, in.readBool());
-  }
-
-  public static void writeEnum(CodedInputStream in, NullDefaultRowWriter w, int ord)
-      throws IOException {
-    w.write(ord, in.readEnum());
-  }
-
-  // ===== Single Field Writers (Variable-length - must complete array first) =====
-
-  public static void writeString(CodedInputStream in, NullDefaultRowWriter w,
+    public static void writeBytes(CodedInputStream in, NullDefaultRowWriter w,
                                   int ord, ArrayContext arrayCtx) throws IOException {
-    arrayCtx.completeIfActive(w);
-    w.writeBytes(ord, in.readByteBuffer());
-  }
-
-  public static void writeBytes(CodedInputStream in, NullDefaultRowWriter w,
-                                 int ord, ArrayContext arrayCtx) throws IOException {
-    arrayCtx.completeIfActive(w);
-    w.writeBytes(ord, in.readByteBuffer());
-  }
-
-  /**
-   * Parse and write a nested message field.
-   */
-  public static void writeMessage(CodedInputStream in, NullDefaultRowWriter w,
-                                   int ord, ArrayContext arrayCtx,
-                                   StreamWireParser parser) throws IOException {
-    arrayCtx.completeIfActive(w);
-    ByteBuffer bb = in.readByteBuffer();
-    if (parser != null) {
-      int offset = w.cursor();
-      RowWriter nestedWriter = parser.acquireNestedWriter((RowWriter) w);
-      nestedWriter.resetRowWriter();
-      parser.parseInto(bb, nestedWriter);
-      w.writeVariableField(ord, offset);
+        arrayCtx.completeIfActive(w);
+        w.writeBytes(ord, in.readByteBuffer());
     }
-  }
 
-  // ===== Repeated Primitive Collectors =====
-
-  // Shared packed collector for types using readRawVarint32 (int32, uint32, enum)
-  private static void collectPackedRawVarint32(CodedInputStream in, ArrayContext ctx,
-                                                NullDefaultRowWriter parent, int ordinal) throws IOException {
-    int length = in.readRawVarint32();
-    int sizeHint = length / 2;  // Conservative lower bound: ~2 bytes per varint on average
-    PrimitiveArrayWriter w = ctx.getOrCreate(parent, ordinal, 4, sizeHint);
-    int limit = in.pushLimit(length);
-    while (in.getBytesUntilLimit() > 0) {
-      w.writeInt(in.readRawVarint32());
+    /**
+     * Parse and write a nested message field.
+     */
+    public static void writeMessage(CodedInputStream in, NullDefaultRowWriter w,
+                                    int ord, ArrayContext arrayCtx,
+                                    StreamWireParser parser) throws IOException {
+        arrayCtx.completeIfActive(w);
+        ByteBuffer bb = in.readByteBuffer();
+        if (parser != null) {
+            int offset = w.cursor();
+            RowWriter nestedWriter = parser.acquireNestedWriter((RowWriter) w);
+            nestedWriter.resetRowWriter();
+            parser.parseInto(bb, nestedWriter);
+            w.writeVariableField(ord, offset);
+        }
     }
-    in.popLimit(limit);
-  }
 
-  // Shared packed collector for types using readRawVarint64 (int64, uint64)
-  private static void collectPackedRawVarint64(CodedInputStream in, ArrayContext ctx,
-                                                NullDefaultRowWriter parent, int ordinal) throws IOException {
-    int length = in.readRawVarint32();
-    int sizeHint = length / 4;  // Conservative lower bound: ~4 bytes per varint64 on average
-    PrimitiveArrayWriter w = ctx.getOrCreate(parent, ordinal, 8, sizeHint);
-    int limit = in.pushLimit(length);
-    while (in.getBytesUntilLimit() > 0) {
-      w.writeLong(in.readRawVarint64());
+    // ===== Repeated Primitive Collectors =====
+
+    // Shared packed collector for types using readRawVarint32 (int32, uint32, enum)
+    private static void collectPackedRawVarint32(CodedInputStream in, ArrayContext ctx,
+                                                 NullDefaultRowWriter parent, int ordinal) throws IOException {
+        int length = in.readRawVarint32();
+        int sizeHint = length / 2;  // Conservative lower bound: ~2 bytes per varint on average
+        PrimitiveArrayWriter w = ctx.getOrCreate(parent, ordinal, 4, sizeHint);
+        int limit = in.pushLimit(length);
+        while (in.getBytesUntilLimit() > 0) {
+            w.writeInt(in.readRawVarint32());
+        }
+        in.popLimit(limit);
     }
-    in.popLimit(limit);
-  }
 
-  public static void collectInt32(CodedInputStream in, ArrayContext ctx,
-                                   NullDefaultRowWriter parent, int ordinal) throws IOException {
-    PrimitiveArrayWriter w = ctx.getOrCreate(parent, ordinal, 4);
-    w.writeInt(in.readInt32());
-  }
+    // Shared packed collector for types using readRawVarint64 (int64, uint64)
+    private static void collectPackedRawVarint64(CodedInputStream in, ArrayContext ctx,
+                                                 NullDefaultRowWriter parent, int ordinal) throws IOException {
+        int length = in.readRawVarint32();
+        int sizeHint = length / 4;  // Conservative lower bound: ~4 bytes per varint64 on average
+        PrimitiveArrayWriter w = ctx.getOrCreate(parent, ordinal, 8, sizeHint);
+        int limit = in.pushLimit(length);
+        while (in.getBytesUntilLimit() > 0) {
+            w.writeLong(in.readRawVarint64());
+        }
+        in.popLimit(limit);
+    }
 
-  public static void collectPackedInt32(CodedInputStream in, ArrayContext ctx,
-                                         NullDefaultRowWriter parent, int ordinal) throws IOException {
-    collectPackedRawVarint32(in, ctx, parent, ordinal);
-  }
-
-  public static void collectInt64(CodedInputStream in, ArrayContext ctx,
-                                   NullDefaultRowWriter parent, int ordinal) throws IOException {
-    PrimitiveArrayWriter w = ctx.getOrCreate(parent, ordinal, 8);
-    w.writeLong(in.readInt64());
-  }
-
-  public static void collectPackedInt64(CodedInputStream in, ArrayContext ctx,
-                                         NullDefaultRowWriter parent, int ordinal) throws IOException {
-    collectPackedRawVarint64(in, ctx, parent, ordinal);
-  }
-
-  public static void collectUInt32(CodedInputStream in, ArrayContext ctx,
+    public static void collectInt32(CodedInputStream in, ArrayContext ctx,
                                     NullDefaultRowWriter parent, int ordinal) throws IOException {
-    PrimitiveArrayWriter w = ctx.getOrCreate(parent, ordinal, 4);
-    w.writeInt(in.readUInt32());
-  }
-
-  public static void collectPackedUInt32(CodedInputStream in, ArrayContext ctx,
-                                          NullDefaultRowWriter parent, int ordinal) throws IOException {
-    collectPackedRawVarint32(in, ctx, parent, ordinal);
-  }
-
-  public static void collectUInt64(CodedInputStream in, ArrayContext ctx,
-                                    NullDefaultRowWriter parent, int ordinal) throws IOException {
-    PrimitiveArrayWriter w = ctx.getOrCreate(parent, ordinal, 8);
-    w.writeLong(in.readUInt64());
-  }
-
-  public static void collectPackedUInt64(CodedInputStream in, ArrayContext ctx,
-                                          NullDefaultRowWriter parent, int ordinal) throws IOException {
-    collectPackedRawVarint64(in, ctx, parent, ordinal);
-  }
-
-  public static void collectSInt32(CodedInputStream in, ArrayContext ctx,
-                                    NullDefaultRowWriter parent, int ordinal) throws IOException {
-    PrimitiveArrayWriter w = ctx.getOrCreate(parent, ordinal, 4);
-    w.writeInt(in.readSInt32());
-  }
-
-  public static void collectPackedSInt32(CodedInputStream in, ArrayContext ctx,
-                                          NullDefaultRowWriter parent, int ordinal) throws IOException {
-    int length = in.readRawVarint32();
-    int sizeHint = length / 2;  // Conservative lower bound: ~2 bytes per varint on average
-    PrimitiveArrayWriter w = ctx.getOrCreate(parent, ordinal, 4, sizeHint);
-    int limit = in.pushLimit(length);
-    while (in.getBytesUntilLimit() > 0) {
-      w.writeInt(in.readSInt32());
+        PrimitiveArrayWriter w = ctx.getOrCreate(parent, ordinal, 4);
+        w.writeInt(in.readInt32());
     }
-    in.popLimit(limit);
-  }
 
-  public static void collectSInt64(CodedInputStream in, ArrayContext ctx,
-                                    NullDefaultRowWriter parent, int ordinal) throws IOException {
-    PrimitiveArrayWriter w = ctx.getOrCreate(parent, ordinal, 8);
-    w.writeLong(in.readSInt64());
-  }
-
-  public static void collectPackedSInt64(CodedInputStream in, ArrayContext ctx,
+    public static void collectPackedInt32(CodedInputStream in, ArrayContext ctx,
                                           NullDefaultRowWriter parent, int ordinal) throws IOException {
-    int length = in.readRawVarint32();
-    int sizeHint = length / 4;  // Conservative lower bound: ~4 bytes per varint64 on average
-    PrimitiveArrayWriter w = ctx.getOrCreate(parent, ordinal, 8, sizeHint);
-    int limit = in.pushLimit(length);
-    while (in.getBytesUntilLimit() > 0) {
-      w.writeLong(in.readSInt64());
+        collectPackedRawVarint32(in, ctx, parent, ordinal);
     }
-    in.popLimit(limit);
-  }
 
-  public static void collectFixed32(CodedInputStream in, ArrayContext ctx,
+    public static void collectInt64(CodedInputStream in, ArrayContext ctx,
+                                    NullDefaultRowWriter parent, int ordinal) throws IOException {
+        PrimitiveArrayWriter w = ctx.getOrCreate(parent, ordinal, 8);
+        w.writeLong(in.readInt64());
+    }
+
+    public static void collectPackedInt64(CodedInputStream in, ArrayContext ctx,
+                                          NullDefaultRowWriter parent, int ordinal) throws IOException {
+        collectPackedRawVarint64(in, ctx, parent, ordinal);
+    }
+
+    public static void collectUInt32(CodedInputStream in, ArrayContext ctx,
                                      NullDefaultRowWriter parent, int ordinal) throws IOException {
-    PrimitiveArrayWriter w = ctx.getOrCreate(parent, ordinal, 4);
-    w.writeInt(in.readFixed32());
-  }
-
-  public static void collectPackedFixed32(CodedInputStream in, ArrayContext ctx,
-                                           NullDefaultRowWriter parent, int ordinal) throws IOException {
-    int length = in.readRawVarint32();
-    int sizeHint = length / 4;  // Exact: 4 bytes per fixed32
-    PrimitiveArrayWriter w = ctx.getOrCreate(parent, ordinal, 4, sizeHint);
-    int limit = in.pushLimit(length);
-    while (in.getBytesUntilLimit() > 0) {
-      w.writeInt(in.readFixed32());
+        PrimitiveArrayWriter w = ctx.getOrCreate(parent, ordinal, 4);
+        w.writeInt(in.readUInt32());
     }
-    in.popLimit(limit);
-  }
 
-  public static void collectFixed64(CodedInputStream in, ArrayContext ctx,
+    public static void collectPackedUInt32(CodedInputStream in, ArrayContext ctx,
+                                           NullDefaultRowWriter parent, int ordinal) throws IOException {
+        collectPackedRawVarint32(in, ctx, parent, ordinal);
+    }
+
+    public static void collectUInt64(CodedInputStream in, ArrayContext ctx,
                                      NullDefaultRowWriter parent, int ordinal) throws IOException {
-    PrimitiveArrayWriter w = ctx.getOrCreate(parent, ordinal, 8);
-    w.writeLong(in.readFixed64());
-  }
+        PrimitiveArrayWriter w = ctx.getOrCreate(parent, ordinal, 8);
+        w.writeLong(in.readUInt64());
+    }
 
-  public static void collectPackedFixed64(CodedInputStream in, ArrayContext ctx,
+    public static void collectPackedUInt64(CodedInputStream in, ArrayContext ctx,
                                            NullDefaultRowWriter parent, int ordinal) throws IOException {
-    int length = in.readRawVarint32();
-    int sizeHint = length / 8;  // Exact: 8 bytes per fixed64
-    PrimitiveArrayWriter w = ctx.getOrCreate(parent, ordinal, 8, sizeHint);
-    int limit = in.pushLimit(length);
-    while (in.getBytesUntilLimit() > 0) {
-      w.writeLong(in.readFixed64());
+        collectPackedRawVarint64(in, ctx, parent, ordinal);
     }
-    in.popLimit(limit);
-  }
 
-  public static void collectSFixed32(CodedInputStream in, ArrayContext ctx,
+    public static void collectSInt32(CodedInputStream in, ArrayContext ctx,
+                                     NullDefaultRowWriter parent, int ordinal) throws IOException {
+        PrimitiveArrayWriter w = ctx.getOrCreate(parent, ordinal, 4);
+        w.writeInt(in.readSInt32());
+    }
+
+    public static void collectPackedSInt32(CodedInputStream in, ArrayContext ctx,
+                                           NullDefaultRowWriter parent, int ordinal) throws IOException {
+        int length = in.readRawVarint32();
+        int sizeHint = length / 2;  // Conservative lower bound: ~2 bytes per varint on average
+        PrimitiveArrayWriter w = ctx.getOrCreate(parent, ordinal, 4, sizeHint);
+        int limit = in.pushLimit(length);
+        while (in.getBytesUntilLimit() > 0) {
+            w.writeInt(in.readSInt32());
+        }
+        in.popLimit(limit);
+    }
+
+    public static void collectSInt64(CodedInputStream in, ArrayContext ctx,
+                                     NullDefaultRowWriter parent, int ordinal) throws IOException {
+        PrimitiveArrayWriter w = ctx.getOrCreate(parent, ordinal, 8);
+        w.writeLong(in.readSInt64());
+    }
+
+    public static void collectPackedSInt64(CodedInputStream in, ArrayContext ctx,
+                                           NullDefaultRowWriter parent, int ordinal) throws IOException {
+        int length = in.readRawVarint32();
+        int sizeHint = length / 4;  // Conservative lower bound: ~4 bytes per varint64 on average
+        PrimitiveArrayWriter w = ctx.getOrCreate(parent, ordinal, 8, sizeHint);
+        int limit = in.pushLimit(length);
+        while (in.getBytesUntilLimit() > 0) {
+            w.writeLong(in.readSInt64());
+        }
+        in.popLimit(limit);
+    }
+
+    public static void collectFixed32(CodedInputStream in, ArrayContext ctx,
                                       NullDefaultRowWriter parent, int ordinal) throws IOException {
-    PrimitiveArrayWriter w = ctx.getOrCreate(parent, ordinal, 4);
-    w.writeInt(in.readSFixed32());
-  }
-
-  public static void collectPackedSFixed32(CodedInputStream in, ArrayContext ctx,
-                                            NullDefaultRowWriter parent, int ordinal) throws IOException {
-    int length = in.readRawVarint32();
-    int sizeHint = length / 4;  // Exact: 4 bytes per sfixed32
-    PrimitiveArrayWriter w = ctx.getOrCreate(parent, ordinal, 4, sizeHint);
-    int limit = in.pushLimit(length);
-    while (in.getBytesUntilLimit() > 0) {
-      w.writeInt(in.readSFixed32());
+        PrimitiveArrayWriter w = ctx.getOrCreate(parent, ordinal, 4);
+        w.writeInt(in.readFixed32());
     }
-    in.popLimit(limit);
-  }
 
-  public static void collectSFixed64(CodedInputStream in, ArrayContext ctx,
+    public static void collectPackedFixed32(CodedInputStream in, ArrayContext ctx,
+                                            NullDefaultRowWriter parent, int ordinal) throws IOException {
+        int length = in.readRawVarint32();
+        int sizeHint = length / 4;  // Exact: 4 bytes per fixed32
+        PrimitiveArrayWriter w = ctx.getOrCreate(parent, ordinal, 4, sizeHint);
+        int limit = in.pushLimit(length);
+        while (in.getBytesUntilLimit() > 0) {
+            w.writeInt(in.readFixed32());
+        }
+        in.popLimit(limit);
+    }
+
+    public static void collectFixed64(CodedInputStream in, ArrayContext ctx,
                                       NullDefaultRowWriter parent, int ordinal) throws IOException {
-    PrimitiveArrayWriter w = ctx.getOrCreate(parent, ordinal, 8);
-    w.writeLong(in.readSFixed64());
-  }
+        PrimitiveArrayWriter w = ctx.getOrCreate(parent, ordinal, 8);
+        w.writeLong(in.readFixed64());
+    }
 
-  public static void collectPackedSFixed64(CodedInputStream in, ArrayContext ctx,
+    public static void collectPackedFixed64(CodedInputStream in, ArrayContext ctx,
                                             NullDefaultRowWriter parent, int ordinal) throws IOException {
-    int length = in.readRawVarint32();
-    int sizeHint = length / 8;  // Exact: 8 bytes per sfixed64
-    PrimitiveArrayWriter w = ctx.getOrCreate(parent, ordinal, 8, sizeHint);
-    int limit = in.pushLimit(length);
-    while (in.getBytesUntilLimit() > 0) {
-      w.writeLong(in.readSFixed64());
+        int length = in.readRawVarint32();
+        int sizeHint = length / 8;  // Exact: 8 bytes per fixed64
+        PrimitiveArrayWriter w = ctx.getOrCreate(parent, ordinal, 8, sizeHint);
+        int limit = in.pushLimit(length);
+        while (in.getBytesUntilLimit() > 0) {
+            w.writeLong(in.readFixed64());
+        }
+        in.popLimit(limit);
     }
-    in.popLimit(limit);
-  }
 
-  public static void collectFloat(CodedInputStream in, ArrayContext ctx,
-                                   NullDefaultRowWriter parent, int ordinal) throws IOException {
-    PrimitiveArrayWriter w = ctx.getOrCreate(parent, ordinal, 4);
-    w.writeFloat(in.readFloat());
-  }
-
-  public static void collectPackedFloat(CodedInputStream in, ArrayContext ctx,
-                                         NullDefaultRowWriter parent, int ordinal) throws IOException {
-    int length = in.readRawVarint32();
-    int sizeHint = length / 4;  // Exact: 4 bytes per float
-    PrimitiveArrayWriter w = ctx.getOrCreate(parent, ordinal, 4, sizeHint);
-    int limit = in.pushLimit(length);
-    while (in.getBytesUntilLimit() > 0) {
-      w.writeFloat(in.readFloat());
+    public static void collectSFixed32(CodedInputStream in, ArrayContext ctx,
+                                       NullDefaultRowWriter parent, int ordinal) throws IOException {
+        PrimitiveArrayWriter w = ctx.getOrCreate(parent, ordinal, 4);
+        w.writeInt(in.readSFixed32());
     }
-    in.popLimit(limit);
-  }
 
-  public static void collectDouble(CodedInputStream in, ArrayContext ctx,
+    public static void collectPackedSFixed32(CodedInputStream in, ArrayContext ctx,
+                                             NullDefaultRowWriter parent, int ordinal) throws IOException {
+        int length = in.readRawVarint32();
+        int sizeHint = length / 4;  // Exact: 4 bytes per sfixed32
+        PrimitiveArrayWriter w = ctx.getOrCreate(parent, ordinal, 4, sizeHint);
+        int limit = in.pushLimit(length);
+        while (in.getBytesUntilLimit() > 0) {
+            w.writeInt(in.readSFixed32());
+        }
+        in.popLimit(limit);
+    }
+
+    public static void collectSFixed64(CodedInputStream in, ArrayContext ctx,
+                                       NullDefaultRowWriter parent, int ordinal) throws IOException {
+        PrimitiveArrayWriter w = ctx.getOrCreate(parent, ordinal, 8);
+        w.writeLong(in.readSFixed64());
+    }
+
+    public static void collectPackedSFixed64(CodedInputStream in, ArrayContext ctx,
+                                             NullDefaultRowWriter parent, int ordinal) throws IOException {
+        int length = in.readRawVarint32();
+        int sizeHint = length / 8;  // Exact: 8 bytes per sfixed64
+        PrimitiveArrayWriter w = ctx.getOrCreate(parent, ordinal, 8, sizeHint);
+        int limit = in.pushLimit(length);
+        while (in.getBytesUntilLimit() > 0) {
+            w.writeLong(in.readSFixed64());
+        }
+        in.popLimit(limit);
+    }
+
+    public static void collectFloat(CodedInputStream in, ArrayContext ctx,
                                     NullDefaultRowWriter parent, int ordinal) throws IOException {
-    PrimitiveArrayWriter w = ctx.getOrCreate(parent, ordinal, 8);
-    w.writeDouble(in.readDouble());
-  }
+        PrimitiveArrayWriter w = ctx.getOrCreate(parent, ordinal, 4);
+        w.writeFloat(in.readFloat());
+    }
 
-  public static void collectPackedDouble(CodedInputStream in, ArrayContext ctx,
+    public static void collectPackedFloat(CodedInputStream in, ArrayContext ctx,
                                           NullDefaultRowWriter parent, int ordinal) throws IOException {
-    int length = in.readRawVarint32();
-    int sizeHint = length / 8;  // Exact: 8 bytes per double
-    PrimitiveArrayWriter w = ctx.getOrCreate(parent, ordinal, 8, sizeHint);
-    int limit = in.pushLimit(length);
-    while (in.getBytesUntilLimit() > 0) {
-      w.writeDouble(in.readDouble());
+        int length = in.readRawVarint32();
+        int sizeHint = length / 4;  // Exact: 4 bytes per float
+        PrimitiveArrayWriter w = ctx.getOrCreate(parent, ordinal, 4, sizeHint);
+        int limit = in.pushLimit(length);
+        while (in.getBytesUntilLimit() > 0) {
+            w.writeFloat(in.readFloat());
+        }
+        in.popLimit(limit);
     }
-    in.popLimit(limit);
-  }
 
-  public static void collectBool(CodedInputStream in, ArrayContext ctx,
-                                  NullDefaultRowWriter parent, int ordinal) throws IOException {
-    PrimitiveArrayWriter w = ctx.getOrCreate(parent, ordinal, 1);
-    w.writeBoolean(in.readBool());
-  }
-
-  public static void collectPackedBool(CodedInputStream in, ArrayContext ctx,
-                                        NullDefaultRowWriter parent, int ordinal) throws IOException {
-    int length = in.readRawVarint32();
-    int sizeHint = length;  // Exact: 1 byte per bool
-    PrimitiveArrayWriter w = ctx.getOrCreate(parent, ordinal, 1, sizeHint);
-    int limit = in.pushLimit(length);
-    while (in.getBytesUntilLimit() > 0) {
-      w.writeBoolean(in.readBool());
+    public static void collectDouble(CodedInputStream in, ArrayContext ctx,
+                                     NullDefaultRowWriter parent, int ordinal) throws IOException {
+        PrimitiveArrayWriter w = ctx.getOrCreate(parent, ordinal, 8);
+        w.writeDouble(in.readDouble());
     }
-    in.popLimit(limit);
-  }
 
-  public static void collectEnum(CodedInputStream in, ArrayContext ctx,
-                                  NullDefaultRowWriter parent, int ordinal) throws IOException {
-    PrimitiveArrayWriter w = ctx.getOrCreate(parent, ordinal, 4);
-    w.writeInt(in.readEnum());
-  }
+    public static void collectPackedDouble(CodedInputStream in, ArrayContext ctx,
+                                           NullDefaultRowWriter parent, int ordinal) throws IOException {
+        int length = in.readRawVarint32();
+        int sizeHint = length / 8;  // Exact: 8 bytes per double
+        PrimitiveArrayWriter w = ctx.getOrCreate(parent, ordinal, 8, sizeHint);
+        int limit = in.pushLimit(length);
+        while (in.getBytesUntilLimit() > 0) {
+            w.writeDouble(in.readDouble());
+        }
+        in.popLimit(limit);
+    }
 
-  public static void collectPackedEnum(CodedInputStream in, ArrayContext ctx,
-                                        NullDefaultRowWriter parent, int ordinal) throws IOException {
-    collectPackedRawVarint32(in, ctx, parent, ordinal);
-  }
+    public static void collectBool(CodedInputStream in, ArrayContext ctx,
+                                   NullDefaultRowWriter parent, int ordinal) throws IOException {
+        PrimitiveArrayWriter w = ctx.getOrCreate(parent, ordinal, 1);
+        w.writeBoolean(in.readBool());
+    }
 
-  // Repeated string/bytes/messages - must complete any active array first
-  // Shared collector for variable-length data (strings, bytes, messages)
-  private static void collectBuffer(CodedInputStream in, BufferList[] lists,
+    public static void collectPackedBool(CodedInputStream in, ArrayContext ctx,
+                                         NullDefaultRowWriter parent, int ordinal) throws IOException {
+        int length = in.readRawVarint32();
+        int sizeHint = length;  // Exact: 1 byte per bool
+        PrimitiveArrayWriter w = ctx.getOrCreate(parent, ordinal, 1, sizeHint);
+        int limit = in.pushLimit(length);
+        while (in.getBytesUntilLimit() > 0) {
+            w.writeBoolean(in.readBool());
+        }
+        in.popLimit(limit);
+    }
+
+    public static void collectEnum(CodedInputStream in, ArrayContext ctx,
+                                   NullDefaultRowWriter parent, int ordinal) throws IOException {
+        PrimitiveArrayWriter w = ctx.getOrCreate(parent, ordinal, 4);
+        w.writeInt(in.readEnum());
+    }
+
+    public static void collectPackedEnum(CodedInputStream in, ArrayContext ctx,
+                                         NullDefaultRowWriter parent, int ordinal) throws IOException {
+        collectPackedRawVarint32(in, ctx, parent, ordinal);
+    }
+
+    // Repeated string/bytes/messages - must complete any active array first
+    // Shared collector for variable-length data (strings, bytes, messages)
+    private static void collectBuffer(CodedInputStream in, BufferList[] lists,
+                                      int listIndex, ArrayContext arrayCtx,
+                                      NullDefaultRowWriter parent) throws IOException {
+        arrayCtx.completeIfActive(parent);
+        if (lists[listIndex] == null) {
+            lists[listIndex] = new BufferList();
+        }
+        lists[listIndex].add(in.readByteBuffer());
+    }
+
+    public static void collectString(CodedInputStream in, BufferList[] lists,
                                      int listIndex, ArrayContext arrayCtx,
                                      NullDefaultRowWriter parent) throws IOException {
-    arrayCtx.completeIfActive(parent);
-    if (lists[listIndex] == null) {
-      lists[listIndex] = new BufferList();
+        collectBuffer(in, lists, listIndex, arrayCtx, parent);
     }
-    lists[listIndex].add(in.readByteBuffer());
-  }
 
-  public static void collectString(CodedInputStream in, BufferList[] lists,
+    public static void collectBytes(CodedInputStream in, BufferList[] lists,
                                     int listIndex, ArrayContext arrayCtx,
                                     NullDefaultRowWriter parent) throws IOException {
-    collectBuffer(in, lists, listIndex, arrayCtx, parent);
-  }
-
-  public static void collectBytes(CodedInputStream in, BufferList[] lists,
-                                   int listIndex, ArrayContext arrayCtx,
-                                   NullDefaultRowWriter parent) throws IOException {
-    collectBuffer(in, lists, listIndex, arrayCtx, parent);
-  }
-
-  public static void collectMessage(CodedInputStream in, BufferList[] lists,
-                                     int listIndex, ArrayContext arrayCtx,
-                                     NullDefaultRowWriter parent) throws IOException {
-    collectBuffer(in, lists, listIndex, arrayCtx, parent);
-  }
-
-  // ===== Message Array Writers =====
-
-  /**
-   * Write collected message buffers as an array.
-   * Duplicated logic from StreamWireParser.writeMessageArrayFromBuffers.
-   */
-  public static void flushMessageArray(BufferList list, int ordinal,
-                                        StreamWireParser parser,
-                                        NullDefaultRowWriter writer) {
-    if (list == null || list.count == 0) return;
-
-    ByteBuffer[] messageBuffers = list.array;
-    int size = list.count;
-
-    int offset = writer.cursor();
-    org.apache.spark.sql.catalyst.expressions.codegen.UnsafeArrayWriter arrayWriter =
-        new org.apache.spark.sql.catalyst.expressions.codegen.UnsafeArrayWriter(writer.toUnsafeWriter(), 8);
-    arrayWriter.initialize(size);
-
-    // Lift writer acquisition outside loop for O(1) allocations instead of O(n)
-    RowWriter nestedWriter = parser.acquireNestedWriter((RowWriter) writer);
-    for (int i = 0; i < size; i++) {
-      int elemOffset = arrayWriter.cursor();
-      nestedWriter.resetRowWriter();
-      parser.parseInto(messageBuffers[i], nestedWriter);
-      arrayWriter.setOffsetAndSizeFromPreviousCursor(i, elemOffset);
+        collectBuffer(in, lists, listIndex, arrayCtx, parent);
     }
 
-    writer.writeVariableField(ordinal, offset);
-  }
-
-  // Shared flush method for variable-length data (strings, bytes)
-  private static void flushBufferArray(BufferList list, int ordinal,
-                                        NullDefaultRowWriter writer) {
-    if (list == null || list.count == 0) return;
-
-    ByteBuffer[] buffers = list.array;
-    int size = list.count;
-
-    int offset = writer.cursor();
-    org.apache.spark.sql.catalyst.expressions.codegen.UnsafeArrayWriter arrayWriter =
-        new org.apache.spark.sql.catalyst.expressions.codegen.UnsafeArrayWriter(writer.toUnsafeWriter(), 8);
-    arrayWriter.initialize(size);
-
-    for (int i = 0; i < size; i++) {
-      ByteBuffer buffer = buffers[i];
-      if (buffer.hasArray()) {
-        // Direct array access for heap ByteBuffers
-        arrayWriter.write(i, buffer.array(), buffer.arrayOffset() + buffer.position(), buffer.remaining());
-      } else {
-        // Copy for direct ByteBuffers (less common case)
-        byte[] bytes = new byte[buffer.remaining()];
-        buffer.duplicate().get(bytes);
-        arrayWriter.write(i, bytes);
-      }
+    public static void collectMessage(CodedInputStream in, BufferList[] lists,
+                                      int listIndex, ArrayContext arrayCtx,
+                                      NullDefaultRowWriter parent) throws IOException {
+        collectBuffer(in, lists, listIndex, arrayCtx, parent);
     }
 
-    writer.writeVariableField(ordinal, offset);
-  }
+    // ===== Message Array Writers =====
 
-  /**
-   * Write collected string buffers as an array.
-   * Duplicated logic from StreamWireParser.writeStringArrayFromBuffers.
-   */
-  public static void flushStringArray(BufferList list, int ordinal,
+    /**
+     * Write collected message buffers as an array.
+     * Duplicated logic from StreamWireParser.writeMessageArrayFromBuffers.
+     */
+    public static void flushMessageArray(BufferList list, int ordinal,
+                                         StreamWireParser parser,
+                                         NullDefaultRowWriter writer) {
+        if (list == null || list.count == 0) return;
+
+        ByteBuffer[] messageBuffers = list.array;
+        int size = list.count;
+
+        int offset = writer.cursor();
+        org.apache.spark.sql.catalyst.expressions.codegen.UnsafeArrayWriter arrayWriter =
+                new org.apache.spark.sql.catalyst.expressions.codegen.UnsafeArrayWriter(writer.toUnsafeWriter(), 8);
+        arrayWriter.initialize(size);
+
+        // Lift writer acquisition outside loop for O(1) allocations instead of O(n)
+        RowWriter nestedWriter = parser.acquireNestedWriter((RowWriter) writer);
+        for (int i = 0; i < size; i++) {
+            int elemOffset = arrayWriter.cursor();
+            nestedWriter.resetRowWriter();
+            parser.parseInto(messageBuffers[i], nestedWriter);
+            arrayWriter.setOffsetAndSizeFromPreviousCursor(i, elemOffset);
+        }
+
+        writer.writeVariableField(ordinal, offset);
+    }
+
+    // Shared flush method for variable-length data (strings, bytes)
+    private static void flushBufferArray(BufferList list, int ordinal,
+                                         NullDefaultRowWriter writer) {
+        if (list == null || list.count == 0) return;
+
+        ByteBuffer[] buffers = list.array;
+        int size = list.count;
+
+        int offset = writer.cursor();
+        org.apache.spark.sql.catalyst.expressions.codegen.UnsafeArrayWriter arrayWriter =
+                new org.apache.spark.sql.catalyst.expressions.codegen.UnsafeArrayWriter(writer.toUnsafeWriter(), 8);
+        arrayWriter.initialize(size);
+
+        for (int i = 0; i < size; i++) {
+            ByteBuffer buffer = buffers[i];
+            if (buffer.hasArray()) {
+                // Direct array access for heap ByteBuffers
+                arrayWriter.write(i, buffer.array(), buffer.arrayOffset() + buffer.position(), buffer.remaining());
+            } else {
+                // Copy for direct ByteBuffers (less common case)
+                byte[] bytes = new byte[buffer.remaining()];
+                buffer.duplicate().get(bytes);
+                arrayWriter.write(i, bytes);
+            }
+        }
+
+        writer.writeVariableField(ordinal, offset);
+    }
+
+    /**
+     * Write collected string buffers as an array.
+     * Duplicated logic from StreamWireParser.writeStringArrayFromBuffers.
+     */
+    public static void flushStringArray(BufferList list, int ordinal,
+                                        NullDefaultRowWriter writer) {
+        flushBufferArray(list, ordinal, writer);
+    }
+
+    /**
+     * Write collected bytes buffers as an array.
+     * Duplicated logic from StreamWireParser.writeBytesArrayFromBuffers.
+     */
+    public static void flushBytesArray(BufferList list, int ordinal,
                                        NullDefaultRowWriter writer) {
-    flushBufferArray(list, ordinal, writer);
-  }
-
-  /**
-   * Write collected bytes buffers as an array.
-   * Duplicated logic from StreamWireParser.writeBytesArrayFromBuffers.
-   */
-  public static void flushBytesArray(BufferList list, int ordinal,
-                                      NullDefaultRowWriter writer) {
-    flushBufferArray(list, ordinal, writer);
-  }
+        flushBufferArray(list, ordinal, writer);
+    }
 }
