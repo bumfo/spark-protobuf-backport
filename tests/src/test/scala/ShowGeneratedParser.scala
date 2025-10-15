@@ -20,7 +20,8 @@ object ShowGeneratedParser {
     "MutualA" -> MutualA.getDescriptor,
     "MutualB" -> MutualB.getDescriptor,
     "EmptyMessage" -> EmptyMessage.getDescriptor,
-    "SingleField" -> SingleField.getDescriptor
+    "SingleField" -> SingleField.getDescriptor,
+    "SingleIntField" -> SingleIntField.getDescriptor,
   )
 
   def main(args: Array[String]): Unit = {

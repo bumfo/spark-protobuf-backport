@@ -152,9 +152,20 @@ object InlineParserGenerator {
       ""
     }
 
+    // Check if arrayCtx is needed: for strings, bytes, messages, or repeated primitives
+    val schemaFieldNames = fieldMapping.keys.toSet
+    val needsArrayCtx = fields.exists { f =>
+      schemaFieldNames.contains(f.getNumber) && (
+        f.getType == FieldDescriptor.Type.STRING ||
+        f.getType == FieldDescriptor.Type.BYTES ||
+        f.getType == FieldDescriptor.Type.MESSAGE ||
+        f.isRepeated
+      )
+    }
+
     s"""
     |private static void $methodName(CodedInputStream input, NullDefaultRowWriter w$nestedParserParams) throws IOException {
-    |  ProtoRuntime.ArrayContext arrayCtx = new ProtoRuntime.ArrayContext();
+    |  ${if (needsArrayCtx) "ProtoRuntime.ArrayContext arrayCtx = new ProtoRuntime.ArrayContext();" else ""}
     |  ${if (repeatedVarLength.nonEmpty) s"BufferList[] bufferLists = new BufferList[${repeatedVarLength.size}];" else ""}
     |
     |  ${if (fieldMapping.isEmpty) {
@@ -172,7 +183,7 @@ object InlineParserGenerator {
           "  }"
         }}
     |
-    |  arrayCtx.completeIfActive(w);
+    |  ${if (needsArrayCtx) "arrayCtx.completeIfActive(w);" else ""}
     |  ${generateFlushCode(repeatedVarLength, fieldMapping, nestedParsers)}
     |}
     """.stripMargin
