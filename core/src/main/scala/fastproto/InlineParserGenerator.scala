@@ -61,7 +61,7 @@ object InlineParserGenerator {
       .map(f => f.getNumber -> s"parser_${f.getName}")
       .toMap
 
-    s"""
+    val code = s"""
     |package fastproto.generated;
     |import com.google.protobuf.CodedInputStream;
     |import fastproto.*;
@@ -117,6 +117,8 @@ object InlineParserGenerator {
     |  ${generateNestedParserSetters(nestedParsers)}
     |}
     """.stripMargin
+
+    code
   }
 
   /**

@@ -51,9 +51,9 @@ public final class ProtoRuntime {
      */
     public void completeIfActive(NullDefaultRowWriter parent) {
       if (writer != null && writer.size() > 0) {
-        int prevCursor = parent.cursor();
+        int startOffset = writer.getStartingOffset();
         writer.complete();
-        parent.writeVariableField(fieldOrdinal, prevCursor);
+        parent.writeVariableField(fieldOrdinal, startOffset);
       }
       writer = null;
       fieldOrdinal = -1;
@@ -196,8 +196,8 @@ public final class ProtoRuntime {
     PrimitiveArrayWriter w = ctx.getOrCreate(parent, ordinal, 4);
     int length = in.readRawVarint32();
     int limit = in.pushLimit(length);
-    while (!in.isAtEnd()) {
-      w.writeInt(in.readInt32());
+    while (in.getBytesUntilLimit() > 0) {
+      w.writeInt(in.readRawVarint32());
     }
     in.popLimit(limit);
   }
@@ -213,8 +213,8 @@ public final class ProtoRuntime {
     PrimitiveArrayWriter w = ctx.getOrCreate(parent, ordinal, 8);
     int length = in.readRawVarint32();
     int limit = in.pushLimit(length);
-    while (!in.isAtEnd()) {
-      w.writeLong(in.readInt64());
+    while (in.getBytesUntilLimit() > 0) {
+      w.writeLong(in.readRawVarint64());
     }
     in.popLimit(limit);
   }
@@ -230,8 +230,8 @@ public final class ProtoRuntime {
     PrimitiveArrayWriter w = ctx.getOrCreate(parent, ordinal, 4);
     int length = in.readRawVarint32();
     int limit = in.pushLimit(length);
-    while (!in.isAtEnd()) {
-      w.writeInt(in.readUInt32());
+    while (in.getBytesUntilLimit() > 0) {
+      w.writeInt(in.readRawVarint32());
     }
     in.popLimit(limit);
   }
@@ -247,8 +247,8 @@ public final class ProtoRuntime {
     PrimitiveArrayWriter w = ctx.getOrCreate(parent, ordinal, 8);
     int length = in.readRawVarint32();
     int limit = in.pushLimit(length);
-    while (!in.isAtEnd()) {
-      w.writeLong(in.readUInt64());
+    while (in.getBytesUntilLimit() > 0) {
+      w.writeLong(in.readRawVarint64());
     }
     in.popLimit(limit);
   }
@@ -264,7 +264,7 @@ public final class ProtoRuntime {
     PrimitiveArrayWriter w = ctx.getOrCreate(parent, ordinal, 4);
     int length = in.readRawVarint32();
     int limit = in.pushLimit(length);
-    while (!in.isAtEnd()) {
+    while (in.getBytesUntilLimit() > 0) {
       w.writeInt(in.readSInt32());
     }
     in.popLimit(limit);
@@ -281,7 +281,7 @@ public final class ProtoRuntime {
     PrimitiveArrayWriter w = ctx.getOrCreate(parent, ordinal, 8);
     int length = in.readRawVarint32();
     int limit = in.pushLimit(length);
-    while (!in.isAtEnd()) {
+    while (in.getBytesUntilLimit() > 0) {
       w.writeLong(in.readSInt64());
     }
     in.popLimit(limit);
@@ -298,7 +298,7 @@ public final class ProtoRuntime {
     PrimitiveArrayWriter w = ctx.getOrCreate(parent, ordinal, 4);
     int length = in.readRawVarint32();
     int limit = in.pushLimit(length);
-    while (!in.isAtEnd()) {
+    while (in.getBytesUntilLimit() > 0) {
       w.writeInt(in.readFixed32());
     }
     in.popLimit(limit);
@@ -315,7 +315,7 @@ public final class ProtoRuntime {
     PrimitiveArrayWriter w = ctx.getOrCreate(parent, ordinal, 8);
     int length = in.readRawVarint32();
     int limit = in.pushLimit(length);
-    while (!in.isAtEnd()) {
+    while (in.getBytesUntilLimit() > 0) {
       w.writeLong(in.readFixed64());
     }
     in.popLimit(limit);
@@ -332,7 +332,7 @@ public final class ProtoRuntime {
     PrimitiveArrayWriter w = ctx.getOrCreate(parent, ordinal, 4);
     int length = in.readRawVarint32();
     int limit = in.pushLimit(length);
-    while (!in.isAtEnd()) {
+    while (in.getBytesUntilLimit() > 0) {
       w.writeInt(in.readSFixed32());
     }
     in.popLimit(limit);
@@ -349,7 +349,7 @@ public final class ProtoRuntime {
     PrimitiveArrayWriter w = ctx.getOrCreate(parent, ordinal, 8);
     int length = in.readRawVarint32();
     int limit = in.pushLimit(length);
-    while (!in.isAtEnd()) {
+    while (in.getBytesUntilLimit() > 0) {
       w.writeLong(in.readSFixed64());
     }
     in.popLimit(limit);
@@ -366,7 +366,7 @@ public final class ProtoRuntime {
     PrimitiveArrayWriter w = ctx.getOrCreate(parent, ordinal, 4);
     int length = in.readRawVarint32();
     int limit = in.pushLimit(length);
-    while (!in.isAtEnd()) {
+    while (in.getBytesUntilLimit() > 0) {
       w.writeFloat(in.readFloat());
     }
     in.popLimit(limit);
@@ -383,7 +383,7 @@ public final class ProtoRuntime {
     PrimitiveArrayWriter w = ctx.getOrCreate(parent, ordinal, 8);
     int length = in.readRawVarint32();
     int limit = in.pushLimit(length);
-    while (!in.isAtEnd()) {
+    while (in.getBytesUntilLimit() > 0) {
       w.writeDouble(in.readDouble());
     }
     in.popLimit(limit);
@@ -400,7 +400,7 @@ public final class ProtoRuntime {
     PrimitiveArrayWriter w = ctx.getOrCreate(parent, ordinal, 1);
     int length = in.readRawVarint32();
     int limit = in.pushLimit(length);
-    while (!in.isAtEnd()) {
+    while (in.getBytesUntilLimit() > 0) {
       w.writeBoolean(in.readBool());
     }
     in.popLimit(limit);
@@ -417,8 +417,8 @@ public final class ProtoRuntime {
     PrimitiveArrayWriter w = ctx.getOrCreate(parent, ordinal, 4);
     int length = in.readRawVarint32();
     int limit = in.pushLimit(length);
-    while (!in.isAtEnd()) {
-      w.writeInt(in.readEnum());
+    while (in.getBytesUntilLimit() > 0) {
+      w.writeInt(in.readRawVarint32());
     }
     in.popLimit(limit);
   }
