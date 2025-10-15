@@ -74,7 +74,11 @@ public final class ProtoRuntime {
             }
             // Slow path: switching fields (rare)
             completeIfActive(parent);
-            writer = new PrimitiveArrayWriter(parent, elementSize, sizeHint);
+            if (writer == null) {
+                writer = new PrimitiveArrayWriter(parent, elementSize, sizeHint);
+            } else {
+                writer.reset(elementSize, sizeHint);
+            }
             fieldOrdinal = ordinal;
             return writer;
         }
