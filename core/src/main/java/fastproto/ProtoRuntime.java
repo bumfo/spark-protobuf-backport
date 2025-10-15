@@ -23,17 +23,18 @@ import java.nio.ByteBuffer;
 
 /**
  * Runtime support for inline protobuf parsers generated for Spark columnar execution.
- *
+ * <p>
  * This class provides minimal static methods designed to be called from generated
  * switch-based parsers. Methods are kept small for JIT inlining and reuse existing
  * optimized writers (NullDefaultRowWriter, PrimitiveArrayWriter).
- *
+ * <p>
  * Key design principles:
  * - Single PrimitiveArrayWriter instance to avoid variable-length data interleaving
  * - Eager array completion before any variable-length writes
  * - BufferList array for multiple repeated message fields
  * - All methods are candidates for JIT inlining (@ForceInline would require JDK 9+)
  */
+@SuppressWarnings("unused")
 public final class ProtoRuntime {
 
   /**
@@ -442,30 +443,9 @@ public final class ProtoRuntime {
     collectPackedRawVarint32(in, ctx, parent, ordinal);
   }
 
-  // Repeated string/bytes - must complete any active array first
-  public static void collectString(CodedInputStream in, BufferList[] lists,
-                                    int listIndex, ArrayContext arrayCtx,
-                                    NullDefaultRowWriter parent) throws IOException {
-    arrayCtx.completeIfActive(parent);
-    if (lists[listIndex] == null) {
-      lists[listIndex] = new BufferList();
-    }
-    lists[listIndex].add(in.readByteBuffer());
-  }
-
-  public static void collectBytes(CodedInputStream in, BufferList[] lists,
-                                   int listIndex, ArrayContext arrayCtx,
-                                   NullDefaultRowWriter parent) throws IOException {
-    arrayCtx.completeIfActive(parent);
-    if (lists[listIndex] == null) {
-      lists[listIndex] = new BufferList();
-    }
-    lists[listIndex].add(in.readByteBuffer());
-  }
-
-  // ===== Repeated Message Collectors =====
-
-  public static void collectMessage(CodedInputStream in, BufferList[] lists,
+  // Repeated string/bytes/messages - must complete any active array first
+  // Shared collector for variable-length data (strings, bytes, messages)
+  private static void collectBuffer(CodedInputStream in, BufferList[] lists,
                                      int listIndex, ArrayContext arrayCtx,
                                      NullDefaultRowWriter parent) throws IOException {
     arrayCtx.completeIfActive(parent);
@@ -473,6 +453,24 @@ public final class ProtoRuntime {
       lists[listIndex] = new BufferList();
     }
     lists[listIndex].add(in.readByteBuffer());
+  }
+
+  public static void collectString(CodedInputStream in, BufferList[] lists,
+                                    int listIndex, ArrayContext arrayCtx,
+                                    NullDefaultRowWriter parent) throws IOException {
+    collectBuffer(in, lists, listIndex, arrayCtx, parent);
+  }
+
+  public static void collectBytes(CodedInputStream in, BufferList[] lists,
+                                   int listIndex, ArrayContext arrayCtx,
+                                   NullDefaultRowWriter parent) throws IOException {
+    collectBuffer(in, lists, listIndex, arrayCtx, parent);
+  }
+
+  public static void collectMessage(CodedInputStream in, BufferList[] lists,
+                                     int listIndex, ArrayContext arrayCtx,
+                                     NullDefaultRowWriter parent) throws IOException {
+    collectBuffer(in, lists, listIndex, arrayCtx, parent);
   }
 
   // ===== Message Array Writers =====
@@ -506,12 +504,9 @@ public final class ProtoRuntime {
     writer.writeVariableField(ordinal, offset);
   }
 
-  /**
-   * Write collected string buffers as an array.
-   * Duplicated logic from StreamWireParser.writeStringArrayFromBuffers.
-   */
-  public static void flushStringArray(BufferList list, int ordinal,
-                                       NullDefaultRowWriter writer) {
+  // Shared flush method for variable-length data (strings, bytes)
+  private static void flushBufferArray(BufferList list, int ordinal,
+                                        NullDefaultRowWriter writer) {
     if (list == null || list.count == 0) return;
 
     ByteBuffer[] buffers = list.array;
@@ -539,34 +534,20 @@ public final class ProtoRuntime {
   }
 
   /**
+   * Write collected string buffers as an array.
+   * Duplicated logic from StreamWireParser.writeStringArrayFromBuffers.
+   */
+  public static void flushStringArray(BufferList list, int ordinal,
+                                       NullDefaultRowWriter writer) {
+    flushBufferArray(list, ordinal, writer);
+  }
+
+  /**
    * Write collected bytes buffers as an array.
    * Duplicated logic from StreamWireParser.writeBytesArrayFromBuffers.
    */
   public static void flushBytesArray(BufferList list, int ordinal,
                                       NullDefaultRowWriter writer) {
-    if (list == null || list.count == 0) return;
-
-    ByteBuffer[] buffers = list.array;
-    int size = list.count;
-
-    int offset = writer.cursor();
-    org.apache.spark.sql.catalyst.expressions.codegen.UnsafeArrayWriter arrayWriter =
-        new org.apache.spark.sql.catalyst.expressions.codegen.UnsafeArrayWriter(writer.toUnsafeWriter(), 8);
-    arrayWriter.initialize(size);
-
-    for (int i = 0; i < size; i++) {
-      ByteBuffer buffer = buffers[i];
-      if (buffer.hasArray()) {
-        // Direct array access for heap ByteBuffers
-        arrayWriter.write(i, buffer.array(), buffer.arrayOffset() + buffer.position(), buffer.remaining());
-      } else {
-        // Copy for direct ByteBuffers (less common case)
-        byte[] bytes = new byte[buffer.remaining()];
-        buffer.duplicate().get(bytes);
-        arrayWriter.write(i, bytes);
-      }
-    }
-
-    writer.writeVariableField(ordinal, offset);
+    flushBufferArray(list, ordinal, writer);
   }
 }
