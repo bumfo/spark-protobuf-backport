@@ -1,5 +1,6 @@
-package fastproto
+package unit
 
+import fastproto.PrimitiveArrayWriter
 import org.apache.spark.sql.catalyst.expressions.UnsafeArrayData
 import org.apache.spark.sql.catalyst.expressions.codegen.UnsafeRowWriter
 import org.apache.spark.unsafe.Platform

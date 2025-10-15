@@ -332,7 +332,7 @@ public final class PrimitiveArrayWriter extends UnsafeWriter {
         return startingOffset;
     }
 
-    int getDataOffset() {
+    public int getDataOffset() {
         return dataOffset;
     }
 
