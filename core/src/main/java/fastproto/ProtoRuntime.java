@@ -61,19 +61,6 @@ public final class ProtoRuntime {
     }
 
     /**
-     * Get or create a PrimitiveArrayWriter for the specified field.
-     * If switching to a different field, completes the previous array first.
-     */
-    public PrimitiveArrayWriter getOrCreate(NullDefaultRowWriter parent, int ordinal, int elementSize) {
-      if (fieldOrdinal != ordinal) {
-        completeIfActive(parent);
-        writer = new PrimitiveArrayWriter(parent, elementSize, 32);
-        fieldOrdinal = ordinal;
-      }
-      return writer;
-    }
-
-    /**
      * Get or create a PrimitiveArrayWriter for the specified field with a size hint.
      * If switching to a different field, completes the previous array first.
      * The size hint helps pre-allocate the right capacity for packed fields.
@@ -85,6 +72,14 @@ public final class ProtoRuntime {
         fieldOrdinal = ordinal;
       }
       return writer;
+    }
+
+    /**
+     * Get or create a PrimitiveArrayWriter for the specified field.
+     * If switching to a different field, completes the previous array first.
+     */
+    public PrimitiveArrayWriter getOrCreate(NullDefaultRowWriter parent, int ordinal, int elementSize) {
+      return getOrCreate(parent, ordinal, elementSize, 32);
     }
 
     /**
