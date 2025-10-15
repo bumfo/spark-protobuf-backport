@@ -64,7 +64,8 @@ public final class PrimitiveArrayWriter extends UnsafeWriter {
 
         // Pre-allocate header space for 64 elements: 8 bytes count + 8 bytes bitmap
         // This ensures zero data movement for arrays ≤64 elements
-        this.dataOffset = startingOffset + 16;
+        int headerBytes = initialCapacity > 64 ? calculateHeaderPortionInBytes(count) : 16;
+        dataOffset = startingOffset + headerBytes;
         this.writePosition = dataOffset;
 
         // Calculate current buffer capacity
