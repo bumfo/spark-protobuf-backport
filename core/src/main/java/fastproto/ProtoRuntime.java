@@ -52,7 +52,8 @@ public final class ProtoRuntime {
          * Must be called before any variable-length write operation.
          */
         public void completeIfActive(NullDefaultRowWriter parent) {
-            if (writer != null && writer.size() > 0) {
+            if (writer == null) return;
+            if (writer.size() > 0) {
                 int startOffset = writer.getStartingOffset();
                 writer.complete();
                 parent.writeVariableField(fieldOrdinal, startOffset);
@@ -67,11 +68,14 @@ public final class ProtoRuntime {
          * The size hint helps pre-allocate the right capacity for packed fields.
          */
         public PrimitiveArrayWriter getOrCreate(NullDefaultRowWriter parent, int ordinal, int elementSize, int sizeHint) {
-            if (fieldOrdinal != ordinal) {
-                completeIfActive(parent);
-                writer = new PrimitiveArrayWriter(parent, elementSize, sizeHint);
-                fieldOrdinal = ordinal;
+            // Fast path: return existing writer for same field (common case during array accumulation)
+            if (fieldOrdinal == ordinal) {
+                return writer;
             }
+            // Slow path: switching fields (rare)
+            completeIfActive(parent);
+            writer = new PrimitiveArrayWriter(parent, elementSize, sizeHint);
+            fieldOrdinal = ordinal;
             return writer;
         }
 
