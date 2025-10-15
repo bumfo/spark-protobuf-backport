@@ -39,7 +39,11 @@ import org.apache.spark.unsafe.Platform;
  *       writer.writeLong(value);
  *   }
  *   int count = writer.complete();
+ *   int offset = writer.getStartingOffset();  // MUST call after complete()
  * </pre>
+ *
+ * <p><b>IMPORTANT:</b> Always call {@code getStartingOffset()} AFTER {@code complete()}.
+ * The starting offset may change during {@code complete()} when header size adjustment occurs.
  */
 public final class PrimitiveArrayWriter extends UnsafeWriter {
 
@@ -294,6 +298,9 @@ public final class PrimitiveArrayWriter extends UnsafeWriter {
             );
             dataOffset = startingOffset + headerBytes;
             writePosition += headerBytes - currentHeader;
+        } else if (headerBytes < currentHeader) {
+            // Header is smaller than pre-allocated - move startingOffset forward
+            startingOffset += currentHeader - headerBytes;
         }
 
         // Zero out the entire null bitmap (pre-allocated 8 bytes covers ≤64 elements)

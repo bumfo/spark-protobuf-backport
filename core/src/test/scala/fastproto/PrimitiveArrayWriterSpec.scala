@@ -18,9 +18,9 @@ class PrimitiveArrayWriterSpec extends AnyFlatSpec with Matchers {
     writer.writeLong(200L)
     writer.writeLong(300L)
 
-    val offset = writer.getStartingOffset
     val count = writer.complete()
     count shouldBe 3
+    val offset = writer.getStartingOffset
 
     // Verify the array is valid UnsafeArrayData
     val size = rowWriter.cursor() - offset
@@ -42,9 +42,9 @@ class PrimitiveArrayWriterSpec extends AnyFlatSpec with Matchers {
     writer.writeInt(40)
     writer.writeInt(50)
 
-    val offset = writer.getStartingOffset
     val count = writer.complete()
     count shouldBe 5
+    val offset = writer.getStartingOffset
 
     val size = rowWriter.cursor() - offset
     val arrayData = new UnsafeArrayData
@@ -67,9 +67,9 @@ class PrimitiveArrayWriterSpec extends AnyFlatSpec with Matchers {
       writer.writeLong(i.toLong)
     }
 
-    val offset = writer.getStartingOffset
     val count = writer.complete()
     count shouldBe 64
+    val offset = writer.getStartingOffset
 
     // Verify no null bitmap was inserted (header is exactly 8 bytes for ≤64 elements)
     val size = rowWriter.cursor() - offset
@@ -93,9 +93,9 @@ class PrimitiveArrayWriterSpec extends AnyFlatSpec with Matchers {
       writer.writeLong(i.toLong)
     }
 
-    val offset = writer.getStartingOffset
     val count = writer.complete()
     count shouldBe 65
+    val offset = writer.getStartingOffset
 
     val size = rowWriter.cursor() - offset
     val arrayData = new UnsafeArrayData
@@ -120,9 +120,9 @@ class PrimitiveArrayWriterSpec extends AnyFlatSpec with Matchers {
         writer.writeInt(i)
       }
 
-      val offset = writer.getStartingOffset
       val count = writer.complete()
       count shouldBe testSize
+      val offset = writer.getStartingOffset
 
       val size = rowWriter.cursor() - offset
       val arrayData = new UnsafeArrayData
@@ -141,9 +141,9 @@ class PrimitiveArrayWriterSpec extends AnyFlatSpec with Matchers {
     val writer = new PrimitiveArrayWriter(rowWriter, 8, 0)
 
     // Don't write anything
-    val offset = writer.getStartingOffset
     val count = writer.complete()
     count shouldBe 0
+    val offset = writer.getStartingOffset
 
     val size = rowWriter.cursor() - offset
     val arrayData = new UnsafeArrayData
@@ -203,9 +203,9 @@ class PrimitiveArrayWriterSpec extends AnyFlatSpec with Matchers {
       writer.writeLong(i * 1000L)
     }
 
-    val offset = writer.getStartingOffset
     val count = writer.complete()
     count shouldBe 100
+    val offset = writer.getStartingOffset
 
     val size = rowWriter.cursor() - offset
     val arrayData = new UnsafeArrayData
@@ -227,9 +227,9 @@ class PrimitiveArrayWriterSpec extends AnyFlatSpec with Matchers {
     writer.writeLong(2L)
     writer.writeLong(3L)
 
-    val offset = writer.getStartingOffset
     val count = writer.complete()
     count shouldBe 3
+    val offset = writer.getStartingOffset
 
     val size = rowWriter.cursor() - offset
     val arrayData = new UnsafeArrayData
@@ -270,9 +270,9 @@ class PrimitiveArrayWriterSpec extends AnyFlatSpec with Matchers {
       writer.writeLong(i * 100L)
     }
 
-    val offset = writer.getStartingOffset
     val count = writer.complete()
     count shouldBe 1000
+    val offset = writer.getStartingOffset
 
     // Verify output is valid UnsafeArrayData
     val size = rowWriter.cursor() - offset
@@ -296,13 +296,12 @@ class PrimitiveArrayWriterSpec extends AnyFlatSpec with Matchers {
       writer.writeLong(i * 10L)
     }
 
-    val offset = writer.getStartingOffset
-
     // First complete() - should expand header from 16 to 24 bytes
     val count1 = writer.complete()
     count1 shouldBe 65
 
     // Verify array after first complete()
+    val offset = writer.getStartingOffset
     val size1 = rowWriter.cursor() - offset
     val arrayData1 = new UnsafeArrayData
     arrayData1.pointTo(rowWriter.getBuffer, offset, size1)
@@ -354,10 +353,10 @@ class PrimitiveArrayWriterSpec extends AnyFlatSpec with Matchers {
     writer.getDataOffset shouldBe writer.getStartingOffset + 16
     writer.getBuffer.length shouldBe initialBufSize
 
-    val offset = writer.getStartingOffset
     val count = writer.complete()
 
     count shouldBe 65
+    val offset = writer.getStartingOffset
 
     writer.getDataOffset shouldBe writer.getStartingOffset + 24
     (writer.getBuffer.length - (writer.getDataOffset - Platform.BYTE_ARRAY_OFFSET)) / 8 >= 65 shouldBe true

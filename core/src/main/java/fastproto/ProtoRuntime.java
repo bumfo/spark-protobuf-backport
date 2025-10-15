@@ -58,8 +58,8 @@ public final class ProtoRuntime {
         public void completeIfActive(NullDefaultRowWriter parent) {
             if (fieldOrdinal == -1) return;  // No active field yet
             if (writer.size() > 0) {
-                int startOffset = writer.getStartingOffset();
                 writer.complete();
+                int startOffset = writer.getStartingOffset();
                 parent.writeVariableField(fieldOrdinal, startOffset);
             }
             fieldOrdinal = -1;
