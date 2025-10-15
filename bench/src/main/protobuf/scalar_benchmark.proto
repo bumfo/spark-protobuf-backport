@@ -1,0 +1,30 @@
+syntax = "proto3";
+
+package benchmark;
+
+option java_package = "benchmark";
+option java_outer_classname = "ScalarBenchmarkProtos";
+
+// Message with 4 scalar fields for scalar benchmarking
+message ScalarMessage {
+  int32 int32_field = 1;
+  int64 int64_field = 2;
+  float float_field = 3;
+  double double_field = 4;
+}
+
+// Message with 4 repeated scalar fields for array benchmarking (packed)
+message ScalarArrayMessage {
+  repeated int32 int32_array = 1 [packed = true];
+  repeated int64 int64_array = 2 [packed = true];
+  repeated float float_array = 3 [packed = true];
+  repeated double double_array = 4 [packed = true];
+}
+
+// Message with 4 repeated scalar fields for array benchmarking (unpacked)
+message ScalarArrayUnpackedMessage {
+  repeated int32 int32_array = 1 [packed = false];
+  repeated int64 int64_array = 2 [packed = false];
+  repeated float float_array = 3 [packed = false];
+  repeated double double_array = 4 [packed = false];
+}
