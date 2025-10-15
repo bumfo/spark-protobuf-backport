@@ -55,13 +55,15 @@ object InlineParserGenerator {
     // All repeated variable-length fields (strings, bytes, messages) that are in the schema
     val repeatedVarLength = repeatedStrings ++ repeatedBytes ++ repeatedMessages
 
-    // Build nested parsers map - only include fields that are in the schema
+    // Build nested parsers map - one parser per message type (not per field)
+    // Map: field number -> parser variable name
     val nestedParsers = fields
       .filter(f => isMessage(f) && schemaFieldNames.contains(f.getName))
-      .map(f => f.getNumber -> s"parser_${f.getName}")
+      .map(f => f.getNumber -> s"parser_${f.getMessageType.getName}")
       .toMap
 
     val staticMethodName = s"${className}_parseIntoImpl"
+    val uniqueParserNames = deduplicateParserNames(nestedParsers)
 
     val code = s"""
     |package fastproto.generated;
@@ -71,7 +73,7 @@ object InlineParserGenerator {
     |
     |public final class $className extends StreamWireParser {
     |
-    |  ${generateNestedParserFields(nestedParsers)}
+    |  ${generateNestedParserFields(uniqueParserNames)}
     |
     |  public $className(org.apache.spark.sql.types.StructType schema) {
     |    super(schema);
@@ -79,12 +81,12 @@ object InlineParserGenerator {
     |
     |  @Override
     |  protected void parseInto(CodedInputStream input, RowWriter writer) throws IOException {
-    |    $staticMethodName(input, (NullDefaultRowWriter) writer${if (nestedParsers.nonEmpty) nestedParsers.keys.map(k => s", parser_${fields.find(_.getNumber == k).get.getName}").mkString("", "", "") else ""});
+    |    $staticMethodName(input, (NullDefaultRowWriter) writer${if (uniqueParserNames.nonEmpty) ", " + uniqueParserNames.mkString(", ") else ""});
     |  }
     |
-    |  ${generateParserMethodImpl(staticMethodName, fields, fieldMapping, repeatedVarLength, nestedParsers)}
+    |  ${generateParserMethodImpl(staticMethodName, uniqueParserNames, fields, fieldMapping, repeatedVarLength, nestedParsers)}
     |
-    |  ${generateNestedParserSetters(nestedParsers)}
+    |  ${generateNestedParserSetters(uniqueParserNames)}
     |}
     """.stripMargin
 
@@ -108,18 +110,28 @@ object InlineParserGenerator {
 
     val nestedParsers = fields
       .filter(f => isMessage(f) && schemaFieldNames.contains(f.getName))
-      .map(f => f.getNumber -> s"${methodName}_${f.getName}")
+      .map(f => f.getNumber -> s"${methodName}_${f.getMessageType.getName}")
       .toMap
+
+    val uniqueParserNames = deduplicateParserNames(nestedParsers)
 
     s"""
     |public static void $methodName(byte[] data, NullDefaultRowWriter writer) throws IOException {
     |  CodedInputStream input = CodedInputStream.newInstance(data);
     |  writer.resetRowWriter();
-    |  ${methodName}_impl(input, writer${if (nestedParsers.nonEmpty) nestedParsers.values.map(p => s", $p").mkString("", "", "") else ""});
+    |  ${methodName}_impl(input, writer${if (uniqueParserNames.nonEmpty) ", " + uniqueParserNames.mkString(", ") else ""});
     |}
     |
-    |${generateParserMethodImpl(s"${methodName}_impl", fields, fieldMapping, repeatedVarLength, nestedParsers)}
+    |${generateParserMethodImpl(s"${methodName}_impl", uniqueParserNames, fields, fieldMapping, repeatedVarLength, nestedParsers)}
     """.stripMargin
+  }
+
+  /**
+   * Deduplicate parser names from nestedParsers map.
+   * Returns sorted list of unique parser variable names.
+   */
+  private def deduplicateParserNames(nestedParsers: Map[Int, String]): Seq[String] = {
+    nestedParsers.values.toSet.toSeq.sorted
   }
 
   /**
@@ -128,13 +140,14 @@ object InlineParserGenerator {
    */
   private def generateParserMethodImpl(
       methodName: String,
+      uniqueParserNames: Seq[String],
       fields: Seq[FieldDescriptor],
       fieldMapping: Map[Int, Int],
       repeatedVarLength: Seq[FieldDescriptor],
       nestedParsers: Map[Int, String]): String = {
 
-    val nestedParserParams = if (nestedParsers.nonEmpty) {
-      ", " + nestedParsers.values.map(name => s"StreamWireParser $name").mkString(", ")
+    val nestedParserParams = if (uniqueParserNames.nonEmpty) {
+      ", " + uniqueParserNames.map(name => s"StreamWireParser $name").mkString(", ")
     } else {
       ""
     }
@@ -219,7 +232,7 @@ object InlineParserGenerator {
       case FieldDescriptor.Type.STRING => s"ProtoRuntime.writeString(input, w, $ordinal, arrayCtx);"
       case FieldDescriptor.Type.BYTES => s"ProtoRuntime.writeBytes(input, w, $ordinal, arrayCtx);"
       case FieldDescriptor.Type.MESSAGE =>
-        s"ProtoRuntime.writeMessage(input, w, $ordinal, arrayCtx, parser_${field.getName});"
+        s"ProtoRuntime.writeMessage(input, w, $ordinal, arrayCtx, parser_${field.getMessageType.getName});"
       case FieldDescriptor.Type.GROUP =>
         throw new UnsupportedOperationException("GROUP type is deprecated and not supported")
     }
@@ -291,19 +304,19 @@ object InlineParserGenerator {
     }.mkString("\n    ")
   }
 
-  private def generateNestedParserFields(nestedParsers: Map[Int, String]): String = {
-    if (nestedParsers.isEmpty) return ""
-    nestedParsers.values.map { name =>
+  private def generateNestedParserFields(uniqueParserNames: Seq[String]): String = {
+    if (uniqueParserNames.isEmpty) return ""
+    uniqueParserNames.map { name =>
       s"private StreamWireParser $name;"
     }.mkString("\n  ")
   }
 
-  private def generateNestedParserSetters(nestedParsers: Map[Int, String]): String = {
-    if (nestedParsers.isEmpty) return ""
-    nestedParsers.map { case (fieldNum, name) =>
+  private def generateNestedParserSetters(uniqueParserNames: Seq[String]): String = {
+    if (uniqueParserNames.isEmpty) return ""
+    uniqueParserNames.map { name =>
       s"""
-      |public void setNestedParser$fieldNum(StreamWireParser parser) {
-      |  if (this.$name != null) throw new IllegalStateException("Parser $fieldNum already set");
+      |public void set${name.capitalize}(StreamWireParser parser) {
+      |  if (this.$name != null) throw new IllegalStateException("$name already set");
       |  this.$name = parser;
       |}
       """.stripMargin

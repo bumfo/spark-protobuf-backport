@@ -130,10 +130,14 @@ object InlineParserToRowGenerator {
     val parser = localParsers(key)
 
     // Set nested parsers - only for fields that exist in both descriptor and schema
+    // Group by message type to avoid setting the same parser multiple times
     val messageFields = descriptor.getFields.asScala.filter { field =>
       field.getType == FieldDescriptor.Type.MESSAGE && schema.fieldNames.contains(field.getName)
     }
-    messageFields.foreach { field =>
+
+    val uniqueMessageTypes = messageFields.groupBy(_.getMessageType.getName).map(_._2.head)
+
+    uniqueMessageTypes.foreach { field =>
       val fieldIndex = schema.fieldIndex(field.getName)
       val sparkField = schema.fields(fieldIndex)
 
@@ -152,7 +156,8 @@ object InlineParserToRowGenerator {
         throw new IllegalStateException(s"Nested parser not found: $nestedKey")
       )
 
-      val setterMethod = parser.getClass.getMethod(s"setNestedParser${field.getNumber}", classOf[StreamWireParser])
+      val setterName = s"setParser_${field.getMessageType.getName}"
+      val setterMethod = parser.getClass.getMethod(setterName, classOf[StreamWireParser])
       setterMethod.invoke(parser, nestedParser)
     }
 

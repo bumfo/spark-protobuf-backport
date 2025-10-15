@@ -17,6 +17,8 @@ object ShowGeneratedParser {
     "CompleteMessage" -> CompleteMessage.getDescriptor,
     "Nested" -> Nested.getDescriptor,
     "Recursive" -> Recursive.getDescriptor,
+    "MutualA" -> MutualA.getDescriptor,
+    "MutualB" -> MutualB.getDescriptor,
     "EmptyMessage" -> EmptyMessage.getDescriptor,
     "SingleField" -> SingleField.getDescriptor
   )
