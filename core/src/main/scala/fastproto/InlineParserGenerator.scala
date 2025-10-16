@@ -36,6 +36,15 @@ import scala.collection.JavaConverters._
 object InlineParserGenerator {
 
   /**
+   * Convert a fully qualified protobuf name to a valid Java identifier.
+   * Replaces dots with underscores to avoid conflicts between types with same simple name.
+   * Example: "foo.bar.Person" -> "foo_bar_Person"
+   */
+  private def sanitizeFullName(fullName: String): String = {
+    fullName.replace('.', '_')
+  }
+
+  /**
    * Generate a complete parser class for a protobuf message.
    */
   def generateParser(
@@ -57,9 +66,10 @@ object InlineParserGenerator {
 
     // Build nested parsers map - one parser per message type (not per field)
     // Map: field number -> parser variable name
+    // Use fully qualified name to avoid collisions when different packages have types with same simple name
     val nestedParsers = fields
       .filter(f => isMessage(f) && schemaFieldNames.contains(f.getName))
-      .map(f => f.getNumber -> s"parser_${f.getMessageType.getName}")
+      .map(f => f.getNumber -> s"parser_${sanitizeFullName(f.getMessageType.getFullName)}")
       .toMap
 
     val staticMethodName = s"${className}_parseIntoImpl"
@@ -110,7 +120,7 @@ object InlineParserGenerator {
 
     val nestedParsers = fields
       .filter(f => isMessage(f) && schemaFieldNames.contains(f.getName))
-      .map(f => f.getNumber -> s"${methodName}_${f.getMessageType.getName}")
+      .map(f => f.getNumber -> s"${methodName}_${sanitizeFullName(f.getMessageType.getFullName)}")
       .toMap
 
     val uniqueParserNames = deduplicateParserNames(nestedParsers)
@@ -177,7 +187,7 @@ object InlineParserGenerator {
           s"while (!input.isAtEnd()) {\n" +
           "    int tag = input.readTag();\n" +
           "    switch (tag) {\n" +
-          s"      ${generateSwitchCases(fields, fieldMapping, repeatedVarLength)}\n" +
+          s"      ${generateSwitchCases(fields, fieldMapping, repeatedVarLength, nestedParsers)}\n" +
           "      default: input.skipField(tag); break;\n" +
           "    }\n" +
           "  }"
@@ -200,7 +210,8 @@ object InlineParserGenerator {
   private def generateSwitchCases(
       fields: Seq[FieldDescriptor],
       fieldMapping: Map[Int, Int],
-      repeatedVarLength: Seq[FieldDescriptor]): String = {
+      repeatedVarLength: Seq[FieldDescriptor],
+      nestedParsers: Map[Int, String]): String = {
 
     val varLengthIndices = repeatedVarLength.zipWithIndex.map { case (f, i) =>
       f.getNumber -> i
@@ -218,12 +229,12 @@ object InlineParserGenerator {
         generateRepeatedCases(field, ordinal, varLengthIndices.get(fieldNumber))
       } else {
         // Single field
-        List(generateSingleCase(field, ordinal))
+        List(generateSingleCase(field, ordinal, nestedParsers))
       }
     }.mkString("\n        ")
   }
 
-  private def generateSingleCase(field: FieldDescriptor, ordinal: Int): String = {
+  private def generateSingleCase(field: FieldDescriptor, ordinal: Int, nestedParsers: Map[Int, String]): String = {
     val tag = makeTag(field.getNumber, getWireType(field))
     val methodCall = field.getType match {
       case FieldDescriptor.Type.INT32 => s"ProtoRuntime.writeInt32(input, w, $ordinal);"
@@ -243,7 +254,8 @@ object InlineParserGenerator {
       case FieldDescriptor.Type.STRING => s"ProtoRuntime.writeString(input, w, $ordinal, arrayCtx);"
       case FieldDescriptor.Type.BYTES => s"ProtoRuntime.writeBytes(input, w, $ordinal, arrayCtx);"
       case FieldDescriptor.Type.MESSAGE =>
-        s"ProtoRuntime.writeMessage(input, w, $ordinal, arrayCtx, parser_${field.getMessageType.getName});"
+        val parserVar = nestedParsers(field.getNumber)
+        s"ProtoRuntime.writeMessage(input, w, $ordinal, arrayCtx, $parserVar);"
       case FieldDescriptor.Type.GROUP =>
         throw new UnsupportedOperationException("GROUP type is deprecated and not supported")
     }

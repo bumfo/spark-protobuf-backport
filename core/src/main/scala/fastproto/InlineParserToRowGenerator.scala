@@ -19,6 +19,14 @@ import scala.collection.JavaConverters._
  */
 object InlineParserToRowGenerator {
 
+  /**
+   * Convert a fully qualified protobuf name to a valid Java identifier.
+   * Must match InlineParserGenerator.sanitizeFullName.
+   */
+  private def sanitizeFullName(fullName: String): String = {
+    fullName.replace('.', '_')
+  }
+
   // Global cache for compiled classes (classes are immutable and thread-safe)
   private val classCache: ConcurrentHashMap[String, Class[_ <: StreamWireParser]] =
     new ConcurrentHashMap()
@@ -130,12 +138,12 @@ object InlineParserToRowGenerator {
     val parser = localParsers(key)
 
     // Set nested parsers - only for fields that exist in both descriptor and schema
-    // Group by message type to avoid setting the same parser multiple times
+    // Group by message type (using full name) to avoid setting the same parser multiple times
     val messageFields = descriptor.getFields.asScala.filter { field =>
       field.getType == FieldDescriptor.Type.MESSAGE && schema.fieldNames.contains(field.getName)
     }
 
-    val uniqueMessageTypes = messageFields.groupBy(_.getMessageType.getName).map(_._2.head)
+    val uniqueMessageTypes = messageFields.groupBy(_.getMessageType.getFullName).map(_._2.head)
 
     uniqueMessageTypes.foreach { field =>
       val fieldIndex = schema.fieldIndex(field.getName)
@@ -156,7 +164,7 @@ object InlineParserToRowGenerator {
         throw new IllegalStateException(s"Nested parser not found: $nestedKey")
       )
 
-      val setterName = s"setParser_${field.getMessageType.getName}"
+      val setterName = s"setParser_${sanitizeFullName(field.getMessageType.getFullName)}"
       val setterMethod = parser.getClass.getMethod(setterName, classOf[StreamWireParser])
       setterMethod.invoke(parser, nestedParser)
     }
