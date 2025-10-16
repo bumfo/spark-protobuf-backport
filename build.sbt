@@ -71,7 +71,7 @@ lazy val core = project
 
 // Dedicated benchmark project
 lazy val bench = project
-  .dependsOn(core, core % "test->test")
+  .dependsOn(core, core % "test->test", tests % "test->compile")
   .enablePlugins(JmhPlugin)
   .settings(commonSettings)
   .settings(
@@ -189,12 +189,12 @@ allTestTiers := Def.sequential(
   integrationTests
 ).value
 
-lazy val showGeneratedCode = inputKey[Unit]("Show generated InlineParser code (usage: showGeneratedCode [MessageName])")
+lazy val showGeneratedCode = inputKey[Unit]("Show generated InlineParser code (usage: showGeneratedCode <MessageName> [--schema <schema>] [--compiled])")
 showGeneratedCode := Def.inputTaskDyn {
-  val args = Def.spaceDelimited("<message>").parsed
-  val messageArg = if (args.nonEmpty) s" ${args.head}" else ""
+  val args = Def.spaceDelimited("<message> [options]").parsed
+  val argsStr = if (args.nonEmpty) " " + args.mkString(" ") else ""
   Def.taskDyn {
-    (tests / Test / runMain).toTask(s" ShowGeneratedParser$messageArg")
+    (bench / Test / runMain).toTask(s" ShowGeneratedCode$argsStr")
   }
 }.evaluated
 

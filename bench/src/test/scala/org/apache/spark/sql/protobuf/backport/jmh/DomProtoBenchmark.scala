@@ -195,7 +195,7 @@ class DomProtoBenchmark {
   // === Deep DOM Benchmarks (depth=8, breadth=4) ===
   // Tests performance with deep recursive structures
 
-  @Benchmark
+  // @Benchmark
   def anInlineParser(bh: Blackhole): Unit = {
     bh.consume(domInlineParser.parse(deepDomBinary))
   }
@@ -205,7 +205,7 @@ class DomProtoBenchmark {
     bh.consume(domInlinePrunedParser.parse(deepDomBinary))
   }
 
-  @Benchmark
+  // @Benchmark
   def generatedWireFormatParser(bh: Blackhole): Unit = {
     bh.consume(domGeneratedWireParser.parse(deepDomBinary))
   }
@@ -215,17 +215,17 @@ class DomProtoBenchmark {
     bh.consume(domProtoToRowParser.parse(deepDomBinary))
   }
 
-  @Benchmark
+  // @Benchmark
   def directWireFormatParser(bh: Blackhole): Unit = {
     bh.consume(domDirectParser.parse(deepDomBinary))
   }
 
-  @Benchmark
+  // @Benchmark
   def prunedWireFormatParser(bh: Blackhole): Unit = {
     bh.consume(domPrunedParser.parse(deepDomBinary))
   }
 
-  @Benchmark
+  // @Benchmark
   def protoParsing(bh: Blackhole): Unit = {
     bh.consume(DomDocument.parseFrom(deepDomBinary))
   }
