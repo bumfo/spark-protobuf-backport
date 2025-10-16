@@ -86,22 +86,22 @@ class DomProtoBenchmark {
 
   // === Standard Complexity Benchmarks (depth=6, breadth=3) ===
 
-  @Benchmark
+  // @Benchmark
   def standardAnInlineParser(bh: Blackhole): Unit = {
     bh.consume(domInlineParser.parse(standardDomBinary))
   }
 
-  @Benchmark
+  // @Benchmark
   def standardGeneratedWireFormatParser(bh: Blackhole): Unit = {
     bh.consume(domGeneratedWireParser.parse(standardDomBinary))
   }
 
-  @Benchmark
+  // @Benchmark
   def standardProtoToRowParser(bh: Blackhole): Unit = {
     bh.consume(domProtoToRowParser.parse(standardDomBinary))
   }
 
-  @Benchmark
+  // @Benchmark
   def standardDirectWireFormatParser(bh: Blackhole): Unit = {
     bh.consume(domDirectParser.parse(standardDomBinary))
   }
@@ -130,12 +130,12 @@ class DomProtoBenchmark {
 
   // === Deep Complexity Benchmarks (depth=8, breadth=4) ===
 
-  // @Benchmark
+  @Benchmark
   def deepAnInlineParser(bh: Blackhole): Unit = {
     bh.consume(domInlineParser.parse(deepDomBinary))
   }
 
-  // @Benchmark
+  @Benchmark
   def deepGeneratedWireFormatParser(bh: Blackhole): Unit = {
     bh.consume(domGeneratedWireParser.parse(deepDomBinary))
   }
