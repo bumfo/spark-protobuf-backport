@@ -68,24 +68,24 @@ object ShowGeneratedCode {
     val key = s"${descriptor.getFullName}_${schema.hashCode()}"
     val className = s"GeneratedInlineParser_${messageName}_${Math.abs(key.hashCode)}"
 
-    // Always generate the source code first
-    val generatedSource = InlineParserGenerator.generateParser(className, descriptor, schema)
+    if (!showCompiled) {
+      // Show standalone generated source preview when not in compiled mode
+      val generatedSource = InlineParserGenerator.generateParser(className, descriptor, schema)
 
-    println("\n" + "="*80)
-    println(s"Generated InlineParser Source for $messageName")
-    println(s"Schema: ${if (customSchema.isDefined) "Custom (pruned)" else "Full"}")
-    println("="*80)
-    println(generatedSource)
-    println("="*80 + "\n")
+      println("\n" + "="*80)
+      println(s"Generated InlineParser Source for $messageName")
+      println(s"Schema: ${if (customSchema.isDefined) "Custom (pruned)" else "Full"}")
+      println("="*80)
+      println(generatedSource)
+      println("="*80 + "\n")
 
-    // Save source to file
-    val suffix = if (customSchema.isDefined) "_pruned" else ""
-    val sourceOutputPath = s"/tmp/generated_inline_parser_${messageName.toLowerCase}${suffix}.java"
-    Files.write(Paths.get(sourceOutputPath), generatedSource.getBytes(StandardCharsets.UTF_8))
-    println(s"Generated source saved to: $sourceOutputPath\n")
-
-    if (showCompiled) {
-      // Compile and show the actual compiled parser details
+      // Save source to file
+      val suffix = if (customSchema.isDefined) "_pruned" else ""
+      val sourceOutputPath = s"/tmp/generated_inline_parser_${messageName.toLowerCase}${suffix}.java"
+      Files.write(Paths.get(sourceOutputPath), generatedSource.getBytes(StandardCharsets.UTF_8))
+      println(s"Generated source saved to: $sourceOutputPath\n")
+    } else {
+      // Compile and show the actual compiled parser details (ground truth)
       println("\n" + "="*80)
       println(s"Compiled InlineParser Details for $messageName")
       println("="*80)
