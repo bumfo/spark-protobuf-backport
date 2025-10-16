@@ -124,17 +124,18 @@ object InlineParserToRowGenerator {
       schema: StructType,
       visited: scala.collection.mutable.Set[String] = scala.collection.mutable.Set()
   ): Unit = {
-    // Use only descriptor name for visited tracking
-    val descriptorName = descriptor.getFullName
+    // Use descriptor name + schema hash for visited tracking
+    // This is necessary for pruned schemas where the same descriptor
+    // may appear multiple times with different schemas
+    val key = s"${descriptor.getFullName}_${schema.hashCode()}"
 
     // Skip if already wired
-    if (visited.contains(descriptorName)) {
+    if (visited.contains(key)) {
       return
     }
-    visited.add(descriptorName)
+    visited.add(key)
 
-    // Parser lookup still uses the full key with schema hash
-    val key = s"${descriptor.getFullName}_${schema.hashCode()}"
+    // Get the parser for this descriptor+schema combination
     val parser = localParsers(key)
 
     // Set nested parsers - only for fields that exist in both descriptor and schema
