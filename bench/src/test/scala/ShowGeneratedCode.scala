@@ -211,17 +211,24 @@ object ShowGeneratedCode {
   }
 
   /**
-   * Recursively collect all parsers in the dependency tree
+   * Recursively collect all UNIQUE parser classes in the dependency tree.
+   * Shows one instance per unique class (for deduplication after canonical key optimization).
    */
   private def collectAllParsers(parser: StreamWireParser): Seq[StreamWireParser] = {
-    val visited = scala.collection.mutable.Set[String]()
+    val visitedClasses = scala.collection.mutable.Set[String]()
+    val visitedInstances = scala.collection.mutable.Set[Int]() // Track by identity hash
     val result = scala.collection.mutable.ArrayBuffer[StreamWireParser]()
 
     def visit(p: StreamWireParser): Unit = {
-      val className = p.getClass.getName
-      if (!visited.contains(className)) {
-        visited.add(className)
-        result += p
+      val instanceId = System.identityHashCode(p)
+      if (!visitedInstances.contains(instanceId)) {
+        visitedInstances.add(instanceId)
+
+        val className = p.getClass.getName
+        if (!visitedClasses.contains(className)) {
+          visitedClasses.add(className)
+          result += p
+        }
 
         // Find nested parsers
         val parserFields = p.getClass.getDeclaredFields.filter { field =>
