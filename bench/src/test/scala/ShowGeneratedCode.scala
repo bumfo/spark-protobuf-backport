@@ -8,6 +8,7 @@ import benchmark.SimpleBenchmarkProtos._
 import benchmark.ComplexBenchmarkProtos._
 import benchmark.ScalarBenchmarkProtos._
 import benchmark.DomBenchmarkProtos._
+import benchmark.MultiwayTreeProtos._
 import java.nio.file.{Files, Paths}
 import java.nio.charset.StandardCharsets
 import java.lang.reflect.Field
@@ -40,6 +41,8 @@ object ShowGeneratedCode {
     "DomDocument" -> DomDocument.getDescriptor,
     "DomNode" -> DomNode.getDescriptor,
     "DomStatistics" -> DomStatistics.getDescriptor,
+    "Tree" -> Tree.getDescriptor,
+    "Node" -> Node.getDescriptor,
   )
 
   private val availableMessages = testMessages ++ benchMessages
@@ -160,6 +163,7 @@ object ShowGeneratedCode {
           case "dom_pruned_4level" => Some(createDomPrunedSchema4Level())
           case "simple_pruned" => Some(createSimplePrunedSchema())
           case "complex_pruned" => Some(createComplexPrunedSchema())
+          case "diff_pruned" => Some(createDiffPrunedSchema())
           case _ => None
         }
       case _ => None
@@ -207,6 +211,33 @@ object ShowGeneratedCode {
     ))
     StructType(Seq(
       StructField("message_b", messageBSchema, nullable = true)
+    ))
+  }
+
+  private def createDiffPrunedSchema(): StructType = {
+    // Differential pruning test schema (from TestDifferentialPruning)
+    // root.left.right[0].right[0].left.value AND root.right[0].payload
+    val level4Schema = StructType(Seq(
+      StructField("value", IntegerType, nullable = false)
+    ))
+    val level3Schema = StructType(Seq(
+      StructField("left", level4Schema, nullable = true)
+    ))
+    val level2Schema = StructType(Seq(
+      StructField("right", ArrayType(level3Schema), nullable = true)
+    ))
+    val level1LeftSchema = StructType(Seq(
+      StructField("right", ArrayType(level2Schema), nullable = true)
+    ))
+    val level1RightSchema = StructType(Seq(
+      StructField("payload", StringType, nullable = false)
+    ))
+    val rootSchema = StructType(Seq(
+      StructField("left", level1LeftSchema, nullable = true),
+      StructField("right", ArrayType(level1RightSchema), nullable = true)
+    ))
+    StructType(Seq(
+      StructField("root", rootSchema, nullable = true)
     ))
   }
 
