@@ -18,14 +18,14 @@ import scala.collection.JavaConverters._
  * redundant compilation.
  *
  * Smart class specialization strategy:
- * - Uses two-level cache key: {canonical_hash}-{nested_hash}
- * - Leaf parsers use nested_hash = 0 (shared across all leaf instances)
- * - Non-leaf parsers use actual nested_hash (specialized per nested structure)
- * - Nested keys based on immediate children's canonical keys (depth-agnostic)
- * - Always generates specialized classes for optimal monomorphic dispatch
+ * - Uses unified canonical key with depth=1 expansion
+ * - Canonical key captures immediate structure + one level of nested MESSAGE fields
+ * - Field order implicit in concatenation (iterates over schema.fields)
+ * - Grandchildren remain generic (depth=0) for optimal code reuse
+ * - Always generates specialized classes for monomorphic dispatch
  *
- * Note: No threshold mechanism - each unique nested structure gets its own class.
- * In practice, explosion is bounded by query patterns, not compilation units.
+ * Cache key format: "FQN|canonical(depth=1)"
+ * Example: "testproto.Node|1:INT32:integer,2:MESSAGE:struct:{1:INT32:integer}"
  */
 object InlineParserToRowGenerator {
 
@@ -47,9 +47,8 @@ object InlineParserToRowGenerator {
     (hash.toLong & 0xFFFFFFFFL).toString
   }
 
-  // Global cache for compiled classes: canonical_key -> (nested_hash -> Class)
-  // nested_hash = "0" for shared version, actual hash for specialized versions
-  private val classCache: ConcurrentHashMap[String, ConcurrentHashMap[String, Class[_ <: StreamWireParser]]] =
+  // Global cache for compiled classes: "FQN|canonical(depth=1)" -> Class
+  private val classCache: ConcurrentHashMap[String, Class[_ <: StreamWireParser]] =
     new ConcurrentHashMap()
 
   // Thread-local cache for parser instances (instances have mutable state)
@@ -206,114 +205,80 @@ object InlineParserToRowGenerator {
   }
 
   /**
-   * Generate a canonical key based only on the field structure at the current level.
-   * This enables class reuse for parsers with identical field structures but different
-   * nested schema depths (e.g., recursive types with pruning).
+   * Generate a canonical key that captures parser structure up to specified depth.
    *
-   * The canonical key includes:
-   * - Descriptor full name
-   * - Field names and ordinals (sorted for determinism)
-   * - Field types (scalar, string, bytes, message, repeated)
-   * - For message fields: nested descriptor name only (not schema hash)
+   * The canonical key encodes:
+   * - Proto field numbers (wire format tag identification)
+   * - Proto types (wire format parsing logic)
+   * - Schema types (Spark SQL output types)
+   * - Field order (implicit in concatenation order, iterates over schema.fields)
+   *
+   * Depth parameter controls MESSAGE field expansion:
+   * - depth=0: MESSAGE fields use generic markers (no nested structure)
+   * - depth=1: MESSAGE fields expanded to show immediate children's structure
+   * - depth=N: MESSAGE fields expanded N levels deep
+   *
+   * Standard usage: depth=1 for optimal monomorphic dispatch.
+   * This captures immediate structure + one level of nesting, enabling class reuse
+   * for parsers with identical immediate+child structure but different grandchildren.
+   *
+   * Field signature format:
+   * - Scalar: "proto_num:proto_type:schema_type"
+   * - Message (depth=0): "proto_num:MESSAGE:schema_type"
+   * - Message (depth>0): "proto_num:MESSAGE:schema_type:{nested_canonical}"
+   *
+   * Examples:
+   * - depth=0: "1:INT32:integer,2:MESSAGE:struct"
+   * - depth=1: "1:INT32:integer,2:MESSAGE:struct:{1:INT32:integer}"
    */
-  private def generateCanonicalKey(descriptor: Descriptor, schema: StructType): String = {
-    val fields = descriptor.getFields.asScala
-      .filter(f => schema.fieldNames.contains(f.getName))
-      .map { field =>
-        val fieldIndex = schema.fieldIndex(field.getName)
-        val sparkField = schema.fields(fieldIndex)
+  private def generateCanonicalKey(descriptor: Descriptor, schema: StructType, depth: Int): String = {
+    schema.fields.map { sparkField =>
+      val fieldName = sparkField.name
+      val protoField = Option(descriptor.findFieldByName(fieldName))
+        .getOrElse(throw new IllegalArgumentException(
+          s"Schema field '$fieldName' not found in proto descriptor ${descriptor.getFullName}"))
 
-        val typeSignature = (field.getType, sparkField.dataType) match {
-          case (FieldDescriptor.Type.MESSAGE, _: StructType) =>
-            s"msg:${field.getMessageType.getFullName}"
-          case (FieldDescriptor.Type.MESSAGE, ArrayType(_: StructType, _)) =>
-            s"msg[]:${field.getMessageType.getFullName}"
-          case (_, ArrayType(elementType, _)) =>
-            s"${elementType.typeName}[]"
-          case (_, dataType) =>
-            dataType.typeName
-        }
-
-        s"${field.getNumber}:${field.getName}:$typeSignature"
+      val protoType = if (protoField.isRepeated) {
+        s"${protoField.getType}[]"
+      } else {
+        protoField.getType.toString
       }
-      .toSeq
-      .sorted
-      .mkString(",")
 
-    s"${descriptor.getFullName}|$fields"
-  }
+      val schemaType = sparkField.dataType.typeName
 
-  /**
-   * Compute nested key from all nested parser canonical keys.
-   * Returns "0" for leaf parsers (no nested message fields).
-   * For non-leaf parsers, returns hash of all nested canonical keys.
-   *
-   * IMPORTANT: Uses canonical keys (not schema hashes) for nested parsers.
-   * This means parsers with identical immediate structure share the same nested key,
-   * even if they differ in depth. This is intentional for maximum code reuse.
-   *
-   * Example: In a binary tree with depth 5:
-   * - Levels 1-3 have identical structure (left: Node, right: Node where both are recursive)
-   * - They all get the same nested key and share the same compiled class
-   * - Level 4 differs (left: Node-leaf, right: Node-leaf) and gets a different nested key
-   * - Result: 2 nested keys for Node canonical, not 5 (one per depth)
-   */
-  private def computeNestedKey(descriptor: Descriptor, schema: StructType): String = {
-    val messageFields = descriptor.getFields.asScala.filter { field =>
-      field.getType == FieldDescriptor.Type.MESSAGE && schema.fieldNames.contains(field.getName)
-    }
-
-    // Leaf parser: no nested message fields
-    if (messageFields.isEmpty) {
-      return "0"
-    }
-
-    // Compute nested key from all nested parser canonical keys
-    val nestedKeys = messageFields
-      .sortBy(_.getNumber)
-      .map { field =>
-        val fieldIndex = schema.fieldIndex(field.getName)
-        val sparkField = schema.fields(fieldIndex)
-
+      // Expand MESSAGE fields if depth > 0
+      if (protoField.getType == FieldDescriptor.Type.MESSAGE && depth > 0) {
         val nestedSchema = sparkField.dataType match {
           case struct: StructType => struct
           case ArrayType(struct: StructType, _) => struct
           case other =>
-            throw new IllegalArgumentException(s"Expected StructType or ArrayType[StructType] for message field ${field.getName}, got $other")
+            throw new IllegalArgumentException(
+              s"Expected StructType or ArrayType[StructType] for message field $fieldName, got $other")
         }
 
-        val nestedCanonicalKey = generateCanonicalKey(field.getMessageType, nestedSchema)
-        s"${field.getName}:$nestedCanonicalKey"
+        val nestedCanonical = generateCanonicalKey(protoField.getMessageType, nestedSchema, depth - 1)
+        s"${protoField.getNumber}:$protoType:$schemaType:{$nestedCanonical}"
+      } else {
+        s"${protoField.getNumber}:$protoType:$schemaType"
       }
-      .mkString("|")
-
-    unsignedHashString(nestedKeys.hashCode)
+    }.mkString(",")
   }
 
+
   /**
-   * Get or compile parser class using two-level cache.
-   * Uses canonical key + nested key for class generation.
-   * Leaf parsers (nested_hash=0) are shared, non-leaf parsers are specialized.
+   * Get or compile parser class using unified canonical key with depth=1.
+   * Cache key format: "FQN|canonical(depth=1)"
    */
   private def getOrCompileClass(descriptor: Descriptor, schema: StructType): Class[_ <: StreamWireParser] = {
-    val canonicalKey = generateCanonicalKey(descriptor, schema)
-    val nestedKey = computeNestedKey(descriptor, schema)
+    val canonicalKey = generateCanonicalKey(descriptor, schema, depth = 1)
+    val cacheKey = s"${descriptor.getFullName}|$canonicalKey"
 
-    // Leaf parsers use "0", non-leaf parsers use actual nested hash
-    // This ensures each unique nested structure gets its own specialized class
-
-    // Get or create nested cache map for this canonical key
-    val nestedCache = classCache.computeIfAbsent(
-      canonicalKey,
-      _ => new ConcurrentHashMap[String, Class[_ <: StreamWireParser]]()
-    )
-
-    // Check if class already exists for this nested key
-    Option(nestedCache.get(nestedKey)) match {
+    // Check if class already exists
+    Option(classCache.get(cacheKey)) match {
       case Some(clazz) => clazz
       case None =>
         // Compile new class
-        val className = s"GeneratedInlineParser_${descriptor.getName}_${unsignedHashString(canonicalKey.hashCode)}_$nestedKey"
+        val className = s"GeneratedInlineParser_${descriptor.getName}_${unsignedHashString(cacheKey.hashCode)}"
         val sourceCode = InlineParserGenerator.generateParser(className, descriptor, schema)
 
         // Compile using Janino
@@ -323,14 +288,13 @@ object InlineParserToRowGenerator {
         val generatedClass = compiler.getClassLoader.loadClass(s"fastproto.generated.$className").asInstanceOf[Class[_ <: StreamWireParser]]
 
         // Cache the compiled class and return
-        Option(nestedCache.putIfAbsent(nestedKey, generatedClass)).getOrElse(generatedClass)
+        Option(classCache.putIfAbsent(cacheKey, generatedClass)).getOrElse(generatedClass)
     }
   }
 
   /**
    * Compile and instantiate a single parser.
-   * Uses canonical key for class lookup (enables class reuse),
-   * but creates instance with full schema (preserves per-instance state).
+   * Uses unified canonical key (depth=1) for class lookup.
    */
   private def compileParser(descriptor: Descriptor, schema: StructType): StreamWireParser = {
     val parserClass = getOrCompileClass(descriptor, schema)
