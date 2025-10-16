@@ -16,8 +16,22 @@ import scala.collection.JavaConverters._
  *
  * Uses Janino for runtime Java compilation and caches generated parsers to avoid
  * redundant compilation.
+ *
+ * Smart class specialization strategy:
+ * - Uses two-level cache key: {canonical_hash}-{nested_hash}
+ * - Leaf parsers always use shared class (nested_hash = 0)
+ * - Non-leaf parsers: generate specialized classes if ≤ threshold configs, else share
+ * - Threshold prevents code explosion while preserving monomorphic dispatch
  */
 object InlineParserToRowGenerator {
+
+  /**
+   * Threshold for generating specialized classes vs shared classes.
+   * If a canonical key has ≤ SPECIALIZATION_THRESHOLD nested configurations,
+   * generate specialized classes for each (monomorphic dispatch).
+   * If > threshold, use shared class (polymorphic dispatch, save code size).
+   */
+  private val SPECIALIZATION_THRESHOLD = 10
 
   /**
    * Convert a fully qualified protobuf name to a valid Java identifier.
@@ -27,8 +41,13 @@ object InlineParserToRowGenerator {
     fullName.replace('.', '_')
   }
 
-  // Global cache for compiled classes (classes are immutable and thread-safe)
-  private val classCache: ConcurrentHashMap[String, Class[_ <: StreamWireParser]] =
+  // Global cache for compiled classes: canonical_key -> (nested_hash -> Class)
+  // nested_hash = "0" for shared version, actual hash for specialized versions
+  private val classCache: ConcurrentHashMap[String, ConcurrentHashMap[String, Class[_ <: StreamWireParser]]] =
+    new ConcurrentHashMap()
+
+  // Track nested configuration counts per canonical key for threshold decision
+  private val nestedConfigCounts: ConcurrentHashMap[String, java.util.concurrent.atomic.AtomicInteger] =
     new ConcurrentHashMap()
 
   // Thread-local cache for parser instances (instances have mutable state)
@@ -223,19 +242,84 @@ object InlineParserToRowGenerator {
   }
 
   /**
-   * Get or compile parser class using global class cache with canonical key.
-   * Uses canonical key for class compilation (based on field structure only),
-   * but instance cache still uses full key (descriptor + schema hash).
+   * Compute nested key from all nested parser canonical keys.
+   * Returns "0" for leaf parsers (no nested message fields).
+   * For non-leaf parsers, returns hash of all nested canonical keys.
+   */
+  private def computeNestedKey(descriptor: Descriptor, schema: StructType): String = {
+    val messageFields = descriptor.getFields.asScala.filter { field =>
+      field.getType == FieldDescriptor.Type.MESSAGE && schema.fieldNames.contains(field.getName)
+    }
+
+    // Leaf parser: no nested message fields
+    if (messageFields.isEmpty) {
+      return "0"
+    }
+
+    // Compute nested key from all nested parser canonical keys
+    val nestedKeys = messageFields
+      .sortBy(_.getNumber)
+      .map { field =>
+        val fieldIndex = schema.fieldIndex(field.getName)
+        val sparkField = schema.fields(fieldIndex)
+
+        val nestedSchema = sparkField.dataType match {
+          case struct: StructType => struct
+          case ArrayType(struct: StructType, _) => struct
+          case other =>
+            throw new IllegalArgumentException(s"Expected StructType or ArrayType[StructType] for message field ${field.getName}, got $other")
+        }
+
+        val nestedCanonicalKey = generateCanonicalKey(field.getMessageType, nestedSchema)
+        s"${field.getName}:$nestedCanonicalKey"
+      }
+      .mkString("|")
+
+    Math.abs(nestedKeys.hashCode).toString
+  }
+
+  /**
+   * Get or compile parser class using two-level cache with smart specialization.
+   * Uses canonical key + nested key for class generation.
+   * Applies threshold logic to decide between shared vs specialized classes.
    */
   private def getOrCompileClass(descriptor: Descriptor, schema: StructType): Class[_ <: StreamWireParser] = {
     val canonicalKey = generateCanonicalKey(descriptor, schema)
+    val nestedKey = computeNestedKey(descriptor, schema)
 
-    // Check global class cache first using canonical key
-    Option(classCache.get(canonicalKey)) match {
+    // Decide whether to use shared (0) or specialized (actual hash) version
+    val effectiveNestedKey = if (nestedKey == "0") {
+      // Leaf parser: always use shared
+      "0"
+    } else {
+      // Non-leaf parser: apply threshold logic
+      val counter = nestedConfigCounts.computeIfAbsent(
+        canonicalKey,
+        _ => new java.util.concurrent.atomic.AtomicInteger(0)
+      )
+      val configCount = counter.incrementAndGet()
+
+      if (configCount <= SPECIALIZATION_THRESHOLD) {
+        // Under threshold: use specialized class for monomorphic dispatch
+        nestedKey
+      } else {
+        // Over threshold: use shared class to prevent code explosion
+        "0"
+      }
+    }
+
+    // Get or create nested cache map for this canonical key
+    val nestedCache = classCache.computeIfAbsent(
+      canonicalKey,
+      _ => new ConcurrentHashMap[String, Class[_ <: StreamWireParser]]()
+    )
+
+    // Check if class already exists for this nested key
+    Option(nestedCache.get(effectiveNestedKey)) match {
       case Some(clazz) => clazz
       case None =>
         // Compile new class
-        val className = s"GeneratedInlineParser_${descriptor.getName}_${Math.abs(canonicalKey.hashCode)}"
+        val className = s"GeneratedInlineParser_${descriptor.getName}_${Math.abs(canonicalKey.hashCode)}_$effectiveNestedKey"
         val sourceCode = InlineParserGenerator.generateParser(className, descriptor, schema)
 
         // Compile using Janino
@@ -244,8 +328,8 @@ object InlineParserToRowGenerator {
         compiler.cook(sourceCode)
         val generatedClass = compiler.getClassLoader.loadClass(s"fastproto.generated.$className").asInstanceOf[Class[_ <: StreamWireParser]]
 
-        // Cache the compiled class globally using canonical key and return
-        Option(classCache.putIfAbsent(canonicalKey, generatedClass)).getOrElse(generatedClass)
+        // Cache the compiled class and return
+        Option(nestedCache.putIfAbsent(effectiveNestedKey, generatedClass)).getOrElse(generatedClass)
     }
   }
 
