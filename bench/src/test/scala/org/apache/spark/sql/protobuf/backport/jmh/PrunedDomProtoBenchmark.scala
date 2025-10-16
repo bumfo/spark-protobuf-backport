@@ -19,16 +19,24 @@ import java.util.concurrent.TimeUnit
  *
  * Configurable Parameters:
  * - accessDepth: How many levels deep to access the field (1-8)
- *   - 1 = root.tag_name (shallow)
- *   - 2 = root.children[].tag_name
- *   - 3 = root.children[].children[].tag_name
- *   - 4 = root.children[].children[].children[].tag_name (default)
+ *   - 1 = root.{field} (shallow)
+ *   - 2 = root.children[].{field}
+ *   - 3 = root.children[].children[].{field}
+ *   - 4 = root.children[].children[].children[].{field} (default)
  *   - 5+ = even deeper nesting
+ *
+ * - accessField: Which field to access at the leaf level
+ *   - tag_name (default): StringType field
+ *   - depth: IntegerType field
+ *   - node_id: StringType field
+ *   - node_type: IntegerType field (enum)
  *
  * Usage:
  * sbt jmhDomPruned
  * sbt "jmhDomPruned -p accessDepth=4"
  * sbt "jmhDomPruned -p accessDepth=1,2,3,4,5"
+ * sbt "jmhDomPruned -p accessField=tag_name,depth,node_id"
+ * sbt "jmhDomPruned -p accessDepth=2,4 -p accessField=tag_name,depth"
  */
 @BenchmarkMode(Array(Mode.AverageTime))
 @OutputTimeUnit(TimeUnit.NANOSECONDS)
@@ -38,9 +46,12 @@ import java.util.concurrent.TimeUnit
 @Measurement(iterations = 10, time = 1, timeUnit = TimeUnit.SECONDS)
 class PrunedDomProtoBenchmark {
 
-  // JMH parameter: depth of field access (1-8)
+  // JMH parameters
   @Param(Array("4"))
   var accessDepth: Int = _
+
+  @Param(Array("tag_name"))
+  var accessField: String = _
 
   // Test data
   var deepDomBinary: Array[Byte] = _ // depth=8, breadth=4
@@ -60,8 +71,8 @@ class PrunedDomProtoBenchmark {
     deepDomBinary = deepDom.toByteArray
     domDescriptor = deepDom.getDescriptorForType
 
-    // Create pruned schema based on accessDepth parameter
-    domPrunedSchema = createPrunedSchema(accessDepth)
+    // Create pruned schema based on accessDepth and accessField parameters
+    domPrunedSchema = createPrunedSchema(accessDepth, accessField)
 
     // Initialize parsers with pruned schema
     domPrunedWireParser = new WireFormatParser(domDescriptor, domPrunedSchema)
@@ -69,20 +80,30 @@ class PrunedDomProtoBenchmark {
   }
 
   /**
-   * Create a pruned schema that accesses tag_name at the specified depth.
+   * Create a pruned schema that accesses the specified field at the specified depth.
    *
    * Examples:
-   * - depth=1: root.tag_name
-   * - depth=2: root.children[].tag_name
-   * - depth=3: root.children[].children[].tag_name
-   * - depth=4: root.children[].children[].children[].tag_name
+   * - depth=1, field=tag_name: root.tag_name
+   * - depth=2, field=depth: root.children[].depth
+   * - depth=3, field=node_id: root.children[].children[].node_id
+   * - depth=4, field=tag_name: root.children[].children[].children[].tag_name
    */
-  private def createPrunedSchema(depth: Int): StructType = {
+  private def createPrunedSchema(depth: Int, fieldName: String): StructType = {
     require(depth >= 1 && depth <= 8, s"accessDepth must be 1-8, got $depth")
 
-    // Leaf level: just tag_name
+    // Get field type based on field name
+    val (sparkType, nullable) = fieldName match {
+      case "tag_name" => (StringType, false)
+      case "depth" => (IntegerType, false)
+      case "node_id" => (StringType, false)
+      case "node_type" => (IntegerType, false) // enum represented as int
+      case other => throw new IllegalArgumentException(
+        s"Unsupported accessField: $other. Valid values: tag_name, depth, node_id, node_type")
+    }
+
+    // Leaf level: just the specified field
     val leafSchema = StructType(Seq(
-      StructField("tag_name", StringType, nullable = false)
+      StructField(fieldName, sparkType, nullable = nullable)
     ))
 
     // Build nested structure from leaf up to desired depth
@@ -106,14 +127,14 @@ class PrunedDomProtoBenchmark {
     bh.consume(domPrunedInlineParser.parse(deepDomBinary))
   }
 
-  @Benchmark
+  // @Benchmark
   def prunedWireFormatParser(bh: Blackhole): Unit = {
     bh.consume(domPrunedWireParser.parse(deepDomBinary))
   }
 
   // === Baseline: Protobuf-only parsing (no Spark conversion) ===
 
-  @Benchmark
+  // @Benchmark
   def protoParsing(bh: Blackhole): Unit = {
     bh.consume(DomDocument.parseFrom(deepDomBinary))
   }
