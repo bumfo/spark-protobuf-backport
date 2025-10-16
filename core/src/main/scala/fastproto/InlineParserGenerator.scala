@@ -64,12 +64,12 @@ object InlineParserGenerator {
     // All repeated variable-length fields (strings, bytes, messages) that are in the schema
     val repeatedVarLength = repeatedStrings ++ repeatedBytes ++ repeatedMessages
 
-    // Build nested parsers map - one parser per message type (not per field)
+    // Build nested parsers map - one parser per field (not per message type)
     // Map: field number -> parser variable name
-    // Use fully qualified name to avoid collisions when different packages have types with same simple name
+    // Use field name + message type simple name for differential pruning support
     val nestedParsers = fields
       .filter(f => isMessage(f) && schemaFieldNames.contains(f.getName))
-      .map(f => f.getNumber -> s"parser_${sanitizeFullName(f.getMessageType.getFullName)}")
+      .map(f => f.getNumber -> s"parser_${f.getName}_${f.getMessageType.getName}")
       .toMap
 
     val staticMethodName = s"${className}_parseIntoImpl"
@@ -120,7 +120,7 @@ object InlineParserGenerator {
 
     val nestedParsers = fields
       .filter(f => isMessage(f) && schemaFieldNames.contains(f.getName))
-      .map(f => f.getNumber -> s"${methodName}_${sanitizeFullName(f.getMessageType.getFullName)}")
+      .map(f => f.getNumber -> s"${methodName}_${f.getName}_${f.getMessageType.getName}")
       .toMap
 
     val uniqueParserNames = deduplicateParserNames(nestedParsers)
