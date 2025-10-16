@@ -20,7 +20,11 @@ import scala.collection.JavaConverters._
  * Smart class specialization strategy:
  * - Uses two-level cache key: {canonical_hash}-{nested_hash}
  * - Leaf parsers always use shared class (nested_hash = 0)
- * - Non-leaf parsers: generate specialized classes if ≤ threshold configs, else share
+ * - Non-leaf parsers: two-pass compilation per compilation unit
+ *   1. First pass: collect all distinct nested keys per canonical key
+ *   2. Decide: specialize if ≤ threshold distinct keys, else share
+ *   3. Second pass: generate parsers with decided strategy
+ * - Nested keys based on immediate children's canonical keys (depth-agnostic)
  * - Threshold prevents code explosion while preserving monomorphic dispatch
  */
 object InlineParserToRowGenerator {
@@ -44,10 +48,6 @@ object InlineParserToRowGenerator {
   // Global cache for compiled classes: canonical_key -> (nested_hash -> Class)
   // nested_hash = "0" for shared version, actual hash for specialized versions
   private val classCache: ConcurrentHashMap[String, ConcurrentHashMap[String, Class[_ <: StreamWireParser]]] =
-    new ConcurrentHashMap()
-
-  // Track nested configuration counts per canonical key for threshold decision
-  private val nestedConfigCounts: ConcurrentHashMap[String, java.util.concurrent.atomic.AtomicInteger] =
     new ConcurrentHashMap()
 
   // Thread-local cache for parser instances (instances have mutable state)
@@ -80,13 +80,25 @@ object InlineParserToRowGenerator {
 
   /**
    * Create a parser with all its nested dependencies.
+   * Uses two-pass approach:
+   * 1. Collect all (canonicalKey, nestedKey) pairs in compilation unit
+   * 2. Decide specialization strategy based on distinct nestedKey count per canonicalKey
+   * 3. Generate parsers using the decided strategy
    */
   private def createParserGraph(descriptor: Descriptor, schema: StructType): StreamWireParser = {
-    // Create local parser map for this generation cycle
-    val localParsers = scala.collection.mutable.Map[String, StreamWireParser]()
+    // Phase 1: Collect all (canonicalKey, nestedKey) pairs
+    val nestedKeysByCanonical = scala.collection.mutable.Map[String, scala.collection.mutable.Set[String]]()
+    collectNestedKeys(descriptor, schema, nestedKeysByCanonical)
 
-    // Generate parsers for nested types
-    val rootParser = generateParserInternal(descriptor, schema, localParsers)
+    // Phase 2: Decide specialization strategy per canonicalKey
+    val specializationDecisions = nestedKeysByCanonical.map { case (canonicalKey, nestedKeys) =>
+      val shouldSpecialize = nestedKeys.size <= SPECIALIZATION_THRESHOLD
+      (canonicalKey, shouldSpecialize)
+    }.toMap
+
+    // Phase 3: Generate parsers with decided strategy
+    val localParsers = scala.collection.mutable.Map[String, StreamWireParser]()
+    val rootParser = generateParserInternal(descriptor, schema, localParsers, specializationDecisions)
 
     // Wire up nested parser dependencies
     wireDependencies(localParsers, descriptor, schema)
@@ -95,12 +107,57 @@ object InlineParserToRowGenerator {
   }
 
   /**
+   * Collect all (canonicalKey, nestedKey) pairs in the compilation unit.
+   * This first pass determines how many distinct nested configurations exist per canonical key.
+   */
+  private def collectNestedKeys(
+      descriptor: Descriptor,
+      schema: StructType,
+      nestedKeysByCanonical: scala.collection.mutable.Map[String, scala.collection.mutable.Set[String]],
+      visited: scala.collection.mutable.Set[String] = scala.collection.mutable.Set()
+  ): Unit = {
+    val key = s"${descriptor.getFullName}_${schema.hashCode()}"
+
+    // Skip if already visited
+    if (visited.contains(key)) {
+      return
+    }
+    visited.add(key)
+
+    val canonicalKey = generateCanonicalKey(descriptor, schema)
+    val nestedKey = computeNestedKey(descriptor, schema)
+
+    // Track this (canonicalKey, nestedKey) pair
+    val nestedKeys = nestedKeysByCanonical.getOrElseUpdate(canonicalKey, scala.collection.mutable.Set())
+    nestedKeys.add(nestedKey)
+
+    // Recursively collect from nested message fields
+    val messageFields = descriptor.getFields.asScala.filter { field =>
+      field.getType == FieldDescriptor.Type.MESSAGE && schema.fieldNames.contains(field.getName)
+    }
+    messageFields.foreach { field =>
+      val fieldIndex = schema.fieldIndex(field.getName)
+      val sparkField = schema.fields(fieldIndex)
+
+      val nestedSchema = sparkField.dataType match {
+        case struct: StructType => struct
+        case ArrayType(struct: StructType, _) => struct
+        case other =>
+          throw new IllegalArgumentException(s"Expected StructType or ArrayType[StructType] for message field ${field.getName}, got $other")
+      }
+
+      collectNestedKeys(field.getMessageType, nestedSchema, nestedKeysByCanonical, visited)
+    }
+  }
+
+  /**
    * Generate a single parser and recursively create nested parsers.
    */
   private def generateParserInternal(
       descriptor: Descriptor,
       schema: StructType,
-      localParsers: scala.collection.mutable.Map[String, StreamWireParser]
+      localParsers: scala.collection.mutable.Map[String, StreamWireParser],
+      specializationDecisions: Map[String, Boolean]
   ): StreamWireParser = {
     val key = s"${descriptor.getFullName}_${schema.hashCode()}"
 
@@ -110,7 +167,7 @@ object InlineParserToRowGenerator {
     }
 
     // Generate the parser
-    val parser = compileParser(descriptor, schema)
+    val parser = compileParser(descriptor, schema, specializationDecisions)
     localParsers(key) = parser
 
     // Generate nested parsers - only for fields that exist in both descriptor and schema
@@ -128,7 +185,7 @@ object InlineParserToRowGenerator {
           throw new IllegalArgumentException(s"Expected StructType or ArrayType[StructType] for message field ${field.getName}, got $other")
       }
 
-      generateParserInternal(field.getMessageType, nestedSchema, localParsers)
+      generateParserInternal(field.getMessageType, nestedSchema, localParsers, specializationDecisions)
     }
 
     parser
@@ -245,6 +302,16 @@ object InlineParserToRowGenerator {
    * Compute nested key from all nested parser canonical keys.
    * Returns "0" for leaf parsers (no nested message fields).
    * For non-leaf parsers, returns hash of all nested canonical keys.
+   *
+   * IMPORTANT: Uses canonical keys (not schema hashes) for nested parsers.
+   * This means parsers with identical immediate structure share the same nested key,
+   * even if they differ in depth. This is intentional for maximum code reuse.
+   *
+   * Example: In a binary tree with depth 5:
+   * - Levels 1-3 have identical structure (left: Node, right: Node where both are recursive)
+   * - They all get the same nested key and share the same compiled class
+   * - Level 4 differs (left: Node-leaf, right: Node-leaf) and gets a different nested key
+   * - Result: 2 nested keys for Node canonical, not 5 (one per depth)
    */
   private def computeNestedKey(descriptor: Descriptor, schema: StructType): String = {
     val messageFields = descriptor.getFields.asScala.filter { field =>
@@ -281,9 +348,13 @@ object InlineParserToRowGenerator {
   /**
    * Get or compile parser class using two-level cache with smart specialization.
    * Uses canonical key + nested key for class generation.
-   * Applies threshold logic to decide between shared vs specialized classes.
+   * Applies threshold logic based on distinct nested key count in compilation unit.
    */
-  private def getOrCompileClass(descriptor: Descriptor, schema: StructType): Class[_ <: StreamWireParser] = {
+  private def getOrCompileClass(
+      descriptor: Descriptor,
+      schema: StructType,
+      specializationDecisions: Map[String, Boolean]
+  ): Class[_ <: StreamWireParser] = {
     val canonicalKey = generateCanonicalKey(descriptor, schema)
     val nestedKey = computeNestedKey(descriptor, schema)
 
@@ -292,14 +363,9 @@ object InlineParserToRowGenerator {
       // Leaf parser: always use shared
       "0"
     } else {
-      // Non-leaf parser: apply threshold logic
-      val counter = nestedConfigCounts.computeIfAbsent(
-        canonicalKey,
-        _ => new java.util.concurrent.atomic.AtomicInteger(0)
-      )
-      val configCount = counter.incrementAndGet()
-
-      if (configCount <= SPECIALIZATION_THRESHOLD) {
+      // Non-leaf parser: use decision from compilation unit analysis
+      val shouldSpecialize = specializationDecisions.getOrElse(canonicalKey, true)
+      if (shouldSpecialize) {
         // Under threshold: use specialized class for monomorphic dispatch
         nestedKey
       } else {
@@ -338,8 +404,12 @@ object InlineParserToRowGenerator {
    * Uses canonical key for class lookup (enables class reuse),
    * but creates instance with full schema (preserves per-instance state).
    */
-  private def compileParser(descriptor: Descriptor, schema: StructType): StreamWireParser = {
-    val parserClass = getOrCompileClass(descriptor, schema)
+  private def compileParser(
+      descriptor: Descriptor,
+      schema: StructType,
+      specializationDecisions: Map[String, Boolean]
+  ): StreamWireParser = {
+    val parserClass = getOrCompileClass(descriptor, schema, specializationDecisions)
 
     // Instantiate parser with full schema
     val constructor = parserClass.getConstructor(classOf[StructType])
