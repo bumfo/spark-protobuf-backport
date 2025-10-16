@@ -64,7 +64,9 @@ object ShowGeneratedCode {
       RecursiveSchemaConverters.toSqlTypeWithTrueRecursion(descriptor, enumAsInt = true)
     )
 
-    val className = s"GeneratedInlineParser_${messageName}_${Math.abs(schema.hashCode())}"
+    // Use the same key format as InlineParserToRowGenerator for consistent class names
+    val key = s"${descriptor.getFullName}_${schema.hashCode()}"
+    val className = s"GeneratedInlineParser_${messageName}_${Math.abs(key.hashCode)}"
 
     // Always generate the source code first
     val generatedSource = InlineParserGenerator.generateParser(className, descriptor, schema)
