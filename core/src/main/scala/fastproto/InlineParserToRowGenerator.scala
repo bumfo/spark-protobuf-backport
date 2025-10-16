@@ -37,6 +37,15 @@ object InlineParserToRowGenerator {
     fullName.replace('.', '_')
   }
 
+  /**
+   * Convert a hash code to an unsigned string representation.
+   * Preserves all 32 bits by converting to unsigned long (0 to 4294967295).
+   * Avoids Math.abs edge case where Integer.MIN_VALUE stays negative.
+   */
+  private def unsignedHashString(hash: Int): String = {
+    (hash.toLong & 0xFFFFFFFFL).toString
+  }
+
   // Global cache for compiled classes: canonical_key -> (nested_hash -> Class)
   // nested_hash = "0" for shared version, actual hash for specialized versions
   private val classCache: ConcurrentHashMap[String, ConcurrentHashMap[String, Class[_ <: StreamWireParser]]] =
@@ -277,7 +286,7 @@ object InlineParserToRowGenerator {
       }
       .mkString("|")
 
-    Math.abs(nestedKeys.hashCode).toString
+    unsignedHashString(nestedKeys.hashCode)
   }
 
   /**
@@ -303,7 +312,7 @@ object InlineParserToRowGenerator {
       case Some(clazz) => clazz
       case None =>
         // Compile new class
-        val className = s"GeneratedInlineParser_${descriptor.getName}_${Math.abs(canonicalKey.hashCode)}_$nestedKey"
+        val className = s"GeneratedInlineParser_${descriptor.getName}_${unsignedHashString(canonicalKey.hashCode)}_$nestedKey"
         val sourceCode = InlineParserGenerator.generateParser(className, descriptor, schema)
 
         // Compile using Janino
