@@ -203,8 +203,8 @@ object InlineParserToRowGenerator {
         throw new IllegalStateException(s"Nested parser not found: $nestedKey")
       )
 
-      // Setter name format: setParser_<fieldName>_<MessageTypeName>
-      val setterName = s"setParser_${field.getName}_${field.getMessageType.getName}"
+      // Setter name format: setParser<fieldNumber> using proto field number (e.g., setParser1, setParser5)
+      val setterName = s"setParser${field.getNumber}"
       val setterMethod = parser.getClass.getMethod(setterName, classOf[StreamWireParser])
       setterMethod.invoke(parser, nestedParser)
     }

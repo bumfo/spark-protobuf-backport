@@ -65,12 +65,17 @@ object InlineParserGenerator {
     val repeatedVarLength = repeatedStrings ++ repeatedBytes ++ repeatedMessages
 
     // Build nested parsers map - one parser per field (not per message type)
-    // Map: field number -> parser variable name
-    // Use field name + message type simple name for differential pruning support
-    val nestedParsers = fields
+    // Map: field number -> (parser variable name, field name, message type name)
+    // Use proto field number for parser naming: parser1, parser5, parser10, etc.
+    val nestedParsersWithMetadata = fields
       .filter(f => isMessage(f) && schemaFieldNames.contains(f.getName))
-      .map(f => f.getNumber -> s"parser_${f.getName}_${f.getMessageType.getName}")
+      .map { f =>
+        val parserVarName = s"parser${f.getNumber}"
+        (f.getNumber, (parserVarName, f.getName, f.getMessageType.getName))
+      }
       .toMap
+
+    val nestedParsers = nestedParsersWithMetadata.mapValues(_._1)
 
     val staticMethodName = s"${className}_parseIntoImpl"
     val uniqueParserNames = deduplicateParserNames(nestedParsers)
@@ -83,7 +88,7 @@ object InlineParserGenerator {
     |
     |public final class $className extends StreamWireParser {
     |
-    |  ${generateNestedParserFields(uniqueParserNames)}
+    |  ${generateNestedParserFields(nestedParsersWithMetadata)}
     |
     |  public $className(org.apache.spark.sql.types.StructType schema) {
     |    super(schema);
@@ -96,7 +101,7 @@ object InlineParserGenerator {
     |
     |  ${generateParserMethodImpl(staticMethodName, uniqueParserNames, fields, fieldMapping, repeatedVarLength, nestedParsers)}
     |
-    |  ${generateNestedParserSetters(uniqueParserNames)}
+    |  ${generateNestedParserSetters(nestedParsersWithMetadata)}
     |}
     """.stripMargin
 
@@ -260,7 +265,7 @@ object InlineParserGenerator {
         throw new UnsupportedOperationException("GROUP type is deprecated and not supported")
     }
 
-    s"case $tag: $methodCall break; // ${field.getName}"
+    s"case $tag: $methodCall break; // ${field.getNumber}: ${field.getName}"
   }
 
   private def generateRepeatedCases(
@@ -273,15 +278,15 @@ object InlineParserGenerator {
     field.getType match {
       case FieldDescriptor.Type.STRING =>
         val idx = bufferListIndex.get
-        List(s"case $unpackedTag: ProtoRuntime.collectString(input, bufferLists, $idx, arrayCtx, w); break; // ${field.getName}[]")
+        List(s"case $unpackedTag: ProtoRuntime.collectString(input, bufferLists, $idx, arrayCtx, w); break; // ${field.getNumber}: ${field.getName}[]")
 
       case FieldDescriptor.Type.BYTES =>
         val idx = bufferListIndex.get
-        List(s"case $unpackedTag: ProtoRuntime.collectBytes(input, bufferLists, $idx, arrayCtx, w); break; // ${field.getName}[]")
+        List(s"case $unpackedTag: ProtoRuntime.collectBytes(input, bufferLists, $idx, arrayCtx, w); break; // ${field.getNumber}: ${field.getName}[]")
 
       case FieldDescriptor.Type.MESSAGE =>
         val idx = bufferListIndex.get
-        List(s"case $unpackedTag: ProtoRuntime.collectMessage(input, bufferLists, $idx, arrayCtx, w); break; // ${field.getName}[]")
+        List(s"case $unpackedTag: ProtoRuntime.collectMessage(input, bufferLists, $idx, arrayCtx, w); break; // ${field.getNumber}: ${field.getName}[]")
 
       case FieldDescriptor.Type.GROUP =>
         throw new UnsupportedOperationException("GROUP type is deprecated and not supported")
@@ -293,13 +298,13 @@ object InlineParserGenerator {
         val packedMethod = s"ProtoRuntime.collectPacked$typeName(input, arrayCtx, w, $ordinal);"
 
         List(
-          s"case $unpackedTag: $unpackedMethod break; // ${field.getName}[]",
-          s"case $packedTag: $packedMethod break; // ${field.getName}[] packed"
+          s"case $unpackedTag: $unpackedMethod break; // ${field.getNumber}: ${field.getName}[]",
+          s"case $packedTag: $packedMethod break; // ${field.getNumber}: ${field.getName}[] packed"
         )
 
       case primitiveType =>
         val typeName = getTypeMethodName(primitiveType)
-        List(s"case $unpackedTag: ProtoRuntime.collect$typeName(input, arrayCtx, w, $ordinal); break; // ${field.getName}[]")
+        List(s"case $unpackedTag: ProtoRuntime.collect$typeName(input, arrayCtx, w, $ordinal); break; // ${field.getNumber}: ${field.getName}[]")
     }
   }
 
@@ -334,20 +339,29 @@ object InlineParserGenerator {
     }.mkString("\n    ")
   }
 
-  private def generateNestedParserFields(uniqueParserNames: Seq[String]): String = {
-    if (uniqueParserNames.isEmpty) return ""
-    uniqueParserNames.map { name =>
-      s"private StreamWireParser $name;"
+  /**
+   * Extract unique parsers from metadata, sorted by parser name (parser1, parser5, ...).
+   */
+  private def getUniqueParsers(nestedParsersWithMetadata: Map[Int, (String, String, String)]): Seq[(String, String, String)] = {
+    nestedParsersWithMetadata.values.toList.distinct.sortBy(_._1)
+  }
+
+  private def generateNestedParserFields(nestedParsersWithMetadata: Map[Int, (String, String, String)]): String = {
+    if (nestedParsersWithMetadata.isEmpty) return ""
+    getUniqueParsers(nestedParsersWithMetadata).map { case (parserVarName, fieldName, messageTypeName) =>
+      s"private StreamWireParser $parserVarName; // $fieldName: $messageTypeName"
     }.mkString("\n  ")
   }
 
-  private def generateNestedParserSetters(uniqueParserNames: Seq[String]): String = {
-    if (uniqueParserNames.isEmpty) return ""
-    uniqueParserNames.map { name =>
+  private def generateNestedParserSetters(nestedParsersWithMetadata: Map[Int, (String, String, String)]): String = {
+    if (nestedParsersWithMetadata.isEmpty) return ""
+    getUniqueParsers(nestedParsersWithMetadata).map { case (parserVarName, fieldName, messageTypeName) =>
+      // Setter name format: setParser1, setParser5, etc. (based on proto field number)
+      val setterName = s"set${parserVarName.head.toUpper}${parserVarName.tail}"
       s"""
-      |public void set${name.head.toUpper}${name.tail}(StreamWireParser parser) {
-      |  if (this.$name != null) throw new IllegalStateException("$name already set");
-      |  this.$name = parser;
+      |public void $setterName(StreamWireParser parser) { // $fieldName: $messageTypeName
+      |  if (this.$parserVarName != null) throw new IllegalStateException("$parserVarName already set");
+      |  this.$parserVarName = parser;
       |}
       """.stripMargin
     }.mkString("\n")
