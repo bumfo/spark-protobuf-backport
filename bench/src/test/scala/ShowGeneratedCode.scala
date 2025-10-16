@@ -142,6 +142,13 @@ object ShowGeneratedCode {
         println()
       }
 
+      // Show instance-level parser graph
+      println("\n" + "="*80)
+      println("Parser Instance Graph:")
+      println("="*80)
+      printParserGraph(parser)
+      println("="*80)
+
       // Show the root schema structure
       println("\n" + "="*80)
       println(s"Root Schema structure for $messageName:")
@@ -242,6 +249,48 @@ object ShowGeneratedCode {
   }
 
   /**
+   * Print a tree-style graph showing parser instance linkages.
+   * Shows how parser instances are connected through their nested parser fields.
+   */
+  private def printParserGraph(root: StreamWireParser, prefix: String = "", visited: scala.collection.mutable.Set[Int] = scala.collection.mutable.Set()): Unit = {
+    val instanceId = System.identityHashCode(root)
+    val className = root.getClass.getSimpleName
+    val schemaHash = getSchemaForParser(root).hashCode()
+
+    // Mark if we've seen this instance before (cycle detection)
+    val cycleMarker = if (visited.contains(instanceId)) " [CYCLE]" else ""
+
+    println(s"${prefix}${className} @${instanceId} (schema: ${schemaHash})${cycleMarker}")
+
+    // Don't traverse cycles
+    if (visited.contains(instanceId)) {
+      return
+    }
+    visited.add(instanceId)
+
+    // Find nested parser fields
+    val parserFields = root.getClass.getDeclaredFields
+      .filter(f => f.getName.startsWith("parser_") && classOf[StreamWireParser].isAssignableFrom(f.getType))
+      .sortBy(_.getName)
+
+    parserFields.zipWithIndex.foreach { case (field, idx) =>
+      field.setAccessible(true)
+      val nestedParser = field.get(root).asInstanceOf[StreamWireParser]
+
+      val isLast = idx == parserFields.length - 1
+      val connector = if (isLast) "└─ " else "├─ "
+      val childPrefix = prefix + (if (isLast) "   " else "│  ")
+
+      if (nestedParser != null) {
+        print(s"${prefix}${connector}${field.getName}: ")
+        printParserGraph(nestedParser, childPrefix, visited)
+      } else {
+        println(s"${prefix}${connector}${field.getName}: null")
+      }
+    }
+  }
+
+  /**
    * Recursively collect all UNIQUE parser classes in the dependency tree.
    * Shows one instance per unique class (for deduplication after canonical key optimization).
    */
@@ -282,13 +331,13 @@ object ShowGeneratedCode {
 
   /**
    * Extract descriptor from parser class name
-   * Format: GeneratedInlineParser_<MessageType>_<HashCode>
+   * Format: GeneratedInlineParser_<MessageType>_<CanonicalHash>_<NestedHash>
    */
   private def getDescriptorForParser(className: String): Option[Descriptor] = {
     // Extract message type from class name
-    // Example: GeneratedInlineParser_benchmark_DomNode_718780417 -> benchmark_DomNode
-    // Example: GeneratedInlineParser_DomNode_718780417 -> DomNode
-    val pattern = "GeneratedInlineParser_(.+)_\\d+".r
+    // Example: GeneratedInlineParser_DomNode_1861789265_705459274 -> DomNode
+    // Example: GeneratedInlineParser_DomNode_630398454_0 -> DomNode (leaf)
+    val pattern = "GeneratedInlineParser_(.+)_\\d+_\\d+".r
     className match {
       case pattern(messageType) =>
         // Handle package prefixes (benchmark_DomNode -> DomNode)
