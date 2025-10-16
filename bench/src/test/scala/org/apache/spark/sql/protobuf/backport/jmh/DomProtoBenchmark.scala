@@ -11,21 +11,10 @@ import org.openjdk.jmh.infra.Blackhole
 import java.util.concurrent.TimeUnit
 
 /**
- * JMH benchmark for DOM tree protobuf conversion performance.
+ * JMH benchmark for DOM tree protobuf conversion with full (non-pruned) schema.
  *
- * This benchmark uses realistic HTML DOM tree structures to test recursive
- * protobuf parsing performance. The DOM structure provides a meaningful
- * real-world example of recursive data that everyone can understand.
- *
- * Key features tested:
- * - Recursive message parsing (DomNode.children)
- * - Mixed data types (strings, maps, repeated fields, enums)
- * - Variable tree depth and breadth
- * - Schema mocking for Spark SQL compatibility
- *
- * The recursive DomNode.children field is mocked as BinaryType in the Spark schema
- * to avoid infinite type recursion, while the actual protobuf parsing still
- * handles the full recursive structure.
+ * This benchmark tests parsing performance when accessing all fields in the DOM structure.
+ * Complements PrunedDomProtoBenchmark which tests selective field access scenarios.
  *
  * Usage:
  * sbt "bench/Jmh/run .*DomProtoBenchmark.*"
@@ -53,83 +42,41 @@ class DomProtoBenchmark {
   var domDirectParser: WireFormatParser = _
   var domGeneratedWireParser: StreamWireParser = _
   var domInlineParser: StreamWireParser = _
-  var domProtoToRowParser: Parser = _ // ProtoToRowGenerator produces parsers that implement Parser
-  // var domDynamicParser: DynamicMessageParser = _
-
-  // Pruned schema parser (single nested field: root.tag_name)
-  var domPrunedSchema: StructType = _
-  var domPrunedParser: WireFormatParser = _
-  var domInlinePrunedParser: StreamWireParser = _
+  var domProtoToRowParser: Parser = _
 
   @Setup
   def setup(): Unit = {
-    // === Create DOM test data with different complexity levels ===
-
-    // Shallow tree: good for testing breadth
+    // Create DOM test data with different complexity levels
     val shallowDom = DomTestDataGenerator.createDomDocument(maxDepth = 3, breadthFactor = 2)
     shallowDomBinary = shallowDom.toByteArray
 
-    // Standard tree: realistic web page complexity
     val standardDom = DomTestDataGenerator.createDomDocument(maxDepth = 6, breadthFactor = 3)
     standardDomBinary = standardDom.toByteArray
 
-    // Deep tree: stress test for recursion
     val deepDom = DomTestDataGenerator.createDomDocument(maxDepth = 8, breadthFactor = 4)
     deepDomBinary = deepDom.toByteArray
 
-    // Use standard complexity for setup
     domDescriptor = standardDom.getDescriptorForType
 
-    // === Create Spark schema with TRUE recursion ===
-    // This creates actual recursive schemas where DomNode.children refers back to DomNode
-    // Now works correctly since we pass the schema explicitly to parsers
+    // Create Spark schema with TRUE recursion (full schema, all fields)
     domSparkSchema = RecursiveSchemaConverters.toSqlTypeWithTrueRecursion(domDescriptor)
 
-    // println(s"DOM Schema created with ${domSparkSchema.fields.length} fields")
-    // RecursiveSchemaConverters.printTrueRecursiveSchemaInfo(domDescriptor)
-
-    // === Create FileDescriptorSet ===
+    // Create FileDescriptorSet
     domDescSet = DescriptorProtos.FileDescriptorSet.newBuilder()
       .addFile(domDescriptor.getFile.toProto)
       .build()
       .toByteArray
 
-    // === Create temporary descriptor file ===
+    // Create temporary descriptor file
     domTempDescFile = java.io.File.createTempFile("dom_benchmark_descriptor", ".desc")
     java.nio.file.Files.write(domTempDescFile.toPath, domDescSet)
     domTempDescFile.deleteOnExit()
 
-    // === Initialize DOM Parsers ===
+    // Initialize parsers
     domDirectParser = new WireFormatParser(domDescriptor, domSparkSchema)
     domGeneratedWireParser = WireFormatToRowGenerator.generateParser(domDescriptor, domSparkSchema)
     domInlineParser = InlineParserToRowGenerator.generateParser(domDescriptor, domSparkSchema)
     domProtoToRowParser = ProtoToRowGenerator.generateParser(domDescriptor, classOf[DomDocument], domSparkSchema)
-    // domDynamicParser = new DynamicMessageParser(domDescriptor, domSparkSchema)
-
-    // === Initialize Pruned Schema Parser (deeply nested: root.children[].children[].children[].tag_name) ===
-    // Access tag_name from 4th level nodes, skipping all other fields at all levels
-    val level4Schema = StructType(Seq(
-      StructField("tag_name", StringType, nullable = false)
-    ))
-    val level3Schema = StructType(Seq(
-      StructField("children", ArrayType(level4Schema), nullable = true)
-    ))
-    val level2Schema = StructType(Seq(
-      StructField("children", ArrayType(level3Schema), nullable = true)
-    ))
-    val level1Schema = StructType(Seq(
-      StructField("children", ArrayType(level2Schema), nullable = true)
-    ))
-    domPrunedSchema = StructType(Seq(
-      StructField("root", level1Schema, nullable = true)
-    ))
-    domPrunedParser = new WireFormatParser(domDescriptor, domPrunedSchema)
-    domInlinePrunedParser = InlineParserToRowGenerator.generateParser(domDescriptor, domPrunedSchema)
-
-    // Print test data statistics
-    // println(s"Shallow DOM: ${shallowDomBinary.length} bytes")
-    // println(s"Standard DOM: ${standardDomBinary.length} bytes")
-    // println(s"Deep DOM: ${deepDomBinary.length} bytes")
   }
 
   @TearDown
@@ -137,44 +84,38 @@ class DomProtoBenchmark {
     if (domTempDescFile != null) domTempDescFile.delete()
   }
 
-  // === DOM Tree Benchmarks (Standard Complexity: depth=6, breadth=3) ===
+  // === Standard Complexity Benchmarks (depth=6, breadth=3) ===
 
-  // @Benchmark
-  def standardGeneratedWireFormatParser(bh: Blackhole): Unit = {
-    bh.consume(domGeneratedWireParser.parse(standardDomBinary))
-  }
-
-  // @Benchmark
+  @Benchmark
   def standardAnInlineParser(bh: Blackhole): Unit = {
     bh.consume(domInlineParser.parse(standardDomBinary))
   }
 
-  // @Benchmark
+  @Benchmark
+  def standardGeneratedWireFormatParser(bh: Blackhole): Unit = {
+    bh.consume(domGeneratedWireParser.parse(standardDomBinary))
+  }
+
+  @Benchmark
   def standardProtoToRowParser(bh: Blackhole): Unit = {
     bh.consume(domProtoToRowParser.parse(standardDomBinary))
   }
 
-  // @Benchmark
-  // def standardDirectWireFormatParser(bh: Blackhole): Unit = {
-  //   bh.consume(domDirectParser.parse(standardDomBinary))
-  // }
-
-  // @Benchmark
-  // def standardDynamicMessageParser(bh: Blackhole): Unit = {
-  //   bh.consume(domDynamicParser.parse(standardDomBinary))
-  // }
-
-  // === Shallow DOM Benchmarks (depth=3, breadth=2) ===
-  // Tests performance with wide but shallow trees
-
-  // @Benchmark
-  def shallowGeneratedWireFormatParser(bh: Blackhole): Unit = {
-    bh.consume(domGeneratedWireParser.parse(shallowDomBinary))
+  @Benchmark
+  def standardDirectWireFormatParser(bh: Blackhole): Unit = {
+    bh.consume(domDirectParser.parse(standardDomBinary))
   }
+
+  // === Shallow Complexity Benchmarks (depth=3, breadth=2) ===
 
   // @Benchmark
   def shallowAnInlineParser(bh: Blackhole): Unit = {
     bh.consume(domInlineParser.parse(shallowDomBinary))
+  }
+
+  // @Benchmark
+  def shallowGeneratedWireFormatParser(bh: Blackhole): Unit = {
+    bh.consume(domGeneratedWireParser.parse(shallowDomBinary))
   }
 
   // @Benchmark
@@ -183,55 +124,36 @@ class DomProtoBenchmark {
   }
 
   // @Benchmark
-  // def shallowDirectWireFormatParser(bh: Blackhole): Unit = {
-  //   bh.consume(domDirectParser.parse(shallowDomBinary))
-  // }
+  def shallowDirectWireFormatParser(bh: Blackhole): Unit = {
+    bh.consume(domDirectParser.parse(shallowDomBinary))
+  }
+
+  // === Deep Complexity Benchmarks (depth=8, breadth=4) ===
 
   // @Benchmark
-  // def shallowDynamicMessageParser(bh: Blackhole): Unit = {
-  //   bh.consume(domDynamicParser.parse(shallowDomBinary))
-  // }
-
-  // === Deep DOM Benchmarks (depth=8, breadth=4) ===
-  // Tests performance with deep recursive structures
-
-  // @Benchmark
-  def anInlineParser(bh: Blackhole): Unit = {
+  def deepAnInlineParser(bh: Blackhole): Unit = {
     bh.consume(domInlineParser.parse(deepDomBinary))
   }
 
-  @Benchmark
-  def anInlineParserPruned(bh: Blackhole): Unit = {
-    bh.consume(domInlinePrunedParser.parse(deepDomBinary))
-  }
-
   // @Benchmark
-  def generatedWireFormatParser(bh: Blackhole): Unit = {
+  def deepGeneratedWireFormatParser(bh: Blackhole): Unit = {
     bh.consume(domGeneratedWireParser.parse(deepDomBinary))
   }
 
   // @Benchmark
-  def protoToRowParser(bh: Blackhole): Unit = {
+  def deepProtoToRowParser(bh: Blackhole): Unit = {
     bh.consume(domProtoToRowParser.parse(deepDomBinary))
   }
 
   // @Benchmark
-  def directWireFormatParser(bh: Blackhole): Unit = {
+  def deepDirectWireFormatParser(bh: Blackhole): Unit = {
     bh.consume(domDirectParser.parse(deepDomBinary))
   }
 
-  // @Benchmark
-  def prunedWireFormatParser(bh: Blackhole): Unit = {
-    bh.consume(domPrunedParser.parse(deepDomBinary))
-  }
+  // === Baseline: Protobuf-only parsing (no Spark conversion) ===
 
-  // @Benchmark
+  @Benchmark
   def protoParsing(bh: Blackhole): Unit = {
     bh.consume(DomDocument.parseFrom(deepDomBinary))
   }
-
-  // @Benchmark
-  // def dynamicMessageParser(bh: Blackhole): Unit = {
-  //   bh.consume(domDynamicParser.parse(deepDomBinary))
-  // }
 }
