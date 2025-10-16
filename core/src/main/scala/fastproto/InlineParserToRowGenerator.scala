@@ -29,6 +29,8 @@ import scala.collection.JavaConverters._
  */
 object InlineParserToRowGenerator {
 
+  private final val CANONICAL_KEY_DEPTH = 1
+
   /**
    * Convert a fully qualified protobuf name to a valid Java identifier.
    * Must match InlineParserGenerator.sanitizeFullName.
@@ -53,7 +55,7 @@ object InlineParserToRowGenerator {
    * Public for reuse in ShowGeneratedCode.
    */
   def generateCacheKey(descriptor: Descriptor, schema: StructType): String = {
-    val canonicalKey = generateCanonicalKey(descriptor, schema, depth = 1)
+    val canonicalKey = generateCanonicalKey(descriptor, schema, depth = CANONICAL_KEY_DEPTH)
     s"${descriptor.getFullName}|$canonicalKey"
   }
 
