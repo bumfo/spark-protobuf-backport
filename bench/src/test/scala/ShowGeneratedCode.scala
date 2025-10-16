@@ -146,7 +146,10 @@ object ShowGeneratedCode {
       println("\n" + "="*80)
       println("Parser Instance Graph:")
       println("="*80)
-      printParserGraph(parser)
+
+      // Build instance ID map first
+      val instanceIdMap = buildInstanceIdMap(parser)
+      printParserGraph(parser, instanceIdMap)
       println("="*80)
 
       // Show the root schema structure
@@ -249,24 +252,64 @@ object ShowGeneratedCode {
   }
 
   /**
+   * Build a map from parser instances to sequential IDs (0, 1, 2, ...).
+   * Traverses all reachable parsers to assign consistent IDs.
+   */
+  private def buildInstanceIdMap(root: StreamWireParser): Map[Int, Int] = {
+    val instanceIds = scala.collection.mutable.Map[Int, Int]()
+    val visited = scala.collection.mutable.Set[Int]()
+    var nextId = 0
+
+    def visit(parser: StreamWireParser): Unit = {
+      val identityHash = System.identityHashCode(parser)
+      if (!visited.contains(identityHash)) {
+        visited.add(identityHash)
+        instanceIds(identityHash) = nextId
+        nextId += 1
+
+        // Visit nested parsers
+        val parserFields = parser.getClass.getDeclaredFields
+          .filter(f => f.getName.startsWith("parser_") && classOf[StreamWireParser].isAssignableFrom(f.getType))
+
+        parserFields.foreach { field =>
+          field.setAccessible(true)
+          val nestedParser = field.get(parser).asInstanceOf[StreamWireParser]
+          if (nestedParser != null) {
+            visit(nestedParser)
+          }
+        }
+      }
+    }
+
+    visit(root)
+    instanceIds.toMap
+  }
+
+  /**
    * Print a tree-style graph showing parser instance linkages.
    * Shows how parser instances are connected through their nested parser fields.
    */
-  private def printParserGraph(root: StreamWireParser, prefix: String = "", visited: scala.collection.mutable.Set[Int] = scala.collection.mutable.Set()): Unit = {
-    val instanceId = System.identityHashCode(root)
-    val className = root.getClass.getSimpleName
+  private def printParserGraph(
+      root: StreamWireParser,
+      instanceIdMap: Map[Int, Int],
+      prefix: String = "",
+      visited: scala.collection.mutable.Set[Int] = scala.collection.mutable.Set()
+  ): Unit = {
+    val identityHash = System.identityHashCode(root)
+    val instanceId = instanceIdMap(identityHash)
+    val className = root.getClass.getName.stripPrefix("fastproto.generated.")
     val schemaHash = getSchemaForParser(root).hashCode()
 
     // Mark if we've seen this instance before (cycle detection)
-    val cycleMarker = if (visited.contains(instanceId)) " [CYCLE]" else ""
+    val cycleMarker = if (visited.contains(identityHash)) " [CYCLE]" else ""
 
-    println(s"${prefix}${className} @${instanceId} (schema: ${schemaHash})${cycleMarker}")
+    println(s"${prefix}#${instanceId} ${className} (schema: ${schemaHash})${cycleMarker}")
 
     // Don't traverse cycles
-    if (visited.contains(instanceId)) {
+    if (visited.contains(identityHash)) {
       return
     }
-    visited.add(instanceId)
+    visited.add(identityHash)
 
     // Find nested parser fields
     val parserFields = root.getClass.getDeclaredFields
@@ -283,7 +326,7 @@ object ShowGeneratedCode {
 
       if (nestedParser != null) {
         print(s"${prefix}${connector}${field.getName}: ")
-        printParserGraph(nestedParser, childPrefix, visited)
+        printParserGraph(nestedParser, instanceIdMap, childPrefix, visited)
       } else {
         println(s"${prefix}${connector}${field.getName}: null")
       }
