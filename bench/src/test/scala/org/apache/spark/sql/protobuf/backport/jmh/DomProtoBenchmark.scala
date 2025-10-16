@@ -3,7 +3,7 @@ package org.apache.spark.sql.protobuf.backport.jmh
 import benchmark.DomBenchmarkProtos.DomDocument
 import benchmark.DomTestDataGenerator
 import com.google.protobuf.{DescriptorProtos, Descriptors}
-import fastproto._
+import fastproto.{InlineParserToRowGenerator, Parser, ProtoToRowGenerator, RecursiveSchemaConverters, StreamWireParser, WireFormatParser, WireFormatToRowGenerator}
 import org.apache.spark.sql.types._
 import org.openjdk.jmh.annotations._
 import org.openjdk.jmh.infra.Blackhole
@@ -28,7 +28,7 @@ import java.util.concurrent.TimeUnit
  * handles the full recursive structure.
  *
  * Usage:
- * sbt "bench/Jmh/run .*ProtobufConversionJmhBenchmarkDom.*"
+ * sbt "bench/Jmh/run .*DomProtoBenchmark.*"
  */
 @BenchmarkMode(Array(Mode.AverageTime))
 @OutputTimeUnit(TimeUnit.NANOSECONDS)
@@ -36,7 +36,7 @@ import java.util.concurrent.TimeUnit
 @Fork(value = 2, jvmArgs = Array("-Xms2G", "-Xmx2G"))
 @Warmup(iterations = 10, time = 1, timeUnit = TimeUnit.SECONDS)
 @Measurement(iterations = 10, time = 1, timeUnit = TimeUnit.SECONDS)
-class ProtobufConversionJmhBenchmarkDom {
+class DomProtoBenchmark {
 
   // Test data with different complexity levels
   var shallowDomBinary: Array[Byte] = _ // depth=3, breadth=2
@@ -52,12 +52,14 @@ class ProtobufConversionJmhBenchmarkDom {
   // Parsers for DOM structure (using standard complexity)
   var domDirectParser: WireFormatParser = _
   var domGeneratedWireParser: StreamWireParser = _
+  var domInlineParser: StreamWireParser = _
   var domProtoToRowParser: Parser = _ // ProtoToRowGenerator produces parsers that implement Parser
   // var domDynamicParser: DynamicMessageParser = _
 
   // Pruned schema parser (single nested field: root.tag_name)
   var domPrunedSchema: StructType = _
   var domPrunedParser: WireFormatParser = _
+  var domInlinePrunedParser: StreamWireParser = _
 
   @Setup
   def setup(): Unit = {
@@ -100,6 +102,7 @@ class ProtobufConversionJmhBenchmarkDom {
     // === Initialize DOM Parsers ===
     domDirectParser = new WireFormatParser(domDescriptor, domSparkSchema)
     domGeneratedWireParser = WireFormatToRowGenerator.generateParser(domDescriptor, domSparkSchema)
+    domInlineParser = InlineParserToRowGenerator.generateParser(domDescriptor, domSparkSchema)
     domProtoToRowParser = ProtoToRowGenerator.generateParser(domDescriptor, classOf[DomDocument], domSparkSchema)
     // domDynamicParser = new DynamicMessageParser(domDescriptor, domSparkSchema)
 
@@ -121,6 +124,7 @@ class ProtobufConversionJmhBenchmarkDom {
       StructField("root", level1Schema, nullable = true)
     ))
     domPrunedParser = new WireFormatParser(domDescriptor, domPrunedSchema)
+    domInlinePrunedParser = InlineParserToRowGenerator.generateParser(domDescriptor, domPrunedSchema)
 
     // Print test data statistics
     // println(s"Shallow DOM: ${shallowDomBinary.length} bytes")
@@ -136,22 +140,27 @@ class ProtobufConversionJmhBenchmarkDom {
   // === DOM Tree Benchmarks (Standard Complexity: depth=6, breadth=3) ===
 
   // @Benchmark
-  def domStandardGeneratedWireFormatParser(bh: Blackhole): Unit = {
+  def standardGeneratedWireFormatParser(bh: Blackhole): Unit = {
     bh.consume(domGeneratedWireParser.parse(standardDomBinary))
   }
 
   // @Benchmark
-  def domStandardProtoToRowParser(bh: Blackhole): Unit = {
+  def standardAnInlineParser(bh: Blackhole): Unit = {
+    bh.consume(domInlineParser.parse(standardDomBinary))
+  }
+
+  // @Benchmark
+  def standardProtoToRowParser(bh: Blackhole): Unit = {
     bh.consume(domProtoToRowParser.parse(standardDomBinary))
   }
 
   // @Benchmark
-  // def domStandardDirectWireFormatParser(bh: Blackhole): Unit = {
+  // def standardDirectWireFormatParser(bh: Blackhole): Unit = {
   //   bh.consume(domDirectParser.parse(standardDomBinary))
   // }
 
   // @Benchmark
-  // def domStandardDynamicMessageParser(bh: Blackhole): Unit = {
+  // def standardDynamicMessageParser(bh: Blackhole): Unit = {
   //   bh.consume(domDynamicParser.parse(standardDomBinary))
   // }
 
@@ -159,22 +168,27 @@ class ProtobufConversionJmhBenchmarkDom {
   // Tests performance with wide but shallow trees
 
   // @Benchmark
-  def domShallowGeneratedWireFormatParser(bh: Blackhole): Unit = {
+  def shallowGeneratedWireFormatParser(bh: Blackhole): Unit = {
     bh.consume(domGeneratedWireParser.parse(shallowDomBinary))
   }
 
   // @Benchmark
-  def domShallowProtoToRowParser(bh: Blackhole): Unit = {
+  def shallowAnInlineParser(bh: Blackhole): Unit = {
+    bh.consume(domInlineParser.parse(shallowDomBinary))
+  }
+
+  // @Benchmark
+  def shallowProtoToRowParser(bh: Blackhole): Unit = {
     bh.consume(domProtoToRowParser.parse(shallowDomBinary))
   }
 
   // @Benchmark
-  // def domShallowDirectWireFormatParser(bh: Blackhole): Unit = {
+  // def shallowDirectWireFormatParser(bh: Blackhole): Unit = {
   //   bh.consume(domDirectParser.parse(shallowDomBinary))
   // }
 
   // @Benchmark
-  // def domShallowDynamicMessageParser(bh: Blackhole): Unit = {
+  // def shallowDynamicMessageParser(bh: Blackhole): Unit = {
   //   bh.consume(domDynamicParser.parse(shallowDomBinary))
   // }
 
@@ -182,32 +196,42 @@ class ProtobufConversionJmhBenchmarkDom {
   // Tests performance with deep recursive structures
 
   @Benchmark
-  def domDeepGeneratedWireFormatParser(bh: Blackhole): Unit = {
+  def anInlineParser(bh: Blackhole): Unit = {
+    bh.consume(domInlineParser.parse(deepDomBinary))
+  }
+
+  @Benchmark
+  def anInlineParserPruned(bh: Blackhole): Unit = {
+    bh.consume(domInlinePrunedParser.parse(deepDomBinary))
+  }
+
+  @Benchmark
+  def generatedWireFormatParser(bh: Blackhole): Unit = {
     bh.consume(domGeneratedWireParser.parse(deepDomBinary))
   }
 
   // @Benchmark
-  def domDeepProtoToRowParser(bh: Blackhole): Unit = {
+  def protoToRowParser(bh: Blackhole): Unit = {
     bh.consume(domProtoToRowParser.parse(deepDomBinary))
   }
 
   @Benchmark
-  def domDeepDirectWireFormatParser(bh: Blackhole): Unit = {
+  def directWireFormatParser(bh: Blackhole): Unit = {
     bh.consume(domDirectParser.parse(deepDomBinary))
   }
 
   @Benchmark
-  def domDeepPrunedWireFormatParser(bh: Blackhole): Unit = {
+  def prunedWireFormatParser(bh: Blackhole): Unit = {
     bh.consume(domPrunedParser.parse(deepDomBinary))
   }
 
   @Benchmark
-  def domDeepProtoParsing(bh: Blackhole): Unit = {
+  def protoParsing(bh: Blackhole): Unit = {
     bh.consume(DomDocument.parseFrom(deepDomBinary))
   }
 
   // @Benchmark
-  // def domDeepDynamicMessageParser(bh: Blackhole): Unit = {
+  // def dynamicMessageParser(bh: Blackhole): Unit = {
   //   bh.consume(domDynamicParser.parse(deepDomBinary))
   // }
 }

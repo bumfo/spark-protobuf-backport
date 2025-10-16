@@ -112,12 +112,29 @@ parser.parseWithSharedBuffer(message, parentWriter)  // Nested message conversio
 
 - **Scala version**: 2.12.15 (matches Spark 3.2.1)
 - **Spark version**: 3.2.1 (provided dependency)
-- **Protobuf version**: 3.11.4 (shaded to avoid conflicts)
-- **Test approach**: Comprehensive ScalaTest suite in `ProtobufBackportSpec.scala` using `google.protobuf.Type`
-- **Performance benchmarks**: Performance comparison tests in `ProtobufConversionBenchmark.scala` comparing codegen vs DynamicMessage paths
+- **Protobuf version**: 3.21.7 (shaded to avoid conflicts)
 - **Shading**: All protobuf classes shaded under `org.sparkproject.spark.protobuf311.*` in uber JAR
 
-The tests verify three usage patterns: compiled class, descriptor file, and binary descriptor set approaches.
+## Testing
+
+**`tests/` module**: Systematic three-tier testing of protobuf parsing (all primitive types, packed/unpacked, nested messages, edge cases). See `tests/CLAUDE.md` for details.
+
+**`core/` and `bench/` tests**: Implementation-specific debugging tests for individual components.
+
+```bash
+# Three-tier test commands (tests module)
+sbt unitTests           # Tier 1: <5s
+sbt propertyTests       # Tier 2: <30s
+sbt integrationTests    # Tier 3: <60s
+sbt allTestTiers        # All tiers sequentially
+
+# Run specific test suite or spec by pattern (any module)
+sbt 'testOnly unit.InlineParserSpec'
+sbt 'testOnly unit.InlineParserSpec -- -z "packed repeated"'
+
+# View generated InlineParser code for tests module proto (saves to /tmp/generated_inline_parser_*.txt)
+sbt 'showGeneratedCode AllPrimitiveTypes'
+```
 
 ## Nested Schema Pruning
 
@@ -151,18 +168,12 @@ sbt 'testOnly integration.SchemaPruningSpec'
 
 ## Performance Benchmarking
 
-The project uses JMH (Java Microbenchmark Harness) for performance validation:
-
-### Running Benchmarks
 ```bash
-# Run JMH benchmarks
-sbt 'core/Jmh/run'
+# Run JMH benchmarks (in bench module)
+sbt jmh
 
 # Run specific benchmarks
-sbt 'core/Jmh/run .*WireFormatParser.*'
-
-# Traditional ScalaTest benchmarks
-sbt 'testOnly *ProtobufConversionBenchmark*'
+sbt 'bench/Jmh/run .*WireFormatParser.*'
 ```
 
 ## Implementation Notes

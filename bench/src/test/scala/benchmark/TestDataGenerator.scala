@@ -179,4 +179,67 @@ object TestDataGenerator {
    * Get deterministic binary data for ComplexMessage.
    */
   def getComplexBinary: Array[Byte] = createComplexMessage().toByteArray
+
+  /**
+   * Create a deterministic ScalarMessage with all 4 scalar fields populated.
+   */
+  def createScalarMessage(): ScalarBenchmarkProtos.ScalarMessage = {
+    ScalarBenchmarkProtos.ScalarMessage.newBuilder()
+      .setInt32Field(42)
+      .setInt64Field(9876543210L)
+      .setFloatField(3.14159f)
+      .setDoubleField(2.71828)
+      .build()
+  }
+
+  /**
+   * Create a deterministic ScalarArrayMessage with repeated scalar fields (packed encoding).
+   *
+   * @param size Number of elements in each repeated field
+   */
+  def createScalarArrayMessage(size: Int): ScalarBenchmarkProtos.ScalarArrayMessage = {
+    val builder = ScalarBenchmarkProtos.ScalarArrayMessage.newBuilder()
+
+    (1 to size).foreach { i =>
+      builder.addInt32Array(i * 10)
+      builder.addInt64Array(i.toLong * 1000000L)
+      builder.addFloatArray(i.toFloat + 0.5f)
+      builder.addDoubleArray(i.toDouble + 0.25)
+    }
+
+    builder.build()
+  }
+
+  /**
+   * Create a deterministic ScalarArrayUnpackedMessage with repeated scalar fields (unpacked encoding).
+   *
+   * @param size Number of elements in each repeated field
+   */
+  def createScalarArrayUnpackedMessage(size: Int): ScalarBenchmarkProtos.ScalarArrayUnpackedMessage = {
+    val builder = ScalarBenchmarkProtos.ScalarArrayUnpackedMessage.newBuilder()
+
+    (1 to size).foreach { i =>
+      builder.addInt32Array(i * 10)
+      builder.addInt64Array(i.toLong * 1000000L)
+      builder.addFloatArray(i.toFloat + 0.5f)
+      builder.addDoubleArray(i.toDouble + 0.25)
+    }
+
+    builder.build()
+  }
+
+  /**
+   * Get deterministic binary data for ScalarMessage.
+   */
+  def getScalarBinary: Array[Byte] = createScalarMessage().toByteArray
+
+  /**
+   * Get deterministic binary data for ScalarArrayMessage (packed).
+   */
+  def getScalarArrayBinary(size: Int): Array[Byte] = createScalarArrayMessage(size).toByteArray
+
+  /**
+   * Get deterministic binary data for ScalarArrayUnpackedMessage (unpacked).
+   */
+  def getScalarArrayUnpackedBinary(size: Int): Array[Byte] = createScalarArrayUnpackedMessage(size).toByteArray
 }

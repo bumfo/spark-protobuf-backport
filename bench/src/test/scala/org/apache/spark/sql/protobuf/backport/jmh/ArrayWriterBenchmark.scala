@@ -29,7 +29,8 @@ import java.util.concurrent.TimeUnit
 class ArrayWriterBenchmark {
 
   // Test data sizes
-  @Param(Array("10", "11"))
+  // @Param(Array("10", "11"))
+  @Param(Array("1", "100", "10000"))
   var arraySize: Int = _
 
   // Reusable test data
@@ -139,8 +140,8 @@ class ArrayWriterBenchmark {
       i += 1
     }
 
-    val offset = writer.getStartingOffset
     val count = writer.complete()
+    val offset = writer.getStartingOffset
 
     // Verify output is valid UnsafeArrayData
     val size = rowWriter.cursor() - offset
@@ -165,8 +166,8 @@ class ArrayWriterBenchmark {
       i += 1
     }
 
-    val offset = writer.getStartingOffset
     val count = writer.complete()
+    val offset = writer.getStartingOffset
 
     // Verify output is valid UnsafeArrayData
     val size = rowWriter.cursor() - offset

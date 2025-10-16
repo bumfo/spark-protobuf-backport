@@ -2,7 +2,7 @@ package org.apache.spark.sql.protobuf.backport.jmh
 
 import benchmark.{SimpleBenchmarkProtos, TestDataGenerator}
 import com.google.protobuf.{DescriptorProtos, Descriptors}
-import fastproto.{StreamWireParser, WireFormatParser, WireFormatToRowGenerator}
+import fastproto.{InlineParserToRowGenerator, StreamWireParser, WireFormatParser, WireFormatToRowGenerator}
 import org.apache.spark.sql.protobuf.backport.DynamicMessageParser
 import org.apache.spark.sql.protobuf.backport.utils.SchemaConverters
 import org.apache.spark.sql.types._
@@ -24,7 +24,7 @@ import java.util.concurrent.TimeUnit
  * Tests simple schema with 120 fields (scalar and repeated scalar).
  *
  * Usage:
- * sbt "bench/Jmh/run .*ProtobufConversionJmhBenchmarkSimple.*"
+ * sbt "bench/Jmh/run .*SimpleProtoBenchmark.*"
  */
 @BenchmarkMode(Array(Mode.AverageTime))
 @OutputTimeUnit(TimeUnit.NANOSECONDS)
@@ -32,7 +32,7 @@ import java.util.concurrent.TimeUnit
 @Fork(value = 2, jvmArgs = Array("-Xms2G", "-Xmx2G"))
 @Warmup(iterations = 10, time = 1, timeUnit = TimeUnit.SECONDS)
 @Measurement(iterations = 10, time = 1, timeUnit = TimeUnit.SECONDS)
-class ProtobufConversionJmhBenchmarkSimple {
+class SimpleProtoBenchmark {
 
   var simpleBinary: Array[Byte] = _
   var simpleDescriptor: Descriptors.Descriptor = _
@@ -43,11 +43,13 @@ class ProtobufConversionJmhBenchmarkSimple {
   // Parsers for simple schema
   var simpleDirectParser: WireFormatParser = _
   var simpleGeneratedParser: StreamWireParser = _
+  var simpleInlineParser: StreamWireParser = _
   var simpleDynamicParser: DynamicMessageParser = _
 
   // Pruned schema parser (single field)
   var simplePrunedSchema: StructType = _
   var simplePrunedParser: WireFormatParser = _
+  var simpleInlinePrunedParser: StreamWireParser = _
 
   @Setup
   def setup(): Unit = {
@@ -72,6 +74,7 @@ class ProtobufConversionJmhBenchmarkSimple {
     // === Initialize Simple Schema Parsers ===
     simpleDirectParser = new WireFormatParser(simpleDescriptor, simpleSparkSchema)
     simpleGeneratedParser = WireFormatToRowGenerator.generateParser(simpleDescriptor, simpleSparkSchema)
+    simpleInlineParser = InlineParserToRowGenerator.generateParser(simpleDescriptor, simpleSparkSchema)
     simpleDynamicParser = new DynamicMessageParser(simpleDescriptor, simpleSparkSchema)
 
     // === Initialize Pruned Schema Parser (single scalar field from middle) ===
@@ -79,6 +82,7 @@ class ProtobufConversionJmhBenchmarkSimple {
       StructField("field_double_055", DoubleType, nullable = false)
     ))
     simplePrunedParser = new WireFormatParser(simpleDescriptor, simplePrunedSchema)
+    simpleInlinePrunedParser = InlineParserToRowGenerator.generateParser(simpleDescriptor, simplePrunedSchema)
   }
 
   @TearDown
@@ -89,27 +93,37 @@ class ProtobufConversionJmhBenchmarkSimple {
   // === Simple Schema Benchmarks (120 fields) ===
 
   @Benchmark
-  def simpleGeneratedWireFormatParser(bh: Blackhole): Unit = {
+  def anInlineParser(bh: Blackhole): Unit = {
+    bh.consume(simpleInlineParser.parse(simpleBinary))
+  }
+
+  @Benchmark
+  def anInlineParserPruned(bh: Blackhole): Unit = {
+    bh.consume(simpleInlinePrunedParser.parse(simpleBinary))
+  }
+
+  @Benchmark
+  def generatedWireFormatParser(bh: Blackhole): Unit = {
     bh.consume(simpleGeneratedParser.parse(simpleBinary))
   }
 
   @Benchmark
-  def simpleDirectWireFormatParser(bh: Blackhole): Unit = {
+  def directWireFormatParser(bh: Blackhole): Unit = {
     bh.consume(simpleDirectParser.parse(simpleBinary))
   }
 
   @Benchmark
-  def simplePrunedWireFormatParser(bh: Blackhole): Unit = {
+  def prunedWireFormatParser(bh: Blackhole): Unit = {
     bh.consume(simplePrunedParser.parse(simpleBinary))
   }
 
   // @Benchmark
-  def simpleDynamicMessageParser(bh: Blackhole): Unit = {
+  def dynamicMessageParser(bh: Blackhole): Unit = {
     bh.consume(simpleDynamicParser.parse(simpleBinary))
   }
 
   @Benchmark
-  def simpleProtoParsing(bh: Blackhole): Unit = {
+  def protoParsing(bh: Blackhole): Unit = {
     bh.consume(SimpleBenchmarkProtos.SimpleMessage.parser().parseFrom(simpleBinary))
   }
 }

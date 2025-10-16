@@ -1,0 +1,429 @@
+/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the "License"); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *    http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package fastproto
+
+import com.google.protobuf.Descriptors.{Descriptor, FieldDescriptor}
+import com.google.protobuf.WireFormat
+import org.apache.spark.sql.types._
+import scala.collection.JavaConverters._
+
+/**
+ * Generates compact inline parsers for protobuf messages that integrate with Spark's
+ * columnar execution engine.
+ *
+ * The generated code uses a switch statement for efficient dispatch (JIT compiles
+ * to jump table) and calls minimal static methods from ProtoRuntime. This approach:
+ * - Minimizes generated code size (~50-100 lines vs 300+ for current approach)
+ * - Leverages existing optimized writers (NullDefaultRowWriter, PrimitiveArrayWriter)
+ * - Enables JIT inlining of small static methods
+ * - Avoids virtual method calls in hot paths
+ */
+object InlineParserGenerator {
+
+  /**
+   * Convert a fully qualified protobuf name to a valid Java identifier.
+   * Replaces dots with underscores to avoid conflicts between types with same simple name.
+   * Example: "foo.bar.Person" -> "foo_bar_Person"
+   */
+  private def sanitizeFullName(fullName: String): String = {
+    fullName.replace('.', '_')
+  }
+
+  /**
+   * Generate a complete parser class for a protobuf message.
+   */
+  def generateParser(
+      className: String,
+      descriptor: Descriptor,
+      schema: StructType): String = {
+    val fields = descriptor.getFields.asScala.toSeq
+    val fieldMapping = buildFieldMapping(descriptor, schema)
+
+    // Separate fields by type - only include fields that are in the schema
+    val schemaFieldNames = schema.fieldNames.toSet
+    val repeatedPrimitives = fields.filter(f => f.isRepeated && isPrimitive(f) && schemaFieldNames.contains(f.getName))
+    val repeatedStrings = fields.filter(f => f.isRepeated && isString(f) && schemaFieldNames.contains(f.getName))
+    val repeatedBytes = fields.filter(f => f.isRepeated && isBytes(f) && schemaFieldNames.contains(f.getName))
+    val repeatedMessages = fields.filter(f => f.isRepeated && isMessage(f) && schemaFieldNames.contains(f.getName))
+
+    // All repeated variable-length fields (strings, bytes, messages) that are in the schema
+    val repeatedVarLength = repeatedStrings ++ repeatedBytes ++ repeatedMessages
+
+    // Build nested parsers map - one parser per message type (not per field)
+    // Map: field number -> parser variable name
+    // Use fully qualified name to avoid collisions when different packages have types with same simple name
+    val nestedParsers = fields
+      .filter(f => isMessage(f) && schemaFieldNames.contains(f.getName))
+      .map(f => f.getNumber -> s"parser_${sanitizeFullName(f.getMessageType.getFullName)}")
+      .toMap
+
+    val staticMethodName = s"${className}_parseIntoImpl"
+    val uniqueParserNames = deduplicateParserNames(nestedParsers)
+
+    val code = s"""
+    |package fastproto.generated;
+    |import com.google.protobuf.CodedInputStream;
+    |import fastproto.*;
+    |import java.io.IOException;
+    |
+    |public final class $className extends StreamWireParser {
+    |
+    |  ${generateNestedParserFields(uniqueParserNames)}
+    |
+    |  public $className(org.apache.spark.sql.types.StructType schema) {
+    |    super(schema);
+    |  }
+    |
+    |  @Override
+    |  protected void parseInto(CodedInputStream input, RowWriter writer) throws IOException {
+    |    $staticMethodName(input, (NullDefaultRowWriter) writer${if (uniqueParserNames.nonEmpty) ", " + uniqueParserNames.mkString(", ") else ""});
+    |  }
+    |
+    |  ${generateParserMethodImpl(staticMethodName, uniqueParserNames, fields, fieldMapping, repeatedVarLength, nestedParsers)}
+    |
+    |  ${generateNestedParserSetters(uniqueParserNames)}
+    |}
+    """.stripMargin
+
+    code
+  }
+
+  /**
+   * Generate code for a single parser method (not a full class).
+   */
+  def generateParserMethod(
+      methodName: String,
+      descriptor: Descriptor,
+      schema: StructType): String = {
+    val fields = descriptor.getFields.asScala.toSeq
+    val fieldMapping = buildFieldMapping(descriptor, schema)
+
+    // Separate fields by type - only include fields that are in the schema
+    val schemaFieldNames = schema.fieldNames.toSet
+    val repeatedVarLength = fields.filter(f =>
+      f.isRepeated && (isString(f) || isBytes(f) || isMessage(f)) && schemaFieldNames.contains(f.getName))
+
+    val nestedParsers = fields
+      .filter(f => isMessage(f) && schemaFieldNames.contains(f.getName))
+      .map(f => f.getNumber -> s"${methodName}_${sanitizeFullName(f.getMessageType.getFullName)}")
+      .toMap
+
+    val uniqueParserNames = deduplicateParserNames(nestedParsers)
+
+    s"""
+    |public static void $methodName(byte[] data, NullDefaultRowWriter writer) throws IOException {
+    |  CodedInputStream input = CodedInputStream.newInstance(data);
+    |  writer.resetRowWriter();
+    |  ${methodName}_impl(input, writer${if (uniqueParserNames.nonEmpty) ", " + uniqueParserNames.mkString(", ") else ""});
+    |}
+    |
+    |${generateParserMethodImpl(s"${methodName}_impl", uniqueParserNames, fields, fieldMapping, repeatedVarLength, nestedParsers)}
+    """.stripMargin
+  }
+
+  /**
+   * Deduplicate parser names from nestedParsers map.
+   * Returns sorted list of unique parser variable names.
+   */
+  private def deduplicateParserNames(nestedParsers: Map[Int, String]): Seq[String] = {
+    nestedParsers.values.toSet.toSeq.sorted
+  }
+
+  /**
+   * Generate the static implementation method that does the actual parsing.
+   * This is shared by both generateParser and generateParserMethod.
+   */
+  private def generateParserMethodImpl(
+      methodName: String,
+      uniqueParserNames: Seq[String],
+      fields: Seq[FieldDescriptor],
+      fieldMapping: Map[Int, Int],
+      repeatedVarLength: Seq[FieldDescriptor],
+      nestedParsers: Map[Int, String]): String = {
+
+    val nestedParserParams = if (uniqueParserNames.nonEmpty) {
+      ", " + uniqueParserNames.map(name => s"StreamWireParser $name").mkString(", ")
+    } else {
+      ""
+    }
+
+    // Check if arrayCtx is needed: for strings, bytes, messages, or repeated primitives
+    val schemaFieldNames = fieldMapping.keys.toSet
+    val needsArrayCtx = fields.exists { f =>
+      schemaFieldNames.contains(f.getNumber) && (
+        f.getType == FieldDescriptor.Type.STRING ||
+        f.getType == FieldDescriptor.Type.BYTES ||
+        f.getType == FieldDescriptor.Type.MESSAGE ||
+        f.isRepeated
+      )
+    }
+
+    s"""
+    |private static void $methodName(CodedInputStream input, NullDefaultRowWriter w$nestedParserParams) throws IOException {
+    |  ${if (needsArrayCtx) "ProtoRuntime.ArrayContext arrayCtx = new ProtoRuntime.ArrayContext(w);" else ""}
+    |  ${if (repeatedVarLength.nonEmpty) s"BufferList[] bufferLists = new BufferList[${repeatedVarLength.size}];" else ""}
+    |
+    |  ${if (fieldMapping.isEmpty) {
+          "while (!input.isAtEnd()) {\n" +
+          "    int tag = input.readTag();\n" +
+          "    input.skipField(tag);\n" +
+          "  }"
+        } else {
+          s"while (!input.isAtEnd()) {\n" +
+          "    int tag = input.readTag();\n" +
+          "    switch (tag) {\n" +
+          s"      ${generateSwitchCases(fields, fieldMapping, repeatedVarLength, nestedParsers)}\n" +
+          "      default: input.skipField(tag); break;\n" +
+          "    }\n" +
+          "  }"
+        }}
+    |
+    |  ${if (needsArrayCtx) "arrayCtx.completeIfActive(w);" else ""}
+    |  ${generateFlushCode(repeatedVarLength, fieldMapping, nestedParsers)}
+    |}
+    """.stripMargin
+  }
+
+  private def buildFieldMapping(descriptor: Descriptor, schema: StructType): Map[Int, Int] = {
+    val schemaFields = schema.fields.map(_.name.toLowerCase).zipWithIndex.toMap
+    descriptor.getFields.asScala.map { field =>
+      val ordinal = schemaFields.get(field.getName.toLowerCase).getOrElse(-1)
+      field.getNumber -> ordinal
+    }.filter(_._2 >= 0).toMap
+  }
+
+  private def generateSwitchCases(
+      fields: Seq[FieldDescriptor],
+      fieldMapping: Map[Int, Int],
+      repeatedVarLength: Seq[FieldDescriptor],
+      nestedParsers: Map[Int, String]): String = {
+
+    val varLengthIndices = repeatedVarLength.zipWithIndex.map { case (f, i) =>
+      f.getNumber -> i
+    }.toMap
+
+    fields.flatMap { field =>
+      val fieldNumber = field.getNumber
+      val ordinal = fieldMapping.getOrElse(fieldNumber, -1)
+
+      if (ordinal < 0) {
+        // Field not in schema - skip
+        Nil
+      } else if (field.isRepeated) {
+        // Repeated field - generate both unpacked and packed cases
+        generateRepeatedCases(field, ordinal, varLengthIndices.get(fieldNumber))
+      } else {
+        // Single field
+        List(generateSingleCase(field, ordinal, nestedParsers))
+      }
+    }.mkString("\n        ")
+  }
+
+  private def generateSingleCase(field: FieldDescriptor, ordinal: Int, nestedParsers: Map[Int, String]): String = {
+    val tag = makeTag(field.getNumber, getWireType(field))
+    val methodCall = field.getType match {
+      case FieldDescriptor.Type.INT32 => s"ProtoRuntime.writeInt32(input, w, $ordinal);"
+      case FieldDescriptor.Type.INT64 => s"ProtoRuntime.writeInt64(input, w, $ordinal);"
+      case FieldDescriptor.Type.UINT32 => s"ProtoRuntime.writeUInt32(input, w, $ordinal);"
+      case FieldDescriptor.Type.UINT64 => s"ProtoRuntime.writeUInt64(input, w, $ordinal);"
+      case FieldDescriptor.Type.SINT32 => s"ProtoRuntime.writeSInt32(input, w, $ordinal);"
+      case FieldDescriptor.Type.SINT64 => s"ProtoRuntime.writeSInt64(input, w, $ordinal);"
+      case FieldDescriptor.Type.FIXED32 => s"ProtoRuntime.writeFixed32(input, w, $ordinal);"
+      case FieldDescriptor.Type.FIXED64 => s"ProtoRuntime.writeFixed64(input, w, $ordinal);"
+      case FieldDescriptor.Type.SFIXED32 => s"ProtoRuntime.writeSFixed32(input, w, $ordinal);"
+      case FieldDescriptor.Type.SFIXED64 => s"ProtoRuntime.writeSFixed64(input, w, $ordinal);"
+      case FieldDescriptor.Type.FLOAT => s"ProtoRuntime.writeFloat(input, w, $ordinal);"
+      case FieldDescriptor.Type.DOUBLE => s"ProtoRuntime.writeDouble(input, w, $ordinal);"
+      case FieldDescriptor.Type.BOOL => s"ProtoRuntime.writeBool(input, w, $ordinal);"
+      case FieldDescriptor.Type.ENUM => s"ProtoRuntime.writeEnum(input, w, $ordinal);"
+      case FieldDescriptor.Type.STRING => s"ProtoRuntime.writeString(input, w, $ordinal, arrayCtx);"
+      case FieldDescriptor.Type.BYTES => s"ProtoRuntime.writeBytes(input, w, $ordinal, arrayCtx);"
+      case FieldDescriptor.Type.MESSAGE =>
+        val parserVar = nestedParsers(field.getNumber)
+        s"ProtoRuntime.writeMessage(input, w, $ordinal, arrayCtx, $parserVar);"
+      case FieldDescriptor.Type.GROUP =>
+        throw new UnsupportedOperationException("GROUP type is deprecated and not supported")
+    }
+
+    s"case $tag: $methodCall break; // ${field.getName}"
+  }
+
+  private def generateRepeatedCases(
+      field: FieldDescriptor,
+      ordinal: Int,
+      bufferListIndex: Option[Int]): List[String] = {
+
+    val unpackedTag = makeTag(field.getNumber, getWireType(field))
+
+    field.getType match {
+      case FieldDescriptor.Type.STRING =>
+        val idx = bufferListIndex.get
+        List(s"case $unpackedTag: ProtoRuntime.collectString(input, bufferLists, $idx, arrayCtx, w); break; // ${field.getName}[]")
+
+      case FieldDescriptor.Type.BYTES =>
+        val idx = bufferListIndex.get
+        List(s"case $unpackedTag: ProtoRuntime.collectBytes(input, bufferLists, $idx, arrayCtx, w); break; // ${field.getName}[]")
+
+      case FieldDescriptor.Type.MESSAGE =>
+        val idx = bufferListIndex.get
+        List(s"case $unpackedTag: ProtoRuntime.collectMessage(input, bufferLists, $idx, arrayCtx, w); break; // ${field.getName}[]")
+
+      case FieldDescriptor.Type.GROUP =>
+        throw new UnsupportedOperationException("GROUP type is deprecated and not supported")
+
+      case primitiveType if isPackable(field) =>
+        val packedTag = makeTag(field.getNumber, WireFormat.WIRETYPE_LENGTH_DELIMITED)
+        val typeName = getTypeMethodName(primitiveType)
+        val unpackedMethod = s"ProtoRuntime.collect$typeName(input, arrayCtx, w, $ordinal);"
+        val packedMethod = s"ProtoRuntime.collectPacked$typeName(input, arrayCtx, w, $ordinal);"
+
+        List(
+          s"case $unpackedTag: $unpackedMethod break; // ${field.getName}[]",
+          s"case $packedTag: $packedMethod break; // ${field.getName}[] packed"
+        )
+
+      case primitiveType =>
+        val typeName = getTypeMethodName(primitiveType)
+        List(s"case $unpackedTag: ProtoRuntime.collect$typeName(input, arrayCtx, w, $ordinal); break; // ${field.getName}[]")
+    }
+  }
+
+  private def generateFlushCode(
+      repeatedVarLength: Seq[FieldDescriptor],
+      fieldMapping: Map[Int, Int],
+      nestedParsers: Map[Int, String]): String = {
+
+    if (repeatedVarLength.isEmpty) return ""
+
+    repeatedVarLength.zipWithIndex.flatMap { case (field, idx) =>
+      // Only generate flush code for fields that are in the schema
+      fieldMapping.get(field.getNumber).map { ordinal =>
+        field.getType match {
+          case FieldDescriptor.Type.STRING =>
+            s"ProtoRuntime.flushStringArray(bufferLists[$idx], $ordinal, w);"
+          case FieldDescriptor.Type.BYTES =>
+            s"ProtoRuntime.flushBytesArray(bufferLists[$idx], $ordinal, w);"
+          case FieldDescriptor.Type.MESSAGE =>
+            val parser = nestedParsers(field.getNumber)
+            s"ProtoRuntime.flushMessageArray(bufferLists[$idx], $ordinal, $parser, w);"
+          case _ => ""
+        }
+      }
+    }.mkString("\n    ")
+  }
+
+  private def generateNestedParserFields(uniqueParserNames: Seq[String]): String = {
+    if (uniqueParserNames.isEmpty) return ""
+    uniqueParserNames.map { name =>
+      s"private StreamWireParser $name;"
+    }.mkString("\n  ")
+  }
+
+  private def generateNestedParserSetters(uniqueParserNames: Seq[String]): String = {
+    if (uniqueParserNames.isEmpty) return ""
+    uniqueParserNames.map { name =>
+      s"""
+      |public void set${name.head.toUpper}${name.tail}(StreamWireParser parser) {
+      |  if (this.$name != null) throw new IllegalStateException("$name already set");
+      |  this.$name = parser;
+      |}
+      """.stripMargin
+    }.mkString("\n")
+  }
+
+  private def makeTag(fieldNumber: Int, wireType: Int): Int = {
+    // WireFormat.makeTag is package-private, so compute manually
+    // tag = (field_number << 3) | wire_type
+    (fieldNumber << 3) | wireType
+  }
+
+  private def getWireType(field: FieldDescriptor): Int = {
+    import FieldDescriptor.Type._
+    field.getType match {
+      case INT32 | INT64 | UINT32 | UINT64 | SINT32 | SINT64 | ENUM | BOOL =>
+        WireFormat.WIRETYPE_VARINT
+      case FIXED32 | SFIXED32 =>
+        WireFormat.WIRETYPE_FIXED32
+      case FIXED64 | SFIXED64 =>
+        WireFormat.WIRETYPE_FIXED64
+      case FLOAT =>
+        WireFormat.WIRETYPE_FIXED32
+      case DOUBLE =>
+        WireFormat.WIRETYPE_FIXED64
+      case STRING | BYTES | MESSAGE =>
+        WireFormat.WIRETYPE_LENGTH_DELIMITED
+      case GROUP =>
+        WireFormat.WIRETYPE_START_GROUP
+    }
+  }
+
+  private def isPrimitive(field: FieldDescriptor): Boolean = {
+    import FieldDescriptor.Type._
+    field.getType match {
+      case STRING | BYTES | MESSAGE | GROUP => false
+      case _ => true
+    }
+  }
+
+  private def isString(field: FieldDescriptor): Boolean = {
+    field.getType == FieldDescriptor.Type.STRING
+  }
+
+  private def isBytes(field: FieldDescriptor): Boolean = {
+    field.getType == FieldDescriptor.Type.BYTES
+  }
+
+  private def isMessage(field: FieldDescriptor): Boolean = {
+    field.getType == FieldDescriptor.Type.MESSAGE
+  }
+
+  private def isPackable(field: FieldDescriptor): Boolean = {
+    import FieldDescriptor.Type._
+    field.getType match {
+      case INT32 | INT64 | UINT32 | UINT64 | SINT32 | SINT64 |
+           FIXED32 | FIXED64 | SFIXED32 | SFIXED64 |
+           FLOAT | DOUBLE | BOOL | ENUM => true
+      case _ => false
+    }
+  }
+
+  /**
+   * Get the ProtoRuntime method name suffix for a field type.
+   * Handles special cases like UInt32, SInt64, SFixed32, etc.
+   */
+  private def getTypeMethodName(fieldType: FieldDescriptor.Type): String = {
+    import FieldDescriptor.Type._
+    fieldType match {
+      case INT32 => "Int32"
+      case INT64 => "Int64"
+      case UINT32 => "UInt32"
+      case UINT64 => "UInt64"
+      case SINT32 => "SInt32"
+      case SINT64 => "SInt64"
+      case FIXED32 => "Fixed32"
+      case FIXED64 => "Fixed64"
+      case SFIXED32 => "SFixed32"
+      case SFIXED64 => "SFixed64"
+      case FLOAT => "Float"
+      case DOUBLE => "Double"
+      case BOOL => "Bool"
+      case ENUM => "Enum"
+      case _ => throw new IllegalArgumentException(s"Unsupported type: $fieldType")
+    }
+  }
+}

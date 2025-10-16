@@ -13,6 +13,11 @@ message SingleField {
   string only_field = 1;
 }
 
+// Single int field (no arrayCtx needed)
+message SingleIntField {
+  int32 value = 1;
+}
+
 // All fields optional (test nullability)
 message Sparse {
   int32 field1 = 1;

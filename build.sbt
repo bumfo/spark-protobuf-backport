@@ -189,6 +189,15 @@ allTestTiers := Def.sequential(
   integrationTests
 ).value
 
+lazy val showGeneratedCode = inputKey[Unit]("Show generated InlineParser code (usage: showGeneratedCode [MessageName])")
+showGeneratedCode := Def.inputTaskDyn {
+  val args = Def.spaceDelimited("<message>").parsed
+  val messageArg = if (args.nonEmpty) s" ${args.head}" else ""
+  Def.taskDyn {
+    (tests / Test / runMain).toTask(s" ShowGeneratedParser$messageArg")
+  }
+}.evaluated
+
 lazy val root = (project in file("."))
   .disablePlugins(AssemblyPlugin)
   .aggregate(core, bench, tests, uberJar, shaded)
@@ -201,7 +210,11 @@ lazy val root = (project in file("."))
 // Command aliases for convenience
 addCommandAlias("jmh", "bench/Test/compile; bench/Jmh/run")
 addCommandAlias("jmhQuick", "bench/Test/compile; bench/Jmh/run -wi 2 -i 3 -f 1")
-addCommandAlias("jmhSimple", "bench/Test/compile; bench/Jmh/run .*ProtobufConversionJmhBenchmarkSimple.*")
-addCommandAlias("jmhComplex", "bench/Test/compile; bench/Jmh/run .*ProtobufConversionJmhBenchmarkComplex.*")
-addCommandAlias("jmhDom", "bench/Test/compile; bench/Jmh/run .*ProtobufConversionJmhBenchmarkDom.*")
-addCommandAlias("jmhArray", "bench/Test/compile; bench/Jmh/run .*ArrayWriterBenchmark.*")
+addCommandAlias("jmhSimple", "bench/Test/compile; bench/Jmh/run .*SimpleProtoBenchmark.*")
+addCommandAlias("jmhComplex", "bench/Test/compile; bench/Jmh/run .*ComplexProtoBenchmark.*")
+addCommandAlias("jmhDom", "bench/Test/compile; bench/Jmh/run .*DomProtoBenchmark.*")
+addCommandAlias("jmhArrayWriter", "bench/Test/compile; bench/Jmh/run .*ArrayWriterBenchmark.*")
+addCommandAlias("jmhScalar", "bench/Test/compile; bench/Jmh/run .*ScalarBenchmark\\..*")
+addCommandAlias("jmhScalarArray", "bench/Test/compile; bench/Jmh/run .*ScalarArrayBenchmark\\..*")
+addCommandAlias("jmhScalarArrayUnpacked", "bench/Test/compile; bench/Jmh/run .*ScalarArrayUnpackedBenchmark.*")
+addCommandAlias("jmhScalarAll", "bench/Test/compile; bench/Jmh/run .*(ScalarBenchmark|ScalarArrayBenchmark|ScalarArrayUnpackedBenchmark).*")

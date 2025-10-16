@@ -39,17 +39,33 @@ import org.apache.spark.unsafe.Platform;
  *       writer.writeLong(value);
  *   }
  *   int count = writer.complete();
+ *   int offset = writer.getStartingOffset();  // MUST call after complete()
  * </pre>
+ *
+ * <p><b>IMPORTANT:</b> Always call {@code getStartingOffset()} AFTER {@code complete()}.
+ * The starting offset may change during {@code complete()} when header size adjustment occurs.
  */
 public final class PrimitiveArrayWriter extends UnsafeWriter {
 
-    private final int elementSize;
+    private int elementSize;
     private int count = 0;
 
     // Simple layout: [8-byte count][8-byte bitmap for ≤64 elements][data...]
     private int dataOffset;            // Initially startingOffset + 16
     private int writePosition;         // Current write position
     private int elementCapacity;       // Max elements in current buffer
+
+    /**
+     * Create array writer without initialization - must call reset() before use.
+     * Used by ArrayContext to create a final writer field that will be initialized
+     * lazily when the first repeated field is encountered.
+     * @param parent the parent writer
+     */
+    public PrimitiveArrayWriter(UnsafeWriter parent) {
+        super(parent.getBufferHolder());
+        // Don't set elementSize or call initializeForNewArray
+        // Will be initialized on first reset() call
+    }
 
     /**
      * Create array writer with optional capacity hint.
@@ -60,21 +76,40 @@ public final class PrimitiveArrayWriter extends UnsafeWriter {
     public PrimitiveArrayWriter(UnsafeWriter parent, int elementSize, int initialCapacity) {
         super(parent.getBufferHolder());
         this.elementSize = elementSize;
+        initializeForNewArray(elementSize, initialCapacity);
+    }
+
+    /**
+     * Reset this writer for a new array field, reusing the existing object.
+     * @param newElementSize size of each element (1,2,4,8 bytes)
+     * @param initialCapacity expected elements (0 for no hint)
+     */
+    public void reset(int newElementSize, int initialCapacity) {
+        this.elementSize = newElementSize;
+        initializeForNewArray(newElementSize, initialCapacity);
+    }
+
+    /**
+     * Common initialization logic for constructor and reset.
+     */
+    private void initializeForNewArray(int elemSize, int initialCapacity) {
+        this.count = 0;
         this.startingOffset = cursor();
 
         // Pre-allocate header space for 64 elements: 8 bytes count + 8 bytes bitmap
         // This ensures zero data movement for arrays ≤64 elements
-        this.dataOffset = startingOffset + 16;
+        int headerBytes = initialCapacity > 64 ? calculateHeaderPortionInBytes(initialCapacity) : 16;
+        dataOffset = startingOffset + headerBytes;
         this.writePosition = dataOffset;
 
         // Calculate current buffer capacity
         // dataOffset already includes Platform.BYTE_ARRAY_OFFSET, so subtract it
         int availableBytes = getBuffer().length - (dataOffset - Platform.BYTE_ARRAY_OFFSET);
-        this.elementCapacity = availableBytes / elementSize;
+        this.elementCapacity = availableBytes / elemSize;
 
         // Grow if needed for initial capacity hint
         // Use byte comparison to handle negative elementCapacity correctly
-        if (elementSize * initialCapacity > availableBytes) {
+        if (elemSize * initialCapacity > availableBytes) {
             growBuffer(initialCapacity);
         }
     }
@@ -263,6 +298,9 @@ public final class PrimitiveArrayWriter extends UnsafeWriter {
             );
             dataOffset = startingOffset + headerBytes;
             writePosition += headerBytes - currentHeader;
+        } else if (headerBytes < currentHeader) {
+            // Header is smaller than pre-allocated - move startingOffset forward
+            startingOffset += currentHeader - headerBytes;
         }
 
         // Zero out the entire null bitmap (pre-allocated 8 bytes covers ≤64 elements)
@@ -294,7 +332,7 @@ public final class PrimitiveArrayWriter extends UnsafeWriter {
         return startingOffset;
     }
 
-    int getDataOffset() {
+    public int getDataOffset() {
         return dataOffset;
     }
 
