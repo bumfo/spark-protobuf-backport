@@ -50,7 +50,7 @@ class PrunedDomProtoBenchmark {
   @Param(Array("4"))
   var accessDepth: Int = _
 
-  @Param(Array("tag_name"))
+  @Param(Array("depth"))
   var accessField: String = _
 
   // Test data
@@ -123,12 +123,12 @@ class PrunedDomProtoBenchmark {
   // === Pruned Schema Benchmarks ===
 
   @Benchmark
-  def prunedInlineParser(bh: Blackhole): Unit = {
+  def inlineParser(bh: Blackhole): Unit = {
     bh.consume(domPrunedInlineParser.parse(deepDomBinary))
   }
 
   // @Benchmark
-  def prunedWireFormatParser(bh: Blackhole): Unit = {
+  def wireFormatParser(bh: Blackhole): Unit = {
     bh.consume(domPrunedWireParser.parse(deepDomBinary))
   }
 
