@@ -73,7 +73,7 @@ object TestBinaryTreeDepth5 {
     parsersByClass.toSeq.sortBy(_._1).zipWithIndex.foreach { case ((className, instances), idx) =>
       val shortName = className.split("\\.").last
       val parser = instances.head
-      val nestedFields = parser.getClass.getDeclaredFields.filter(_.getName.startsWith("parser_"))
+      val nestedFields = parser.getClass.getDeclaredFields.filter(f => classOf[fastproto.StreamWireParser].isAssignableFrom(f.getType))
 
       println(s"\n[$idx] Class: $shortName")
       println(s"    Instances: ${instances.size}")
@@ -108,7 +108,7 @@ object TestBinaryTreeDepth5 {
 
         // Find nested parsers
         val parserFields = p.getClass.getDeclaredFields.filter { field =>
-          field.getName.startsWith("parser_") && classOf[fastproto.StreamWireParser].isAssignableFrom(field.getType)
+          classOf[fastproto.StreamWireParser].isAssignableFrom(field.getType)
         }
 
         parserFields.foreach { field =>

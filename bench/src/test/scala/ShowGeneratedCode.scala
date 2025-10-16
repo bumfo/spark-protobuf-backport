@@ -12,6 +12,7 @@ import benchmark.MultiwayTreeProtos._
 import java.nio.file.{Files, Paths}
 import java.nio.charset.StandardCharsets
 import java.lang.reflect.Field
+import scala.collection.JavaConverters._
 
 object ShowGeneratedCode {
 
@@ -45,7 +46,42 @@ object ShowGeneratedCode {
     "Node" -> Node.getDescriptor,
   )
 
-  private val availableMessages = testMessages ++ benchMessages
+  // Build complete map including nested message types (map entries, etc.)
+  private val availableMessages = {
+    val base = testMessages ++ benchMessages
+    val allDescriptors = scala.collection.mutable.Map[String, Descriptor]()
+
+    // Add base messages
+    base.foreach { case (name, desc) => allDescriptors(name) = desc }
+
+    // Recursively discover nested message types
+    def addNestedTypes(descriptor: Descriptor): Unit = {
+      val fullName = descriptor.getFullName
+      val simpleName = descriptor.getName
+
+      // Add by full name and simple name
+      allDescriptors(fullName) = descriptor
+      allDescriptors(simpleName) = descriptor
+
+      // Recurse into nested types
+      descriptor.getNestedTypes.asScala.foreach { nestedType =>
+        addNestedTypes(nestedType)
+      }
+
+      // Recurse into message field types
+      descriptor.getFields.asScala
+        .filter(_.getType == com.google.protobuf.Descriptors.FieldDescriptor.Type.MESSAGE)
+        .foreach { field =>
+          val msgType = field.getMessageType
+          if (!allDescriptors.contains(msgType.getFullName)) {
+            addNestedTypes(msgType)
+          }
+        }
+    }
+
+    base.values.foreach(addNestedTypes)
+    allDescriptors.toMap
+  }
 
   def main(args: Array[String]): Unit = {
     if (args.isEmpty) {
@@ -113,7 +149,7 @@ object ShowGeneratedCode {
 
         // Show nested parser fields if any
         val parserFields = parserClass.getDeclaredFields.filter { field =>
-          field.getName.startsWith("parser_")
+          classOf[StreamWireParser].isAssignableFrom(field.getType)
         }
 
         if (parserFields.nonEmpty) {
@@ -273,7 +309,7 @@ object ShowGeneratedCode {
 
         // Visit nested parsers
         val parserFields = parser.getClass.getDeclaredFields
-          .filter(f => f.getName.startsWith("parser_") && classOf[StreamWireParser].isAssignableFrom(f.getType))
+          .filter(f => classOf[StreamWireParser].isAssignableFrom(f.getType))
 
         parserFields.foreach { field =>
           field.setAccessible(true)
@@ -317,7 +353,7 @@ object ShowGeneratedCode {
 
     // Find nested parser fields
     val parserFields = root.getClass.getDeclaredFields
-      .filter(f => f.getName.startsWith("parser_") && classOf[StreamWireParser].isAssignableFrom(f.getType))
+      .filter(f => classOf[StreamWireParser].isAssignableFrom(f.getType))
       .sortBy(_.getName)
 
     parserFields.zipWithIndex.foreach { case (field, idx) =>
@@ -359,7 +395,7 @@ object ShowGeneratedCode {
 
         // Find nested parsers
         val parserFields = p.getClass.getDeclaredFields.filter { field =>
-          field.getName.startsWith("parser_") && classOf[StreamWireParser].isAssignableFrom(field.getType)
+          classOf[StreamWireParser].isAssignableFrom(field.getType)
         }
 
         parserFields.foreach { field =>
