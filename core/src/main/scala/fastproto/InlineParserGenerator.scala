@@ -319,8 +319,15 @@ object InlineParserGenerator {
           case FieldDescriptor.Type.BYTES =>
             s"ProtoRuntime.flushBytesArray(bufferLists[$idx], $ordinal, w);"
           case FieldDescriptor.Type.MESSAGE =>
-            val parser = nestedParsers(field.getNumber)
-            s"ProtoRuntime.flushMessageArray(bufferLists[$idx], $ordinal, $parser, w);"
+            // Parser might not exist if this field was pruned from the schema
+            nestedParsers.get(field.getNumber) match {
+              case Some(parser) =>
+                s"ProtoRuntime.flushMessageArray(bufferLists[$idx], $ordinal, $parser, w);"
+              case None =>
+                // Field is in repeatedVarLength but not in schema - this shouldn't happen
+                // because repeatedVarLength is filtered by schemaFieldNames
+                throw new IllegalStateException(s"Parser not found for message field ${field.getNumber}")
+            }
           case _ => ""
         }
       }
