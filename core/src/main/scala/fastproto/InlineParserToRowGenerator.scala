@@ -47,6 +47,26 @@ object InlineParserToRowGenerator {
     (hash.toLong & 0xFFFFFFFFL).toString
   }
 
+  /**
+   * Generate cache key for a given descriptor and schema.
+   * Format: "FQN|canonical(depth=1)"
+   * Public for reuse in ShowGeneratedCode.
+   */
+  def generateCacheKey(descriptor: Descriptor, schema: StructType): String = {
+    val canonicalKey = generateCanonicalKey(descriptor, schema, depth = 1)
+    s"${descriptor.getFullName}|$canonicalKey"
+  }
+
+  /**
+   * Generate class name for a given descriptor and schema.
+   * Format: "GeneratedInlineParser_<SimpleName>_<CacheKeyHash>"
+   * Public for reuse in ShowGeneratedCode.
+   */
+  def generateClassName(descriptor: Descriptor, schema: StructType): String = {
+    val cacheKey = generateCacheKey(descriptor, schema)
+    s"GeneratedInlineParser_${descriptor.getName}_${unsignedHashString(cacheKey.hashCode)}"
+  }
+
   // Global cache for compiled classes: "FQN|canonical(depth=1)" -> Class
   private val classCache: ConcurrentHashMap[String, Class[_ <: StreamWireParser]] =
     new ConcurrentHashMap()
@@ -270,15 +290,14 @@ object InlineParserToRowGenerator {
    * Cache key format: "FQN|canonical(depth=1)"
    */
   private def getOrCompileClass(descriptor: Descriptor, schema: StructType): Class[_ <: StreamWireParser] = {
-    val canonicalKey = generateCanonicalKey(descriptor, schema, depth = 1)
-    val cacheKey = s"${descriptor.getFullName}|$canonicalKey"
+    val cacheKey = generateCacheKey(descriptor, schema)
 
     // Check if class already exists
     Option(classCache.get(cacheKey)) match {
       case Some(clazz) => clazz
       case None =>
         // Compile new class
-        val className = s"GeneratedInlineParser_${descriptor.getName}_${unsignedHashString(cacheKey.hashCode)}"
+        val className = generateClassName(descriptor, schema)
         val sourceCode = InlineParserGenerator.generateParser(className, descriptor, schema)
 
         // Compile using Janino

@@ -67,9 +67,8 @@ object ShowGeneratedCode {
       RecursiveSchemaConverters.toSqlTypeWithTrueRecursion(descriptor, enumAsInt = true)
     )
 
-    // Use the same key format as InlineParserToRowGenerator for consistent class names
-    val key = s"${descriptor.getFullName}_${schema.hashCode()}"
-    val className = s"GeneratedInlineParser_${messageName}_${InlineParserToRowGenerator.unsignedHashString(key.hashCode)}"
+    // Use InlineParserToRowGenerator helper for consistent class name
+    val className = InlineParserToRowGenerator.generateClassName(descriptor, schema)
 
     if (!showCompiled) {
       // Show standalone generated source preview when not in compiled mode
@@ -152,11 +151,16 @@ object ShowGeneratedCode {
       printParserGraph(parser, instanceIdMap)
       println("="*80)
 
-      // Show the root schema structure
+      // Show the root schema structure (skip for recursive schemas to avoid StackOverflowError)
       println("\n" + "="*80)
       println(s"Root Schema structure for $messageName:")
       println("="*80)
-      println(schema.treeString)
+      try {
+        println(schema.treeString)
+      } catch {
+        case _: StackOverflowError =>
+          println("(Skipped: recursive schema causes StackOverflowError in Spark's treeString)")
+      }
       println("="*80 + "\n")
     }
   }
@@ -374,13 +378,12 @@ object ShowGeneratedCode {
 
   /**
    * Extract descriptor from parser class name
-   * Format: GeneratedInlineParser_<MessageType>_<CanonicalHash>_<NestedHash>
+   * Format: GeneratedInlineParser_<MessageType>_<CacheKeyHash>
    */
   private def getDescriptorForParser(className: String): Option[Descriptor] = {
     // Extract message type from class name
-    // Example: GeneratedInlineParser_DomNode_1861789265_705459274 -> DomNode
-    // Example: GeneratedInlineParser_DomNode_630398454_0 -> DomNode (leaf)
-    val pattern = "GeneratedInlineParser_(.+)_\\d+_\\d+".r
+    // Example: GeneratedInlineParser_DomNode_2671599217 -> DomNode
+    val pattern = "GeneratedInlineParser_(.+)_\\d+".r
     className match {
       case pattern(messageType) =>
         // Handle package prefixes (benchmark_DomNode -> DomNode)
