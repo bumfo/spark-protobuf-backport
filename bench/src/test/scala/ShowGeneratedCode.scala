@@ -15,15 +15,6 @@ import java.lang.reflect.Field
 
 object ShowGeneratedCode {
 
-  /**
-   * Convert a hash code to an unsigned string representation.
-   * Preserves all 32 bits by converting to unsigned long (0 to 4294967295).
-   * Must match InlineParserToRowGenerator.unsignedHashString.
-   */
-  private def unsignedHashString(hash: Int): String = {
-    (hash.toLong & 0xFFFFFFFFL).toString
-  }
-
   // Available message types from tests
   private val testMessages = Map(
     "AllRepeatedTypes" -> AllRepeatedTypes.getDescriptor,
@@ -78,7 +69,7 @@ object ShowGeneratedCode {
 
     // Use the same key format as InlineParserToRowGenerator for consistent class names
     val key = s"${descriptor.getFullName}_${schema.hashCode()}"
-    val className = s"GeneratedInlineParser_${messageName}_${unsignedHashString(key.hashCode)}"
+    val className = s"GeneratedInlineParser_${messageName}_${InlineParserToRowGenerator.unsignedHashString(key.hashCode)}"
 
     if (!showCompiled) {
       // Show standalone generated source preview when not in compiled mode
