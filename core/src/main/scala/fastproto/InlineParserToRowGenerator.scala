@@ -41,8 +41,9 @@ object InlineParserToRowGenerator {
    * Convert a hash code to an unsigned string representation.
    * Preserves all 32 bits by converting to unsigned long (0 to 4294967295).
    * Avoids Math.abs edge case where Integer.MIN_VALUE stays negative.
+   * Public for reuse in ShowGeneratedCode.
    */
-  private def unsignedHashString(hash: Int): String = {
+  def unsignedHashString(hash: Int): String = {
     (hash.toLong & 0xFFFFFFFFL).toString
   }
 
