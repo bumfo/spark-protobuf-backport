@@ -186,15 +186,57 @@ object InlineParserToRowGenerator {
   }
 
   /**
-   * Get or compile parser class using global class cache.
+   * Generate a canonical key based only on the field structure at the current level.
+   * This enables class reuse for parsers with identical field structures but different
+   * nested schema depths (e.g., recursive types with pruning).
+   *
+   * The canonical key includes:
+   * - Descriptor full name
+   * - Field names and ordinals (sorted for determinism)
+   * - Field types (scalar, string, bytes, message, repeated)
+   * - For message fields: nested descriptor name only (not schema hash)
    */
-  private def getOrCompileClass(descriptor: Descriptor, schema: StructType, key: String): Class[_ <: StreamWireParser] = {
-    // Check global class cache first
-    Option(classCache.get(key)) match {
+  private def generateCanonicalKey(descriptor: Descriptor, schema: StructType): String = {
+    val fields = descriptor.getFields.asScala
+      .filter(f => schema.fieldNames.contains(f.getName))
+      .map { field =>
+        val fieldIndex = schema.fieldIndex(field.getName)
+        val sparkField = schema.fields(fieldIndex)
+
+        val typeSignature = (field.getType, sparkField.dataType) match {
+          case (FieldDescriptor.Type.MESSAGE, _: StructType) =>
+            s"msg:${field.getMessageType.getFullName}"
+          case (FieldDescriptor.Type.MESSAGE, ArrayType(_: StructType, _)) =>
+            s"msg[]:${field.getMessageType.getFullName}"
+          case (_, ArrayType(elementType, _)) =>
+            s"${elementType.typeName}[]"
+          case (_, dataType) =>
+            dataType.typeName
+        }
+
+        s"${field.getNumber}:${field.getName}:$typeSignature"
+      }
+      .toSeq
+      .sorted
+      .mkString(",")
+
+    s"${descriptor.getFullName}|$fields"
+  }
+
+  /**
+   * Get or compile parser class using global class cache with canonical key.
+   * Uses canonical key for class compilation (based on field structure only),
+   * but instance cache still uses full key (descriptor + schema hash).
+   */
+  private def getOrCompileClass(descriptor: Descriptor, schema: StructType): Class[_ <: StreamWireParser] = {
+    val canonicalKey = generateCanonicalKey(descriptor, schema)
+
+    // Check global class cache first using canonical key
+    Option(classCache.get(canonicalKey)) match {
       case Some(clazz) => clazz
       case None =>
         // Compile new class
-        val className = s"GeneratedInlineParser_${descriptor.getName}_${Math.abs(key.hashCode)}"
+        val className = s"GeneratedInlineParser_${descriptor.getName}_${Math.abs(canonicalKey.hashCode)}"
         val sourceCode = InlineParserGenerator.generateParser(className, descriptor, schema)
 
         // Compile using Janino
@@ -203,19 +245,20 @@ object InlineParserToRowGenerator {
         compiler.cook(sourceCode)
         val generatedClass = compiler.getClassLoader.loadClass(s"fastproto.generated.$className").asInstanceOf[Class[_ <: StreamWireParser]]
 
-        // Cache the compiled class globally and return
-        Option(classCache.putIfAbsent(key, generatedClass)).getOrElse(generatedClass)
+        // Cache the compiled class globally using canonical key and return
+        Option(classCache.putIfAbsent(canonicalKey, generatedClass)).getOrElse(generatedClass)
     }
   }
 
   /**
    * Compile and instantiate a single parser.
+   * Uses canonical key for class lookup (enables class reuse),
+   * but creates instance with full schema (preserves per-instance state).
    */
   private def compileParser(descriptor: Descriptor, schema: StructType): StreamWireParser = {
-    val key = s"${descriptor.getFullName}_${schema.hashCode()}"
-    val parserClass = getOrCompileClass(descriptor, schema, key)
+    val parserClass = getOrCompileClass(descriptor, schema)
 
-    // Instantiate parser
+    // Instantiate parser with full schema
     val constructor = parserClass.getConstructor(classOf[StructType])
     constructor.newInstance(schema)
   }
