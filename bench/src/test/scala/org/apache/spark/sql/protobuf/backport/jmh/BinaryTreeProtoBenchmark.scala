@@ -22,7 +22,10 @@ import java.util.concurrent.TimeUnit
  * - Canonical depth=∞: Maximum specialization (monomorphic for all levels)
  *
  * Configurable Parameters:
- * - accessDepth: How deep to access (1-8, default: 3)
+ * - depth: Tree depth (number of levels, default: 8)
+ *   - Controls the size of the generated binary tree
+ *   - Total nodes = 2&#94;(depth+1) - 1
+ * - accessDepth: How deep to access (1-depth, default: 3)
  *   - 1 = root.left.value
  *   - 2 = root.left.left.value
  *   - 3 = root.left.left.left.value (default)
@@ -36,13 +39,13 @@ import java.util.concurrent.TimeUnit
  * Usage:
  * sbt jmhBinaryTree
  * sbt "jmhBinaryTree -p accessDepth=3"
- * sbt "jmhBinaryTree -p accessDepth=1,2,3,4,5"
+ * sbt "jmhBinaryTree -p depth=6 -p accessDepth=1,2,3,4,5"
  * sbt "jmhBinaryTree -p payloadSize=0,100,1000"
  * sbt "jmhBinaryTree -p accessDepth=4 -p payloadSize=100"
  * sbt "jmhBinaryTree -p canonicalDepth=0,1,100"
  *
  * Quick canonical depth comparison test:
- * sbt clean "jmhBinaryTree -p accessDepth=2,4,6 -p payloadSize=10000 -p canonicalDepth=0,1,100"
+ * sbt clean "jmhBinaryTree -p depth=6 -p accessDepth=2,4,6 -p payloadSize=10000 -p canonicalDepth=0,1,100"
  */
 @BenchmarkMode(Array(Mode.AverageTime))
 @OutputTimeUnit(TimeUnit.NANOSECONDS)
@@ -53,6 +56,9 @@ import java.util.concurrent.TimeUnit
 class BinaryTreeProtoBenchmark {
 
   // JMH parameters
+  @Param(Array("8"))
+  var depth: Int = _
+
   @Param(Array("3"))
   var accessDepth: Int = _
 
@@ -63,7 +69,7 @@ class BinaryTreeProtoBenchmark {
   var canonicalDepth: Int = _
 
   // Test data
-  var binaryTreeBinary: Array[Byte] = _ // depth=8
+  var binaryTreeBinary: Array[Byte] = _
 
   // Descriptors and schemas
   var treeDescriptor: com.google.protobuf.Descriptors.Descriptor = _
@@ -74,8 +80,8 @@ class BinaryTreeProtoBenchmark {
 
   @Setup
   def setup(): Unit = {
-    // Create deep binary tree for testing pruned access
-    val tree = BinaryTreeTestDataGenerator.createBinaryTree(maxDepth = 8, payloadSize = payloadSize)
+    // Create binary tree for testing pruned access
+    val tree = BinaryTreeTestDataGenerator.createBinaryTree(maxDepth = depth, payloadSize = payloadSize)
     binaryTreeBinary = tree.toByteArray
     treeDescriptor = tree.getDescriptorForType
 
@@ -87,7 +93,9 @@ class BinaryTreeProtoBenchmark {
     treePrunedInlineParser = InlineParserToRowGenerator.generateParser(treeDescriptor, treePrunedSchema, config)
 
     // Print setup info
+    val totalNodes = (1 << (depth + 1)) - 1
     println(s"BinaryTree Benchmark Setup:")
+    println(s"  Tree depth: $depth (nodes: $totalNodes)")
     println(s"  Access depth: $accessDepth")
     println(s"  Payload size: $payloadSize bytes" + (if (payloadSize == 0) " (no payload)" else ""))
     println(s"  Canonical depth: $canonicalDepth")
@@ -99,22 +107,22 @@ class BinaryTreeProtoBenchmark {
    * Create a pruned schema that accesses value field at specified depth.
    *
    * Examples:
-   * - depth=1: root.left.value
-   * - depth=2: root.left.left.value
-   * - depth=3: root.left.left.left.value
+   * - accessDepth=1: root.left.value
+   * - accessDepth=2: root.left.left.value
+   * - accessDepth=3: root.left.left.left.value
    */
-  private def createPrunedSchema(depth: Int): StructType = {
-    require(depth >= 1 && depth <= 8, s"accessDepth must be 1-8, got $depth")
+  private def createPrunedSchema(accessDepth: Int): StructType = {
+    require(accessDepth >= 1 && accessDepth <= depth, s"accessDepth must be 1-$depth, got $accessDepth")
 
     // Leaf level: just the value field
     val leafSchema = StructType(Seq(
       StructField("value", IntegerType, nullable = false)
     ))
 
-    // Build nested structure from leaf up to desired depth
+    // Build nested structure from leaf up to desired access depth
     // We access via left child only for simplicity
     var currentSchema = leafSchema
-    for (_ <- 1 until depth) {
+    for (_ <- 1 until accessDepth) {
       currentSchema = StructType(Seq(
         StructField("left", currentSchema, nullable = true)
       ))
