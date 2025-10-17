@@ -22,16 +22,21 @@ import java.util.concurrent.TimeUnit
  * - Canonical depth=∞: Maximum specialization
  *
  * Configurable Parameters:
- * - accessDepth: How deep to access (1-8)
+ * - accessDepth: How deep to access (1-8, default: 3)
  *   - 1 = root.left.value
  *   - 2 = root.left.left.value
  *   - 3 = root.left.left.left.value (default)
  *   - etc.
+ * - payloadSize: Size of binary payload per node in bytes (default: 0 = no payload)
+ *   - Tests impact of variable-length fields on canonical depth optimization
+ *   - 0 = no payload, 100 = 100 bytes, 1000 = 1KB, etc.
  *
  * Usage:
  * sbt jmhBinaryTree
  * sbt "jmhBinaryTree -p accessDepth=3"
  * sbt "jmhBinaryTree -p accessDepth=1,2,3,4,5"
+ * sbt "jmhBinaryTree -p payloadSize=0,100,1000"
+ * sbt "jmhBinaryTree -p accessDepth=4 -p payloadSize=100"
  */
 @BenchmarkMode(Array(Mode.AverageTime))
 @OutputTimeUnit(TimeUnit.NANOSECONDS)
@@ -44,6 +49,9 @@ class BinaryTreeProtoBenchmark {
   // JMH parameters
   @Param(Array("3"))
   var accessDepth: Int = _
+
+  @Param(Array("0"))
+  var payloadSize: Int = _
 
   // Test data
   var binaryTreeBinary: Array[Byte] = _ // depth=8
@@ -58,7 +66,7 @@ class BinaryTreeProtoBenchmark {
   @Setup
   def setup(): Unit = {
     // Create deep binary tree for testing pruned access
-    val tree = BinaryTreeTestDataGenerator.createBinaryTree(maxDepth = 8)
+    val tree = BinaryTreeTestDataGenerator.createBinaryTree(maxDepth = 8, payloadSize = payloadSize)
     binaryTreeBinary = tree.toByteArray
     treeDescriptor = tree.getDescriptorForType
 
@@ -71,6 +79,8 @@ class BinaryTreeProtoBenchmark {
     // Print setup info
     println(s"BinaryTree Benchmark Setup:")
     println(s"  Access depth: $accessDepth")
+    println(s"  Payload size: $payloadSize bytes" + (if (payloadSize == 0) " (no payload)" else ""))
+    println(s"  Binary size: ${binaryTreeBinary.length} bytes")
     println(s"  Schema: ${formatSchema(treePrunedSchema)}")
   }
 
