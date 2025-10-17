@@ -26,7 +26,7 @@ sbt clean bench/Test/compile 'bench/Jmh/run .*Scalar.*(anInlineParser|generatedW
 sbt clean jmh | tee /tmp/jmh_all.log
 ```
 
-Run in background (`run_in_background: true`) and monitor with `.claude/skills/sbt-benchmark/scripts/monitor-jmh.sh /tmp/jmh_<name>.log` (optionally `-t 30` for 30s timeout). Do NOT use BashOutput.
+Run in background (`run_in_background: true`) and monitor with `.claude/skills/sbt-benchmark/scripts/monitor-jmh.sh -t <timeout> /tmp/jmh_<name>.log` (e.g., `-t 30` for 30s). Do NOT use BashOutput.
 
 ### 3. Parse and Present
 
@@ -50,5 +50,5 @@ Only when user requests. Use unambiguous language: "1.5x speedup" (old/new), "33
 
 ## Monitoring
 
-- **Live**: `.claude/skills/sbt-benchmark/scripts/monitor-jmh.sh /tmp/jmh.log [-t 30]` - Real-time progress, auto-exits on completion/timeout
+- **Live**: `.claude/skills/sbt-benchmark/scripts/monitor-jmh.sh -t <timeout> /tmp/jmh.log` - Real-time progress, auto-exits on completion/timeout (e.g., `-t 30` for 30s)
 - **Status**: `.claude/skills/sbt-benchmark/scripts/jmh-status.sh /tmp/jmh.log` - One-shot status check

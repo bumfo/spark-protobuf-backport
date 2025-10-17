@@ -10,15 +10,15 @@ Follows the log file in real-time and displays formatted progress updates.
 
 **Usage:**
 ```bash
-# Basic usage
+# Basic usage (default 60s timeout)
 scripts/monitor-jmh.sh /tmp/jmh_benchmark.log
 
-# With timeout (auto-exit after 30 seconds)
+# Custom timeout (auto-exit after 30 seconds)
 scripts/monitor-jmh.sh -t 30 /tmp/jmh_benchmark.log
 ```
 
 **Options:**
-- `-t <seconds>` or `--timeout <seconds>`: Exit after specified time if benchmark hasn't completed
+- `-t <seconds>` or `--timeout <seconds>`: Exit after specified time if benchmark hasn't completed (default: 60s)
 
 **Output:**
 - Current benchmark name (shortened to last component)
@@ -62,10 +62,10 @@ scripts/jmh-status.sh /tmp/jmh_benchmark.log
 
 2. **Monitor progress (option A - live monitoring):**
    ```bash
-   # Without timeout
+   # Default 60s timeout
    scripts/monitor-jmh.sh /tmp/jmh_scalar.log
 
-   # With 30-second timeout
+   # Custom timeout
    scripts/monitor-jmh.sh -t 30 /tmp/jmh_scalar.log
    ```
 
