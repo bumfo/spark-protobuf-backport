@@ -285,6 +285,10 @@ process_log_lines() {
             if [ -n "${TAIL_PID:-}" ]; then
                 kill $TAIL_PID 2>/dev/null || true
             fi
+            # Kill timer process to prevent timeout
+            if [ -n "${TIMER_PID:-}" ]; then
+                kill $TIMER_PID 2>/dev/null || true
+            fi
         fi
 
         # Extract total time if run completed
@@ -312,12 +316,10 @@ trap cleanup EXIT TERM INT
 
 # Run with or without timeout
 if [ "$TIMEOUT" -gt 0 ]; then
-    # Portable timeout implementation using background timer
-    (
-        sleep "$TIMEOUT"
-        echo -e "\n${YELLOW}⏱ Timeout reached after ${TIMEOUT} seconds${RESET}" >&2
-        kill -TERM $$ 2>/dev/null
-    ) &
+    # Get the directory where this script is located
+    SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
+    # Start timeout killer in background (separate process is easier to kill)
+    "$SCRIPT_DIR/timeout-killer.sh" "$TIMEOUT" $$ &
     TIMER_PID=$!
 fi
 
@@ -355,3 +357,7 @@ if [ "$RUN_COMPLETE" = true ]; then
 else
     echo "Monitor stopped."
 fi
+
+# Force exit by killing the process group
+kill -9 $TIMER_PID 2>/dev/null || true
+kill -TERM $$ 2>/dev/null || exit 0
