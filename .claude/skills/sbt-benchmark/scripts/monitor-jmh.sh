@@ -79,6 +79,8 @@ RUN_COMPLETE=false
 TOTAL_TIME=""
 COMPILE_SHOWN=false
 BUILD_TIME=""
+TIMER_PID=0
+TAIL_PID=0
 
 echo -e "${BOLD}JMH Benchmark Progress Monitor${RESET}"
 echo -e "Monitoring: ${CYAN}${LOG_FILE}${RESET}"
@@ -282,12 +284,14 @@ process_log_lines() {
             RUN_COMPLETE=true
             # Kill tail process to stop reading new lines
             # But don't break - let the loop finish processing buffered lines
-            if [ -n "${TAIL_PID:-}" ]; then
-                kill $TAIL_PID 2>/dev/null || true
+            if [ "$TAIL_PID" -gt 0 ]; then
+                kill $TAIL_PID || true
+                TAIL_PID=0
             fi
             # Kill timer process to prevent timeout
-            if [ -n "${TIMER_PID:-}" ]; then
-                kill $TIMER_PID 2>/dev/null || true
+            if [ "$TIMER_PID" -gt 0 ]; then
+                kill $TIMER_PID || true
+                TIMER_PID=0
             fi
         fi
 
@@ -304,15 +308,18 @@ process_log_lines() {
 # Cleanup function to kill processes on exit
 cleanup() {
     # Kill timer if it exists
-    if [ -n "${TIMER_PID:-}" ]; then
-        kill $TIMER_PID 2>/dev/null || true
+    if [ "$TIMER_PID" -gt 0 ]; then
+        kill $TIMER_PID || true
+        TIMER_PID=0
     fi
     # Kill tail process if it exists
-    if [ -n "${TAIL_PID:-}" ]; then
-        kill $TAIL_PID 2>/dev/null || true
+    if [ "$TAIL_PID" -gt 0 ]; then
+        kill $TAIL_PID || true
+        TAIL_PID=0
     fi
+    exit 0
 }
-trap cleanup EXIT TERM INT
+trap cleanup EXIT
 
 # Run with or without timeout
 if [ "$TIMEOUT" -gt 0 ]; then
@@ -358,6 +365,4 @@ else
     echo "Monitor stopped."
 fi
 
-# Force exit by killing the process group
-kill -9 $TIMER_PID 2>/dev/null || true
-kill -TERM $$ 2>/dev/null || exit 0
+exit 0
