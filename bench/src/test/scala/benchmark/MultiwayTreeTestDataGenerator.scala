@@ -1,5 +1,7 @@
 package benchmark
 
+import benchmark.MultiwayTreeProtos.Node
+
 /**
  * Generator for multiway tree test data with configurable depth and branching factor.
  *
@@ -21,7 +23,7 @@ object MultiwayTreeTestDataGenerator {
    * @param branchingFactor Number of children per internal node
    * @return Generated tree root node
    */
-  def generateTree(depth: Int, branchingFactor: Int): benchmark.Node = {
+  def generateTree(depth: Int, branchingFactor: Int): Node = {
     require(depth >= 1, s"Depth must be >= 1, got $depth")
     require(branchingFactor >= 1, s"Branching factor must be >= 1, got $branchingFactor")
 
@@ -37,8 +39,8 @@ object MultiwayTreeTestDataGenerator {
       maxDepth: Int,
       branchingFactor: Int,
       nodeId: Int
-  ): (benchmark.Node, Int) = {
-    val builder = benchmark.Node.newBuilder()
+  ): (Node, Int) = {
+    val builder = Node.newBuilder()
       .setValue(nodeId)
       .setPayload(s"node_$nodeId")
 
@@ -82,7 +84,7 @@ object MultiwayTreeTestDataGenerator {
   /**
    * Generate example tree for debugging.
    */
-  def exampleTree(depth: Int = 3, branchingFactor: Int = 2): benchmark.Node = {
+  def exampleTree(depth: Int = 3, branchingFactor: Int = 2): Node = {
     generateTree(depth, branchingFactor)
   }
 }
