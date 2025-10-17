@@ -5,7 +5,7 @@
 set -euo pipefail
 
 # Default values
-TIMEOUT=0  # 0 means no timeout
+TIMEOUT=60  # Default 60s timeout, use 0 for no timeout
 LOG_FILE=""
 
 # Parse arguments
@@ -29,7 +29,8 @@ done
 # Check if log file is provided
 if [ -z "$LOG_FILE" ]; then
     echo "Usage: $0 [-t timeout_seconds] <jmh-log-file>"
-    echo "Example: $0 /tmp/jmh_scalar.log"
+    echo "Example: $0 /tmp/jmh_scalar.log  # Default 60s timeout"
+    echo "Example: $0 -t 0 /tmp/jmh_scalar.log  # No timeout"
     echo "Example: $0 -t 600 /tmp/jmh_scalar.log  # 10 minute timeout"
     exit 1
 fi
