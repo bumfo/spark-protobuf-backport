@@ -73,6 +73,9 @@ CURRENT_PROGRESS=""
 CURRENT_FORK=""
 LAST_ITER_INFO=""
 RESULT_BENCHMARK=""
+IN_RESULT_TABLE=false
+RUN_COMPLETE=false
+TOTAL_TIME=""
 
 echo -e "${BOLD}JMH Benchmark Progress Monitor${RESET}"
 echo -e "Monitoring: ${CYAN}${LOG_FILE}${RESET}"
@@ -139,11 +142,8 @@ show_status() {
         fi
     else
         # Non-interactive mode: Append-only output
-        # Only print when there's a significant update
-        if [ -n "$LAST_ITER_INFO" ]; then
-            local SHORT_NAME="${CURRENT_BENCHMARK##*.}"
-            echo "  [${SHORT_NAME}] ${LAST_ITER_INFO}"
-        fi
+        # Don't print iteration details - too verbose for logs
+        :
     fi
 }
 
@@ -217,24 +217,46 @@ process_log_lines() {
                 local SHORT_RESULT="${RESULT_BENCHMARK##*.}"
                 LAST_RESULT="${SHORT_RESULT}: ${SCORE} ± ${ERROR} ns/op"
                 if [ "$INTERACTIVE" = false ]; then
-                    echo "Result: ${SHORT_RESULT}: ${SCORE} ± ${ERROR} ns/op"
+                    echo "Partial result: ${SHORT_RESULT}: ${SCORE} ± ${ERROR} ns/op"
                 fi
                 RESULT_BENCHMARK=""
             fi
         fi
 
+        # Detect result table header
+        if [[ "$line" =~ ^[[:space:]]*\[info\][[:space:]]+Benchmark.*Mode.*Cnt.*Score.*Error.*Units ]]; then
+            IN_RESULT_TABLE=true
+            # Strip [info] prefix and output
+            local stripped_line=$(echo "$line" | sed 's/^[[:space:]]*\[info\][[:space:]]*//')
+            echo ""
+            echo "$stripped_line"
+        # Process result table rows
+        elif [ "$IN_RESULT_TABLE" = true ]; then
+            # Check if this is a table row (starts with [info] followed by non-space)
+            if [[ "$line" =~ ^[[:space:]]*\[info\][[:space:]]+[^[:space:]] ]]; then
+                # Strip [info] prefix and output
+                local stripped_line=$(echo "$line" | sed 's/^[[:space:]]*\[info\][[:space:]]*//')
+                echo "$stripped_line"
+            # Empty line or non-matching line - end of table
+            elif [[ "$line" =~ ^[[:space:]]*$ ]] || [[ ! "$line" =~ ^\[info\] ]]; then
+                IN_RESULT_TABLE=false
+                echo ""
+            fi
+        fi
+
         # Detect completion
         if [[ "$line" =~ Run\ complete ]]; then
-            if [ "$INTERACTIVE" = true ]; then
-                echo -ne "\n\n${BOLD}${GREEN}✓ Benchmark suite completed!${RESET}\n\n"
-            else
-                echo "✓ Benchmark suite completed!"
-            fi
-            # Kill tail process to allow clean exit
+            RUN_COMPLETE=true
+            # Kill tail process to stop reading new lines
+            # But don't break - let the loop finish processing buffered lines
             if [ -n "${TAIL_PID:-}" ]; then
                 kill $TAIL_PID 2>/dev/null || true
             fi
-            break
+        fi
+
+        # Extract total time if run completed
+        if [ "$RUN_COMPLETE" = true ] && [[ "$line" =~ ^\[success\]\ Total\ time:\ (.+)$ ]]; then
+            TOTAL_TIME="${BASH_REMATCH[1]}"
         fi
 
         # Skip compilation warnings - they're not benchmark errors
@@ -281,5 +303,22 @@ process_log_lines < "$FIFO"
 # Clean up FIFO
 rm -f "$FIFO"
 
-# If we get here, benchmark completed (or timeout triggered)
-echo "Monitor stopped."
+# Check if benchmark completed successfully
+if [ "$RUN_COMPLETE" = true ]; then
+    if [ "$INTERACTIVE" = true ]; then
+        echo -ne "\n${BOLD}${GREEN}✓ Benchmark suite completed!${RESET}"
+        if [ -n "$TOTAL_TIME" ]; then
+            echo -ne " ${CYAN}(${TOTAL_TIME})${RESET}"
+        fi
+        echo -ne "\n\n"
+    else
+        echo ""
+        if [ -n "$TOTAL_TIME" ]; then
+            echo "✓ Benchmark suite completed! (${TOTAL_TIME})"
+        else
+            echo "✓ Benchmark suite completed!"
+        fi
+    fi
+else
+    echo "Monitor stopped."
+fi
