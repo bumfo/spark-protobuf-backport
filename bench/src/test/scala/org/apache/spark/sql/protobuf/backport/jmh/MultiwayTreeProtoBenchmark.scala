@@ -184,7 +184,7 @@ class MultiwayTreeProtoBenchmark {
     bh.consume(prunedSchemaParser.parse(treeData))
   }
 
-  @Benchmark
+  // @Benchmark
   def inlineParserFullSchema(bh: Blackhole): Unit = {
     bh.consume(fullSchemaParser.parse(treeData))
   }
