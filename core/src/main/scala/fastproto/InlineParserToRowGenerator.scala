@@ -8,6 +8,25 @@ import java.util.concurrent.ConcurrentHashMap
 import scala.collection.JavaConverters._
 
 /**
+ * Configuration for inline parser generation.
+ *
+ * @param canonicalKeyDepth Depth of MESSAGE field expansion in canonical keys.
+ *                          Controls parser class specialization vs reuse trade-off.
+ *                          - 0: Maximum class reuse (megamorphic call sites)
+ *                          - 1: Balanced approach (default, monomorphic for immediate children)
+ *                          - N: More specialization (monomorphic for N levels)
+ */
+case class InlineParserConfig(
+  canonicalKeyDepth: Int = 1
+) {
+  require(canonicalKeyDepth >= 0, s"canonicalKeyDepth must be >= 0, got $canonicalKeyDepth")
+}
+
+object InlineParserConfig {
+  val default: InlineParserConfig = InlineParserConfig()
+}
+
+/**
  * Factory object for generating optimized inline parsers using InlineParserGenerator.
  *
  * This generator uses InlineParserGenerator to produce compact, switch-based parsers
@@ -18,18 +37,15 @@ import scala.collection.JavaConverters._
  * redundant compilation.
  *
  * Smart class specialization strategy:
- * - Uses unified canonical key with depth=1 expansion
- * - Canonical key captures immediate structure + one level of nested MESSAGE fields
+ * - Uses unified canonical key with configurable depth expansion
+ * - Canonical key captures immediate structure + nested MESSAGE field structure
  * - Field order implicit in concatenation (iterates over schema.fields)
- * - Grandchildren remain generic (depth=0) for optimal code reuse
- * - Always generates specialized classes for monomorphic dispatch
+ * - Always generates specialized classes for dispatch optimization
  *
- * Cache key format: "FQN|canonical(depth=1)"
- * Example: "testproto.Node|1:INT32:integer,2:MESSAGE:struct:{1:INT32:integer}"
+ * Cache key format: "FQN|canonical(depth=N)"
+ * Example (depth=1): "testproto.Node|1:INT32:integer,2:MESSAGE:struct:{1:INT32:integer}"
  */
 object InlineParserToRowGenerator {
-
-  private final val CANONICAL_KEY_DEPTH = 1
 
   /**
    * Convert a fully qualified protobuf name to a valid Java identifier.
@@ -51,11 +67,11 @@ object InlineParserToRowGenerator {
 
   /**
    * Generate cache key for a given descriptor and schema.
-   * Format: "FQN|canonical(depth=1)"
+   * Format: "FQN|canonical(depth=N)"
    * Public for reuse in ShowGeneratedCode.
    */
-  def generateCacheKey(descriptor: Descriptor, schema: StructType): String = {
-    val canonicalKey = generateCanonicalKey(descriptor, schema, depth = CANONICAL_KEY_DEPTH)
+  def generateCacheKey(descriptor: Descriptor, schema: StructType, config: InlineParserConfig = InlineParserConfig.default): String = {
+    val canonicalKey = generateCanonicalKey(descriptor, schema, depth = config.canonicalKeyDepth)
     s"${descriptor.getFullName}|$canonicalKey"
   }
 
@@ -64,8 +80,8 @@ object InlineParserToRowGenerator {
    * Format: "GeneratedInlineParser_<SimpleName>_<CacheKeyHash>"
    * Public for reuse in ShowGeneratedCode.
    */
-  def generateClassName(descriptor: Descriptor, schema: StructType): String = {
-    val cacheKey = generateCacheKey(descriptor, schema)
+  def generateClassName(descriptor: Descriptor, schema: StructType, config: InlineParserConfig = InlineParserConfig.default): String = {
+    val cacheKey = generateCacheKey(descriptor, schema, config)
     s"GeneratedInlineParser_${descriptor.getName}_${unsignedHashString(cacheKey.hashCode)}"
   }
 
@@ -78,7 +94,7 @@ object InlineParserToRowGenerator {
     ThreadLocal.withInitial(() => scala.collection.mutable.Map.empty[String, StreamWireParser])
 
   /**
-   * Generate or retrieve a cached parser for the given descriptor and schema.
+   * Generate or retrieve a cached parser for the given descriptor and schema using default config.
    * Uses two-tier caching: globally cached compiled classes + thread-local instances.
    * This avoids redundant compilation while ensuring thread safety.
    *
@@ -87,7 +103,21 @@ object InlineParserToRowGenerator {
    * @return an optimized inline parser
    */
   def generateParser(descriptor: Descriptor, schema: StructType): StreamWireParser = {
-    val key = s"${descriptor.getFullName}_${schema.hashCode()}"
+    generateParser(descriptor, schema, InlineParserConfig.default)
+  }
+
+  /**
+   * Generate or retrieve a cached parser for the given descriptor and schema with custom config.
+   * Uses two-tier caching: globally cached compiled classes + thread-local instances.
+   * This avoids redundant compilation while ensuring thread safety.
+   *
+   * @param descriptor the protobuf message descriptor
+   * @param schema     the target Spark SQL schema
+   * @param config     parser generation configuration
+   * @return an optimized inline parser
+   */
+  def generateParser(descriptor: Descriptor, schema: StructType, config: InlineParserConfig): StreamWireParser = {
+    val key = s"${descriptor.getFullName}_${schema.hashCode()}_${config.hashCode()}"
     val threadInstances = instanceCache.get()
 
     // Check thread-local instance cache first
@@ -95,7 +125,7 @@ object InlineParserToRowGenerator {
       case Some(parser) => parser
       case None =>
         // Create new parser instance for this thread (handles compilation and dependencies)
-        val parser = createParserGraph(descriptor, schema)
+        val parser = createParserGraph(descriptor, schema, config)
         threadInstances(key) = parser
         parser
     }
@@ -104,15 +134,15 @@ object InlineParserToRowGenerator {
   /**
    * Create a parser with all its nested dependencies.
    */
-  private def createParserGraph(descriptor: Descriptor, schema: StructType): StreamWireParser = {
+  private def createParserGraph(descriptor: Descriptor, schema: StructType, config: InlineParserConfig): StreamWireParser = {
     // Create local parser map for this generation cycle
     val localParsers = scala.collection.mutable.Map[String, StreamWireParser]()
 
     // Generate parsers for nested types
-    val rootParser = generateParserInternal(descriptor, schema, localParsers)
+    val rootParser = generateParserInternal(descriptor, schema, localParsers, config)
 
     // Wire up nested parser dependencies
-    wireDependencies(localParsers, descriptor, schema)
+    wireDependencies(localParsers, descriptor, schema, config)
 
     rootParser
   }
@@ -123,7 +153,8 @@ object InlineParserToRowGenerator {
   private def generateParserInternal(
       descriptor: Descriptor,
       schema: StructType,
-      localParsers: scala.collection.mutable.Map[String, StreamWireParser]
+      localParsers: scala.collection.mutable.Map[String, StreamWireParser],
+      config: InlineParserConfig
   ): StreamWireParser = {
     val key = s"${descriptor.getFullName}_${schema.hashCode()}"
 
@@ -133,7 +164,7 @@ object InlineParserToRowGenerator {
     }
 
     // Generate the parser
-    val parser = compileParser(descriptor, schema)
+    val parser = compileParser(descriptor, schema, config)
     localParsers(key) = parser
 
     // Generate nested parsers - only for fields that exist in both descriptor and schema
@@ -151,7 +182,7 @@ object InlineParserToRowGenerator {
           throw new IllegalArgumentException(s"Expected StructType or ArrayType[StructType] for message field ${field.getName}, got $other")
       }
 
-      generateParserInternal(field.getMessageType, nestedSchema, localParsers)
+      generateParserInternal(field.getMessageType, nestedSchema, localParsers, config)
     }
 
     parser
@@ -164,6 +195,7 @@ object InlineParserToRowGenerator {
       localParsers: scala.collection.mutable.Map[String, StreamWireParser],
       descriptor: Descriptor,
       schema: StructType,
+      config: InlineParserConfig,
       visited: scala.collection.mutable.Set[String] = scala.collection.mutable.Set()
   ): Unit = {
     // Use descriptor name + schema hash for visited tracking
@@ -222,7 +254,7 @@ object InlineParserToRowGenerator {
         case _ => throw new IllegalArgumentException(s"Expected StructType or ArrayType[StructType] for message field ${field.getName}")
       }
 
-      wireDependencies(localParsers, field.getMessageType, nestedSchema, visited)
+      wireDependencies(localParsers, field.getMessageType, nestedSchema, config, visited)
     }
   }
 
@@ -288,18 +320,18 @@ object InlineParserToRowGenerator {
 
 
   /**
-   * Get or compile parser class using unified canonical key with depth=1.
-   * Cache key format: "FQN|canonical(depth=1)"
+   * Get or compile parser class using unified canonical key with configurable depth.
+   * Cache key format: "FQN|canonical(depth=N)"
    */
-  private def getOrCompileClass(descriptor: Descriptor, schema: StructType): Class[_ <: StreamWireParser] = {
-    val cacheKey = generateCacheKey(descriptor, schema)
+  private def getOrCompileClass(descriptor: Descriptor, schema: StructType, config: InlineParserConfig): Class[_ <: StreamWireParser] = {
+    val cacheKey = generateCacheKey(descriptor, schema, config)
 
     // Check if class already exists
     Option(classCache.get(cacheKey)) match {
       case Some(clazz) => clazz
       case None =>
         // Compile new class
-        val className = generateClassName(descriptor, schema)
+        val className = generateClassName(descriptor, schema, config)
         val sourceCode = InlineParserGenerator.generateParser(className, descriptor, schema)
 
         // Compile using Janino
@@ -315,10 +347,10 @@ object InlineParserToRowGenerator {
 
   /**
    * Compile and instantiate a single parser.
-   * Uses unified canonical key (depth=1) for class lookup.
+   * Uses unified canonical key with configurable depth for class lookup.
    */
-  private def compileParser(descriptor: Descriptor, schema: StructType): StreamWireParser = {
-    val parserClass = getOrCompileClass(descriptor, schema)
+  private def compileParser(descriptor: Descriptor, schema: StructType, config: InlineParserConfig): StreamWireParser = {
+    val parserClass = getOrCompileClass(descriptor, schema, config)
 
     // Instantiate parser with full schema
     val constructor = parserClass.getConstructor(classOf[StructType])
