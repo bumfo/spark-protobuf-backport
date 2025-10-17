@@ -29,10 +29,10 @@ You are a specialized code retrieval expert with deep expertise in source code a
    - Resolving ambiguous references by examining package structures
 
 4. **Third-Party Source Access**: For Spark and Protobuf classes:
-   - Use the `read-source` skill to access third-party source code from Coursier cache JARs
+   - **MUST USE** the `read-source` skill to access third-party source code from Coursier cache JARs
    - Invoke the skill with: `<invoke name="Skill"><parameter name="command">read-source</parameter></invoke>`
-   - The skill provides JAR paths and commands for Protobuf 3.21.7 and Spark 3.2.1 sources
    - After invoking the skill, use the bash commands it provides to search and extract source files
+   - See `.claude/skills/read-source/SKILL.md` for complete JAR paths and examples
 
 ## Output Requirements
 
