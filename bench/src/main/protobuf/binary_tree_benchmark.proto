@@ -10,9 +10,9 @@ option java_outer_classname = "BinaryTreeBenchmarkProtos";
 message BinaryTreeNode {
   int32 value = 1;           // Node value
   int32 depth = 2;           // Depth from root (0-indexed)
-  bytes payload = 5;         // Optional binary payload for testing variable-length field impact
   BinaryTreeNode left = 3;   // Left child (null for leaf nodes)
   BinaryTreeNode right = 4;  // Right child (null for leaf nodes)
+  bytes payload = 5;         // Optional binary payload for testing variable-length field impact
 }
 
 // Binary tree document wrapper

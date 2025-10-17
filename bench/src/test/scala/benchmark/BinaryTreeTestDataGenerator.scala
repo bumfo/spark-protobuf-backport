@@ -1,6 +1,7 @@
 package benchmark
 
 import benchmark.BinaryTreeBenchmarkProtos.{BinaryTreeDocument, BinaryTreeNode}
+import com.google.protobuf.ByteString
 
 /**
  * Generates full binary trees for controlled benchmarking.
@@ -50,18 +51,6 @@ object BinaryTreeTestDataGenerator {
       .setValue(value)
       .setDepth(depth)
 
-    // Add payload if size > 0
-    if (payloadSize > 0) {
-      val payload = new Array[Byte](payloadSize)
-      // Fill with deterministic data based on value
-      var i = 0
-      while (i < payloadSize) {
-        payload(i) = ((value + i) & 0xFF).toByte
-        i += 1
-      }
-      builder.setPayload(com.google.protobuf.ByteString.copyFrom(payload))
-    }
-
     // Add children if not at max depth (full binary tree)
     if (depth < maxDepth) {
       val leftValue = value * 2
@@ -71,7 +60,16 @@ object BinaryTreeTestDataGenerator {
         .setRight(createNode(depth + 1, maxDepth, rightValue, payloadSize))
     }
 
+    // Add payload if size > 0
+    if (payloadSize > 0) {
+      builder.setPayload(buildPayload(payloadSize))
+    }
+
     builder.build()
+  }
+
+  private def buildPayload(payloadSize: Int) = {
+    com.google.protobuf.ByteString.copyFrom(Array.fill(payloadSize)(0.toByte))
   }
 
   /**
