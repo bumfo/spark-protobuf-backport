@@ -11,9 +11,12 @@ Use to read source files from third-party dependencies when implementing feature
 ```bash
 COURSIER_CACHE=~/Library/Caches/Coursier/v1/https/repo1.maven.org/maven2
 
-# JDK sources (Java 17 used by sbt)
-JDK_HOME=`sbt -no-colors 'eval System.getProperty("java.home")' 2>/dev/null | grep 'ans: String' | cut -d= -f2- | xargs`
-JDK_SRC=$JDK_HOME/lib/src.zip
+# JDK sources - MUST use sbt to get the ACTUAL java.home used by sbt
+# Do NOT use system JAVA_HOME or other Java installations - they may differ from sbt's JDK
+# Step 1: Run this command ONCE to get the path (takes ~2s)
+JDK_HOME=`sbt -no-colors 'eval System.getProperty("java.home")' 2>/dev/null | grep 'ans: String' | cut -d= -f2- | xargs` && echo "$JDK_HOME"
+# Step 2: Inline the result from Step 1 directly to avoid sbt startup cost in subsequent uses
+JDK_SRC=<JDK_HOME>/lib/src.zip
 
 # Protobuf Java 3.21.7 sources
 PROTOBUF_JAR=$COURSIER_CACHE/com/google/protobuf/protobuf-java/3.21.7/protobuf-java-3.21.7-sources.jar
@@ -87,5 +90,5 @@ unzip -p $PROTOBUF_JAR com/google/protobuf/CodedInputStream.java | grep -E 'read
 - Inline JAR path variables when using bash commands
 - Use `grep` for simple pattern matching, `sed -n 'start,endp'` for line ranges
 - JAR files must exist in Coursier cache (run `sbt compile` first if missing)
-- JDK sources are dynamically located via `sbt 'eval System.getProperty("java.home")'`
+- **JDK sources**: MUST use `sbt 'eval System.getProperty("java.home")'` to get sbt's actual JDK (not system JAVA_HOME)
 - JDK source paths use module prefix (e.g., `java.base/java/util/HashMap.java`)
