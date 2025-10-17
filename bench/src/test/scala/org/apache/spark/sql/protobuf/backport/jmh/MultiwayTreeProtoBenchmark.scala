@@ -15,13 +15,17 @@ import java.util.concurrent.TimeUnit
  * - depth: How deep the tree is (default: 5)
  * - branchingFactor: Number of children per internal node (default: 4)
  * - accessDepth: How deep to access in the pruned schema (default: same as depth)
+ * - accessPath: Which child pointer to follow - "left" (singular) or "right" (repeated array)
  * - canonicalDepth: Canonical key depth for parser generation (default: 1)
  *
- * The pruned schema accesses: root.left.left...left.value (following left path)
+ * Access patterns:
+ * - accessPath=left: root.left.left...left.value (singular nested fields)
+ * - accessPath=right: root.right[].right[]...right[].value (repeated nested fields)
  *
  * Run with:
  *   sbt "jmhMultiwayTree -p depth=5 -p branchingFactor=4 -p accessDepth=5"
  *   sbt "jmhMultiwayTree -p canonicalDepth=0,1,100"
+ *   sbt "jmhMultiwayTree -p accessPath=left,right"
  *
  * Quick canonical depth comparison test:
  *   sbt clean "jmhMultiwayTree -p depth=5 -p branchingFactor=4 -p accessDepth=5 -p canonicalDepth=0,1,100"
@@ -49,11 +53,20 @@ class MultiwayTreeProtoBenchmark {
   var branchingFactor: Int = _
 
   /**
-   * Access depth for pruned schema (how deep to access along left path).
+   * Access depth for pruned schema (how deep to access along chosen path).
    * Default: same as tree depth
    */
   @Param(Array("5"))
   var accessDepth: Int = _
+
+  /**
+   * Which child pointer to follow in pruned schema.
+   * - "left": singular nested field (root.left.left...left.value)
+   * - "right": repeated nested field (root.right[].right[]...right[].value)
+   * Default: "left"
+   */
+  @Param(Array("left"))
+  var accessPath: String = _
 
   /**
    * Canonical key depth for parser generation.
@@ -78,6 +91,7 @@ class MultiwayTreeProtoBenchmark {
     println(s"MultiwayTree Benchmark Setup:")
     println(s"  Tree: depth=$depth, branching=$branchingFactor, nodes=$nodeCount, bytes=${treeData.length}")
     println(s"  Access depth: $accessDepth")
+    println(s"  Access path: $accessPath")
     println(s"  Canonical depth: $canonicalDepth")
 
     // Create config with canonical depth
@@ -87,8 +101,8 @@ class MultiwayTreeProtoBenchmark {
     val fullSchema = buildFullSchema(depth)
     fullSchemaParser = InlineParserToRowGenerator.generateParser(treeDescriptor, fullSchema, config)
 
-    // Pruned schema - access left.left...left.value
-    val prunedSchema = buildPrunedSchema(accessDepth)
+    // Pruned schema - access via specified path
+    val prunedSchema = buildPrunedSchema(accessDepth, accessPath)
     prunedSchemaParser = InlineParserToRowGenerator.generateParser(treeDescriptor, prunedSchema, config)
 
     println(s"  Full schema: ${formatSchema(fullSchema)}")
@@ -118,21 +132,34 @@ class MultiwayTreeProtoBenchmark {
   }
 
   /**
-   * Build pruned schema accessing only the left path to specified depth.
-   * Access pattern: left.left...left.value
+   * Build pruned schema accessing only the specified path to specified depth.
+   * Access patterns:
+   * - "left": left.left...left.value (singular nested fields)
+   * - "right": right[].right[]...right[].value (repeated nested fields)
    */
-  private def buildPrunedSchema(remainingDepth: Int): StructType = {
+  private def buildPrunedSchema(remainingDepth: Int, path: String): StructType = {
     if (remainingDepth <= 1) {
       // Access just value at this level
       StructType(Seq(
         StructField("value", IntegerType, nullable = false)
       ))
     } else {
-      // Access left child only
-      val childSchema = buildPrunedSchema(remainingDepth - 1)
-      StructType(Seq(
-        StructField("left", childSchema, nullable = true)
-      ))
+      // Access child via specified path
+      val childSchema = buildPrunedSchema(remainingDepth - 1, path)
+      path match {
+        case "left" =>
+          // Singular nested field
+          StructType(Seq(
+            StructField("left", childSchema, nullable = true)
+          ))
+        case "right" =>
+          // Repeated nested field (array)
+          StructType(Seq(
+            StructField("right", ArrayType(childSchema, containsNull = true), nullable = true)
+          ))
+        case other =>
+          throw new IllegalArgumentException(s"Invalid accessPath: $other. Must be 'left' or 'right'")
+      }
     }
   }
 
