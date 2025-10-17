@@ -140,7 +140,11 @@ Two bash scripts are provided in `.claude/skills/sbt-benchmark/scripts/` for mon
 ### .claude/skills/sbt-benchmark/scripts/monitor-jmh.sh - Live Progress Monitor
 Follows the log file in real-time and displays formatted progress updates:
 ```bash
+# Basic usage
 .claude/skills/sbt-benchmark/scripts/monitor-jmh.sh /tmp/jmh_benchmark.log
+
+# With timeout (auto-exit after 30 seconds)
+.claude/skills/sbt-benchmark/scripts/monitor-jmh.sh -t 30 /tmp/jmh_benchmark.log
 ```
 **Shows**:
 - Current benchmark name (shortened)
@@ -148,7 +152,10 @@ Follows the log file in real-time and displays formatted progress updates:
 - Current fork (1 of 2, 2 of 2)
 - Warmup and measurement iterations with values
 - Color-coded output
-- Auto-exits when benchmark completes
+- Auto-exits when benchmark completes or timeout is reached
+
+**Options**:
+- `-t <seconds>` or `--timeout <seconds>`: Exit after specified time if benchmark hasn't completed
 
 **When to use**: For continuous monitoring of long-running benchmarks
 
