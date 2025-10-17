@@ -51,8 +51,8 @@ sbt clean jmh | tee /tmp/jmh_all.log
 - Use the Bash tool with `run_in_background: true` parameter
 - **Wait for the benchmark to complete** - the user will interrupt if they want to work on something else
 - While waiting, **monitor progress** using the provided monitoring scripts (NOT BashOutput):
-  - **Live monitoring**: `scripts/monitor-jmh.sh /tmp/jmh_<name>.log` (follows log in real-time, shows progress/iterations)
-  - **Quick status**: `scripts/jmh-status.sh /tmp/jmh_<name>.log` (one-shot status check)
+  - **Live monitoring**: `.claude/skills/sbt-benchmark/scripts/monitor-jmh.sh /tmp/jmh_<name>.log` (follows log in real-time, shows progress/iterations)
+  - **Quick status**: `.claude/skills/sbt-benchmark/scripts/jmh-status.sh /tmp/jmh_<name>.log` (one-shot status check)
 - **Check completion** using the log-reader agent (NOT BashOutput):
   - Once benchmarks complete, use log-reader to extract results from the log file
 - This is especially important for full benchmark suites which can take 10+ minutes
@@ -135,12 +135,12 @@ You have access to:
 
 ## Monitoring Scripts
 
-Two bash scripts are provided in `scripts/` for monitoring benchmark progress:
+Two bash scripts are provided in `.claude/skills/sbt-benchmark/scripts/` for monitoring benchmark progress:
 
-### scripts/monitor-jmh.sh - Live Progress Monitor
+### .claude/skills/sbt-benchmark/scripts/monitor-jmh.sh - Live Progress Monitor
 Follows the log file in real-time and displays formatted progress updates:
 ```bash
-scripts/monitor-jmh.sh /tmp/jmh_benchmark.log
+.claude/skills/sbt-benchmark/scripts/monitor-jmh.sh /tmp/jmh_benchmark.log
 ```
 **Shows**:
 - Current benchmark name (shortened)
@@ -152,10 +152,10 @@ scripts/monitor-jmh.sh /tmp/jmh_benchmark.log
 
 **When to use**: For continuous monitoring of long-running benchmarks
 
-### scripts/jmh-status.sh - Quick Status Check
+### .claude/skills/sbt-benchmark/scripts/jmh-status.sh - Quick Status Check
 Provides a one-shot status summary without continuous monitoring:
 ```bash
-scripts/jmh-status.sh /tmp/jmh_benchmark.log
+.claude/skills/sbt-benchmark/scripts/jmh-status.sh /tmp/jmh_benchmark.log
 ```
 **Shows**:
 - Current benchmark name
@@ -171,7 +171,7 @@ scripts/jmh-status.sh /tmp/jmh_benchmark.log
 1. **Always clean before benchmarking** - `sbt clean` prevents incorrect results from incremental compilation
 2. **Run in background and wait** - Use `run_in_background: true` and wait for completion; the user will interrupt if they want to do other work
 3. **Save all output to logs** - Use `tee /tmp/jmh_<name>.log` for every benchmark run
-4. **Monitor with scripts, not BashOutput** - Use `scripts/monitor-jmh.sh` or `scripts/jmh-status.sh` to check progress; do NOT use BashOutput
+4. **Monitor with scripts, not BashOutput** - Use `.claude/skills/sbt-benchmark/scripts/monitor-jmh.sh` or `.claude/skills/sbt-benchmark/scripts/jmh-status.sh` to check progress; do NOT use BashOutput
 5. **Use log-reader agent** - Let log-reader parse the JMH output to extract results and check completeness
 6. **Present raw data** - Output the original JMH result table without interpretation
 7. **Be specific with benchmark selection** - Use regex patterns to run targeted benchmarks (e.g., `.*Scalar.*(anInlineParser|generatedWireFormatParser).*`)
