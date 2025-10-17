@@ -26,7 +26,7 @@ sbt clean bench/Test/compile 'bench/Jmh/run .*Scalar.*(anInlineParser|generatedW
 sbt clean jmh | tee /tmp/jmh_all.log
 ```
 
-Run in background (`run_in_background: true`) and monitor with `.claude/skills/sbt-benchmark/scripts/monitor-jmh.sh -t <timeout> /tmp/jmh_<name>.log` (e.g., `-t 30` for 30s). Do NOT use BashOutput.
+Run in background (`run_in_background: true`) and monitor with `.claude/skills/sbt-benchmark/scripts/monitor-jmh.sh -t <timeout> /tmp/jmh_<name>.log` (prefer using 30s for first monitor, then ETA). Do NOT use BashOutput.
 
 ### 3. Parse and Present
 
