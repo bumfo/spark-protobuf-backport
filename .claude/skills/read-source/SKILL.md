@@ -92,3 +92,4 @@ unzip -p $PROTOBUF_JAR com/google/protobuf/CodedInputStream.java | grep -E 'read
 - JAR files must exist in Coursier cache (run `sbt compile` first if missing)
 - **JDK sources**: MUST use `sbt 'eval System.getProperty("java.home")'` to get sbt's actual JDK (not system JAVA_HOME)
 - JDK source paths use module prefix (e.g., `java.base/java/util/HashMap.java`)
+- **Prefer `unzip -p`**: Read files directly from archives without extracting to temp files (faster, cleaner)
