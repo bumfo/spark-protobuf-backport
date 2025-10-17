@@ -13,8 +13,8 @@ COURSIER_CACHE=~/Library/Caches/Coursier/v1/https/repo1.maven.org/maven2
 
 # JDK sources - MUST use sbt to get the ACTUAL java.home used by sbt
 # Do NOT use system JAVA_HOME or other Java installations - they may differ from sbt's JDK
-# Step 1: Run this command ONCE to get the path (takes ~2s)
-JDK_HOME=`sbt -no-colors 'eval System.getProperty("java.home")' 2>/dev/null | grep 'ans: String' | cut -d= -f2- | xargs` && echo "$JDK_HOME"
+# Step 1: Run this command ONCE to get **JDK_HOME** (takes ~2s)
+sbt -no-colors 'eval System.getProperty("java.home")' 2>/dev/null | grep 'ans: String' | cut -d= -f2- | xargs
 # Step 2: Inline the result from Step 1 directly to avoid sbt startup cost in subsequent uses
 JDK_SRC=<JDK_HOME>/lib/src.zip
 
