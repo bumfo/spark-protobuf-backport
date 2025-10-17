@@ -1,7 +1,7 @@
 package org.apache.spark.sql.protobuf.backport.jmh
 
 import benchmark.MultiwayTreeTestDataGenerator
-import fastproto.{InlineParserToRowGenerator, StreamWireParser}
+import fastproto.{InlineParserConfig, InlineParserToRowGenerator, StreamWireParser}
 import org.apache.spark.sql.types._
 import org.openjdk.jmh.annotations._
 import org.openjdk.jmh.infra.Blackhole
@@ -15,11 +15,16 @@ import java.util.concurrent.TimeUnit
  * - depth: How deep the tree is (default: 5)
  * - branchingFactor: Number of children per internal node (default: 4)
  * - accessDepth: How deep to access in the pruned schema (default: same as depth)
+ * - canonicalDepth: Canonical key depth for parser generation (default: 1)
  *
  * The pruned schema accesses: root.left.left...left.value (following left path)
  *
  * Run with:
  *   sbt "jmhMultiwayTree -p depth=5 -p branchingFactor=4 -p accessDepth=5"
+ *   sbt "jmhMultiwayTree -p canonicalDepth=0,1,100"
+ *
+ * Quick canonical depth comparison test:
+ *   sbt clean "jmhMultiwayTree -p depth=5 -p branchingFactor=4 -p accessDepth=5 -p canonicalDepth=0,1,100"
  */
 @BenchmarkMode(Array(Mode.AverageTime))
 @OutputTimeUnit(TimeUnit.NANOSECONDS)
@@ -50,6 +55,13 @@ class MultiwayTreeProtoBenchmark {
   @Param(Array("5"))
   var accessDepth: Int = _
 
+  /**
+   * Canonical key depth for parser generation.
+   * Default: 1 (balanced approach)
+   */
+  @Param(Array("1"))
+  var canonicalDepth: Int = _
+
   var treeData: Array[Byte] = _
   var treeDescriptor: com.google.protobuf.Descriptors.Descriptor = _
   var fullSchemaParser: StreamWireParser = _
@@ -66,14 +78,18 @@ class MultiwayTreeProtoBenchmark {
     println(s"MultiwayTree Benchmark Setup:")
     println(s"  Tree: depth=$depth, branching=$branchingFactor, nodes=$nodeCount, bytes=${treeData.length}")
     println(s"  Access depth: $accessDepth")
+    println(s"  Canonical depth: $canonicalDepth")
+
+    // Create config with canonical depth
+    val config = InlineParserConfig(canonicalKeyDepth = canonicalDepth)
 
     // Full schema
     val fullSchema = buildFullSchema(depth)
-    fullSchemaParser = InlineParserToRowGenerator.generateParser(treeDescriptor, fullSchema)
+    fullSchemaParser = InlineParserToRowGenerator.generateParser(treeDescriptor, fullSchema, config)
 
     // Pruned schema - access left.left...left.value
     val prunedSchema = buildPrunedSchema(accessDepth)
-    prunedSchemaParser = InlineParserToRowGenerator.generateParser(treeDescriptor, prunedSchema)
+    prunedSchemaParser = InlineParserToRowGenerator.generateParser(treeDescriptor, prunedSchema, config)
 
     println(s"  Full schema: ${formatSchema(fullSchema)}")
     println(s"  Pruned schema: ${formatSchema(prunedSchema)}")
