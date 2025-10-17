@@ -12,7 +12,7 @@ Use to read source files from third-party dependencies when implementing feature
 COURSIER_CACHE=~/Library/Caches/Coursier/v1/https/repo1.maven.org/maven2
 
 # JDK sources (Java 17 used by sbt)
-JDK_HOME=$(sbt -no-colors 'eval System.getProperty("java.home")' 2>/dev/null | grep 'ans: String' | cut -d= -f2- | xargs)
+JDK_HOME=`sbt -no-colors 'eval System.getProperty("java.home")' 2>/dev/null | grep 'ans: String' | cut -d= -f2- | xargs`
 JDK_SRC=$JDK_HOME/lib/src.zip
 
 # Protobuf Java 3.21.7 sources
