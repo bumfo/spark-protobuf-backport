@@ -21,11 +21,12 @@ object BinaryTreeTestDataGenerator {
    * Create a full binary tree with specified depth.
    *
    * @param maxDepth maximum depth (0 = single root node)
+   * @param payloadSize size of binary payload for each node (0 = no payload)
    * @return complete binary tree document
    */
-  def createBinaryTree(maxDepth: Int): BinaryTreeDocument = {
+  def createBinaryTree(maxDepth: Int, payloadSize: Int = 0): BinaryTreeDocument = {
     val startTime = System.currentTimeMillis()
-    val root = createNode(0, maxDepth, 1)
+    val root = createNode(0, maxDepth, 1, payloadSize)
     val totalNodes = (1 << (maxDepth + 1)) - 1  // 2^(depth+1) - 1
 
     BinaryTreeDocument.newBuilder()
@@ -41,20 +42,33 @@ object BinaryTreeTestDataGenerator {
    * @param depth current depth (0-indexed)
    * @param maxDepth maximum depth
    * @param value node value (incremented for each node)
+   * @param payloadSize size of binary payload (0 = no payload)
    * @return binary tree node
    */
-  private def createNode(depth: Int, maxDepth: Int, value: Int): BinaryTreeNode = {
+  private def createNode(depth: Int, maxDepth: Int, value: Int, payloadSize: Int): BinaryTreeNode = {
     val builder = BinaryTreeNode.newBuilder()
       .setValue(value)
       .setDepth(depth)
+
+    // Add payload if size > 0
+    if (payloadSize > 0) {
+      val payload = new Array[Byte](payloadSize)
+      // Fill with deterministic data based on value
+      var i = 0
+      while (i < payloadSize) {
+        payload(i) = ((value + i) & 0xFF).toByte
+        i += 1
+      }
+      builder.setPayload(com.google.protobuf.ByteString.copyFrom(payload))
+    }
 
     // Add children if not at max depth (full binary tree)
     if (depth < maxDepth) {
       val leftValue = value * 2
       val rightValue = value * 2 + 1
       builder
-        .setLeft(createNode(depth + 1, maxDepth, leftValue))
-        .setRight(createNode(depth + 1, maxDepth, rightValue))
+        .setLeft(createNode(depth + 1, maxDepth, leftValue, payloadSize))
+        .setRight(createNode(depth + 1, maxDepth, rightValue, payloadSize))
     }
 
     builder.build()
@@ -63,8 +77,8 @@ object BinaryTreeTestDataGenerator {
   /**
    * Get deterministic binary data for binary tree.
    */
-  def getBinaryTreeBinary(maxDepth: Int): Array[Byte] = {
-    createBinaryTree(maxDepth).toByteArray
+  def getBinaryTreeBinary(maxDepth: Int, payloadSize: Int = 0): Array[Byte] = {
+    createBinaryTree(maxDepth, payloadSize).toByteArray
   }
 
   /**

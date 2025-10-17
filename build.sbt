@@ -222,3 +222,4 @@ addCommandAlias("jmhScalarArray", "bench/Test/compile; bench/Jmh/run .*ScalarArr
 addCommandAlias("jmhScalarArrayUnpacked", "bench/Test/compile; bench/Jmh/run .*ScalarArrayUnpackedBenchmark.*")
 addCommandAlias("jmhScalarAll", "bench/Test/compile; bench/Jmh/run .*(ScalarBenchmark|ScalarArrayBenchmark|ScalarArrayUnpackedBenchmark).*")
 addCommandAlias("jmhBinaryTree", "bench/Test/compile; bench/Jmh/run .*BinaryTreeProtoBenchmark.*")
+addCommandAlias("jmhMultiwayTree", "bench/Test/compile; bench/Jmh/run .*MultiwayTreeProtoBenchmark.*")
