@@ -12,6 +12,12 @@ fi
 TIMEOUT=$1
 PARENT_PID=$2
 
-sleep "$TIMEOUT"
+# Loop with 1s sleeps for responsive termination
+ELAPSED=0
+while [ "$ELAPSED" -lt "$TIMEOUT" ]; do
+    sleep 1
+    ELAPSED=$((ELAPSED + 1))
+done
+
 echo -e "\n\033[1;33m⏱ Timeout reached after ${TIMEOUT} seconds\033[0m" >&2
 kill -TERM "$PARENT_PID" 2>/dev/null || true
