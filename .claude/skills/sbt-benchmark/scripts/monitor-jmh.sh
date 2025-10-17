@@ -76,6 +76,8 @@ RESULT_BENCHMARK=""
 IN_RESULT_TABLE=false
 RUN_COMPLETE=false
 TOTAL_TIME=""
+COMPILE_SHOWN=false
+BUILD_TIME=""
 
 echo -e "${BOLD}JMH Benchmark Progress Monitor${RESET}"
 echo -e "Monitoring: ${CYAN}${LOG_FILE}${RESET}"
@@ -149,12 +151,42 @@ show_status() {
 
 # Initialize status display (3 blank lines for interactive mode only)
 if [ "$INTERACTIVE" = true ]; then
-    echo -e "\n\n\n"
+    printf "\n\n\n"
 fi
 
 # Function to process log lines
 process_log_lines() {
     while IFS= read -r line; do
+        # Detect compilation start (show only once)
+        if [[ "$line" =~ ^\[info\]\ compiling\ [0-9]+\ (Scala|Java)\ sources? ]] && [ "$COMPILE_SHOWN" = false ]; then
+            COMPILE_SHOWN=true
+            echo "Compiling..."
+        fi
+
+        # Capture build time (before benchmark run)
+        if [[ "$line" =~ ^\[success\]\ Total\ time:\ ([^,]+), ]] && [ "$RUN_COMPLETE" = false ]; then
+            BUILD_TIME="${BASH_REMATCH[1]}"
+        fi
+
+        # Detect JMH run start - show build complete and clear screen for interactive mode
+        if [[ "$line" =~ ^\[info\]\ running\ \(fork\)\ org\.openjdk\.jmh\.Main ]]; then
+            if [ -n "$BUILD_TIME" ]; then
+                echo "Build successful (${BUILD_TIME})"
+            fi
+
+            # In interactive mode, clear and reprint header
+            if [ "$INTERACTIVE" = true ]; then
+                clear
+                echo -e "${BOLD}JMH Benchmark Progress Monitor${RESET}"
+                echo -e "Monitoring: ${CYAN}${LOG_FILE}${RESET}"
+                if [ "$TIMEOUT" -gt 0 ]; then
+                    echo -e "Timeout: ${YELLOW}${TIMEOUT}s${RESET}"
+                fi
+                echo -e "---"
+                printf "\n\n\n"
+            fi
+        fi
+
         # Extract benchmark name
         if [[ "$line" =~ \#\ Benchmark:\ (.+) ]]; then
             CURRENT_BENCHMARK="${BASH_REMATCH[1]}"
@@ -294,7 +326,7 @@ mkfifo "$FIFO"
 trap "rm -f $FIFO; cleanup" EXIT TERM INT
 
 # Start tail in background
-tail -n 20 -f "$LOG_FILE" > "$FIFO" &
+tail -n 100 -f "$LOG_FILE" > "$FIFO" &
 TAIL_PID=$!
 
 # Process lines from tail via FIFO
