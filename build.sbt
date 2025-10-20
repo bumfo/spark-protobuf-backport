@@ -73,7 +73,7 @@ lazy val core = project
 
 // Dedicated benchmark project
 lazy val bench = project
-  .dependsOn(core, core % "test->test")
+  .dependsOn(core, core % "test->test", tests % "test->compile")
   .enablePlugins(JmhPlugin)
   .settings(commonSettings)
   .settings(
@@ -191,12 +191,12 @@ allTestTiers := Def.sequential(
   integrationTests
 ).value
 
-lazy val showGeneratedCode = inputKey[Unit]("Show generated InlineParser code (usage: showGeneratedCode [MessageName])")
+lazy val showGeneratedCode = inputKey[Unit]("Show generated InlineParser code (usage: showGeneratedCode <MessageName> [--schema <schema>] [--compiled])")
 showGeneratedCode := Def.inputTaskDyn {
-  val args = Def.spaceDelimited("<message>").parsed
-  val messageArg = if (args.nonEmpty) s" ${args.head}" else ""
+  val args = Def.spaceDelimited("<message> [options]").parsed
+  val argsStr = if (args.nonEmpty) " " + args.mkString(" ") else ""
   Def.taskDyn {
-    (tests / Test / runMain).toTask(s" ShowGeneratedParser$messageArg")
+    (bench / Test / runMain).toTask(s" ShowGeneratedCode$argsStr")
   }
 }.evaluated
 
@@ -215,8 +215,11 @@ addCommandAlias("jmhQuick", "bench/Test/compile; bench/Jmh/run -wi 2 -i 3 -f 1")
 addCommandAlias("jmhSimple", "bench/Test/compile; bench/Jmh/run .*SimpleProtoBenchmark.*")
 addCommandAlias("jmhComplex", "bench/Test/compile; bench/Jmh/run .*ComplexProtoBenchmark.*")
 addCommandAlias("jmhDom", "bench/Test/compile; bench/Jmh/run .*DomProtoBenchmark.*")
+addCommandAlias("jmhDomPruned", "bench/Test/compile; bench/Jmh/run .*PrunedDomProtoBenchmark.*")
 addCommandAlias("jmhArrayWriter", "bench/Test/compile; bench/Jmh/run .*ArrayWriterBenchmark.*")
 addCommandAlias("jmhScalar", "bench/Test/compile; bench/Jmh/run .*ScalarBenchmark\\..*")
 addCommandAlias("jmhScalarArray", "bench/Test/compile; bench/Jmh/run .*ScalarArrayBenchmark\\..*")
 addCommandAlias("jmhScalarArrayUnpacked", "bench/Test/compile; bench/Jmh/run .*ScalarArrayUnpackedBenchmark.*")
 addCommandAlias("jmhScalarAll", "bench/Test/compile; bench/Jmh/run .*(ScalarBenchmark|ScalarArrayBenchmark|ScalarArrayUnpackedBenchmark).*")
+addCommandAlias("jmhBinaryTree", "bench/Test/compile; bench/Jmh/run .*BinaryTreeProtoBenchmark.*")
+addCommandAlias("jmhMultiwayTree", "bench/Test/compile; bench/Jmh/run .*MultiwayTreeProtoBenchmark.*")

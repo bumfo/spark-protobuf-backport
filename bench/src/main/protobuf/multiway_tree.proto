@@ -1,0 +1,17 @@
+syntax = "proto3";
+
+package benchmark;
+
+option java_package = "benchmark";
+option java_outer_classname = "MultiwayTreeProtos";
+
+message Node {
+  int32 value = 1;
+  string payload = 2;
+  Node left = 3;
+  repeated Node right = 4;
+}
+
+message Tree {
+  Node root = 1;
+}
