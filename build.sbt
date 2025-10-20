@@ -37,7 +37,9 @@ lazy val commonSettings = Seq(
   version := "0.1.0-SNAPSHOT",
   // Add JVM options for test execution to handle Java module access
   Test / javaOptions ++= Seq(
-    "--add-exports", "java.base/sun.nio.ch=ALL-UNNAMED"
+    "--add-exports", "java.base/sun.nio.ch=ALL-UNNAMED",
+    // Disable container metrics to avoid cgroup detection issues on Java 17+ with modern platforms
+    "-XX:-UseContainerSupport"
   ),
   Test / fork := true
 )
