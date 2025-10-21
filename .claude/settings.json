@@ -8,5 +8,17 @@
     ],
     "deny": [],
     "ask": []
+  },
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "sbt --version && echo 'sbt environment ready'"
+          }
+        ]
+      }
+    ]
   }
 }
