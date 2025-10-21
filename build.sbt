@@ -174,6 +174,68 @@ lazy val tests = project
     )
   )
 
+// Shaded test helper module - creates shaded JAR with test helpers (no tests here)
+lazy val shadedTests = project
+  .enablePlugins(AssemblyPlugin)
+  .dependsOn(core)
+  .settings(commonSettings)
+  .settings(
+    name := "spark-protobuf-backport-shaded-tests",
+    publish / skip := true,
+
+    // Protocol buffers compilation (generates com.google.protobuf.* imports)
+    Compile / PB.targets := Seq(
+      PB.gens.java -> (Compile / sourceManaged).value
+    ),
+    Compile / compile := (Compile / compile).dependsOn(Compile / PB.generate).value,
+
+    // Shade protobuf runtime and generated classes
+    assemblyShadeRules ++= Seq(
+      ShadeRule.rename("com.google.protobuf.**" -> "org.sparkproject.spark_protobuf.protobuf.@1").inAll
+    ),
+
+    // Assembly configuration
+    assembly / assemblyMergeStrategy := {
+      case PathList("META-INF", _@_*) => MergeStrategy.discard
+      case x => MergeStrategy.first
+    },
+    assembly / test := {},
+    assembly / assemblyJarName := "shaded-tests-" + version.value + ".jar",
+    assembly / assemblyOption := (assembly / assemblyOption).value.withIncludeScala(false),
+
+    libraryDependencies ++= Seq(
+      // Protobuf for compilation (will be shaded in assembly)
+      "com.google.protobuf" % "protobuf-java" % protobufVersion
+    )
+  )
+
+// Shaded integration testing module - depends ONLY on shaded JAR, runs tests
+lazy val shadedIntegration = project
+  .disablePlugins(AssemblyPlugin)
+  .settings(commonSettings)
+  .settings(
+    name := "spark-protobuf-backport-shaded-integration",
+    publish / skip := true,
+
+    // Depend on shaded JAR only (not on shadedTests source/classes)
+    Compile / unmanagedJars += (shadedTests / assembly).value,
+
+    // Use shaded JAR in test classpath
+    Test / unmanagedJars += (shadedTests / assembly).value,
+
+    libraryDependencies ++= Seq(
+      // Exclude all protobuf-java from Spark dependencies
+      "org.apache.spark" %% "spark-sql" % sparkVersion % "test" exclude("com.google.protobuf", "protobuf-java"),
+      "org.apache.spark" %% "spark-core" % sparkVersion % "test" exclude("com.google.protobuf", "protobuf-java"),
+      "org.scalatest" %% "scalatest" % "3.2.15" % Test
+    ),
+
+    // Integration tests task for this module
+    integrationTests := {
+      (Test / test).value
+    }
+  )
+
 // Test execution tasks
 lazy val unitTests = taskKey[Unit]("Run Tier 1 unit tests (<5s)")
 unitTests := {
@@ -208,7 +270,7 @@ showGeneratedCode := Def.inputTaskDyn {
 
 lazy val root = (project in file("."))
   .disablePlugins(AssemblyPlugin)
-  .aggregate(core, bench, tests, uberJar, shaded)
+  .aggregate(core, bench, tests, shadedIntegration, uberJar, shaded)
   .settings(
     name := "spark-protobuf",
     publish / skip := true,

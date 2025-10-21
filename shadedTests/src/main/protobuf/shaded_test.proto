@@ -1,0 +1,18 @@
+syntax = "proto3";
+
+package shadedtest;
+
+option java_package = "shadedtest";
+option java_outer_classname = "ShadedTest";
+
+// Test message with various field types for shaded integration testing
+message ShadedTestMessage {
+  int32 id = 1;
+  string name = 2;
+  repeated int32 values = 3;
+  NestedMessage nested = 4;
+
+  message NestedMessage {
+    string field = 1;
+  }
+}
