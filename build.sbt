@@ -205,7 +205,10 @@ lazy val shadedTests = project
 
     libraryDependencies ++= Seq(
       // Protobuf for compilation (will be shaded in assembly)
-      "com.google.protobuf" % "protobuf-java" % protobufVersion
+      "com.google.protobuf" % "protobuf-java" % protobufVersion,
+      // Spark dependencies (provided scope - only needed for compilation)
+      "org.apache.spark" %% "spark-sql" % sparkVersion % "provided",
+      "org.apache.spark" %% "spark-catalyst" % sparkVersion % "provided"
     )
   )
 

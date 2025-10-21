@@ -1,5 +1,6 @@
 import com.google.protobuf.DescriptorProtos
 import shadedtest.ShadedTest.ShadedTestMessage
+import fastproto.{InlineParserToRowGenerator, RecursiveSchemaConverters}
 
 /**
  * Helper class for shaded integration tests.
@@ -80,5 +81,67 @@ object ShadedTestHelper {
       case _: ClassNotFoundException =>
         (false, "Shaded protobuf classes not found")
     }
+  }
+
+  /**
+   * Get the StructType schema for ShadedTestMessage.
+   */
+  def getSchema(): org.apache.spark.sql.types.StructType = {
+    val descriptor = ShadedTestMessage.getDefaultInstance.getDescriptorForType
+    RecursiveSchemaConverters.toSqlTypeWithTrueRecursion(descriptor, enumAsInt = true)
+  }
+
+  /**
+   * Create a Column expression that uses InlineParser to parse protobuf data.
+   * This expression will be serialized and distributed across executors.
+   */
+  def createInlineParserColumn(dataColumn: org.apache.spark.sql.Column): org.apache.spark.sql.Column = {
+    val descriptorBytes = createDescriptorBytes()
+    val messageName = getMessageName()
+    val schema = getSchema()
+
+    new org.apache.spark.sql.Column(
+      ShadedInlineParserExpression(dataColumn.expr, messageName, descriptorBytes, schema)
+    )
+  }
+}
+
+/**
+ * Catalyst expression for InlineParser in shaded environment.
+ * This expression uses InlineParser to parse protobuf binaries.
+ *
+ * All protobuf classes will be shaded when assembled, making this work
+ * correctly in the shaded integration test environment.
+ */
+case class ShadedInlineParserExpression(
+  child: org.apache.spark.sql.catalyst.expressions.Expression,
+  messageName: String,
+  descriptorBytes: Array[Byte],
+  schema: org.apache.spark.sql.types.StructType
+) extends org.apache.spark.sql.catalyst.expressions.UnaryExpression
+    with org.apache.spark.sql.catalyst.expressions.codegen.CodegenFallback {
+  import org.apache.spark.sql.types.DataType
+
+  override def dataType: DataType = schema
+  override def nullable: Boolean = true
+
+  @transient private lazy val descriptor: com.google.protobuf.Descriptors.Descriptor = {
+    val fileDescSet = com.google.protobuf.DescriptorProtos.FileDescriptorSet.parseFrom(descriptorBytes)
+    val fileDesc = com.google.protobuf.Descriptors.FileDescriptor.buildFrom(
+      fileDescSet.getFile(0),
+      Array.empty
+    )
+    fileDesc.findMessageTypeByName(messageName)
+  }
+
+  @transient private lazy val parser = InlineParserToRowGenerator.generateParser(descriptor, schema)
+
+  override def eval(input: org.apache.spark.sql.catalyst.InternalRow): Any = {
+    val binary = child.eval(input).asInstanceOf[Array[Byte]]
+    if (binary == null) null else parser.parse(binary)
+  }
+
+  override protected def withNewChildInternal(newChild: org.apache.spark.sql.catalyst.expressions.Expression): ShadedInlineParserExpression = {
+    copy(child = newChild)
   }
 }

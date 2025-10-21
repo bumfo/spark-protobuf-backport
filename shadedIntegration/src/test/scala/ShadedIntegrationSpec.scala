@@ -40,11 +40,6 @@ class ShadedIntegrationSpec extends AnyFlatSpec with Matchers with BeforeAndAfte
       .getOrCreate()
 
     spark.sparkContext.setLogLevel("ERROR")
-
-    // Verify shaded protobuf environment
-    val (isShaded, message) = ShadedTestHelper.verifyShadedProtobuf()
-    info(s"Shaded verification: $message")
-    // Don't fail - just log. The actual tests will fail if shading doesn't work.
   }
 
   override def afterAll(): Unit = {
@@ -52,6 +47,25 @@ class ShadedIntegrationSpec extends AnyFlatSpec with Matchers with BeforeAndAfte
   }
 
   behavior of "Shaded protobuf integration"
+
+  it should "verify shaded protobuf environment without unshaded classes" taggedAs ShadedIntegrationTest in {
+    // Check if shaded protobuf is available
+    val shadedName = "org.sparkproject.spark_protobuf.protobuf." + "Message"
+    val shadedClass = Class.forName(shadedName)
+    val packageName = shadedClass.getPackage.getName
+
+    info(s"Found shaded protobuf package: $packageName")
+    packageName should be("org.sparkproject.spark_protobuf.protobuf")
+
+    // Verify unshaded protobuf is NOT available
+    // Construct name dynamically to avoid shading rewriting the literal
+    val unshadedName = Seq("com", "google", "protobuf", "Message").mkString(".")
+    val unshadedException = intercept[ClassNotFoundException] {
+      Class.forName(unshadedName)
+    }
+
+    info(s"✓ Unshaded protobuf correctly excluded from classpath: ${unshadedException.getMessage}")
+  }
 
   it should "parse shaded protobuf messages with from_protobuf" taggedAs ShadedIntegrationTest in {
     val sparkImplicits = spark.implicits
@@ -156,6 +170,87 @@ class ShadedIntegrationSpec extends AnyFlatSpec with Matchers with BeforeAndAfte
       val proto = row.getAs[Row]("proto")
       proto.getAs[Int]("id") should be(123)
       proto.getAs[Seq[Int]]("values") should be(Seq(10, 20, 30))
+    }
+  }
+
+  it should "parse with InlineParser in shaded environment" taggedAs ShadedIntegrationTest in {
+    val sparkImplicits = spark.implicits
+    import sparkImplicits._
+
+    // Create test message using helper
+    val messageBytes = ShadedTestHelper.createTestMessage(
+      id = 42,
+      name = "inline-parser-test",
+      values = Seq(1, 2, 3),
+      nestedField = Some("nested-value")
+    )
+
+    // Create large dataset across multiple partitions to test serialization
+    val rowCount = 1000
+    val data = (1 to rowCount).map(_ => messageBytes)
+    val df = spark.createDataset(data).repartition(4).toDF("data")
+
+    // Parse using InlineParser (via helper that creates InlineParserExpression)
+    val parsedDf = df.select(
+      ShadedTestHelper.createInlineParserColumn($"data").as("proto")
+    )
+
+    // Verify all rows parsed successfully
+    val count = parsedDf.count()
+    count should be(rowCount)
+
+    val results = parsedDf.collect()
+    results.length should be(rowCount)
+
+    // Verify correctness
+    results.foreach { row =>
+      val proto = row.getAs[Row]("proto")
+      proto.getAs[Int]("id") should be(42)
+      proto.getAs[String]("name") should be("inline-parser-test")
+      proto.getAs[Seq[Int]]("values") should be(Seq(1, 2, 3))
+
+      val nested = proto.getAs[Row]("nested")
+      nested.getAs[String]("field") should be("nested-value")
+    }
+  }
+
+  it should "serialize InlineParser across executor boundaries in shaded environment" taggedAs ShadedIntegrationTest in {
+    val sparkImplicits = spark.implicits
+    import sparkImplicits._
+
+    // Create test messages with varied content
+    val messages = (1 to 100).map { i =>
+      ShadedTestHelper.createTestMessage(
+        id = i,
+        name = s"msg_$i",
+        values = Seq(i, i * 2, i * 3),
+        nestedField = if (i % 2 == 0) Some(s"nested_$i") else None
+      )
+    }
+
+    val df = spark.createDataset(messages).repartition(8).toDF("data")
+
+    // Parse using InlineParser across all executors
+    val parsedDf = df.select(
+      ShadedTestHelper.createInlineParserColumn($"data").as("proto")
+    )
+
+    // Verify all rows parsed correctly
+    val count = parsedDf.select($"proto.id").distinct().count()
+    count should be(100) // All IDs should be distinct
+
+    parsedDf.count() should be(100)
+
+    // Verify specific values across partitions
+    val orderedResults = parsedDf.select($"proto.id", $"proto.name", $"proto.values")
+      .orderBy($"proto.id")
+      .collect()
+
+    orderedResults.zipWithIndex.foreach { case (row, idx) =>
+      val expectedId = idx + 1
+      row.getAs[Int]("id") should be(expectedId)
+      row.getAs[String]("name") should be(s"msg_$expectedId")
+      row.getAs[Seq[Int]]("values") should be(Seq(expectedId, expectedId * 2, expectedId * 3))
     }
   }
 }
