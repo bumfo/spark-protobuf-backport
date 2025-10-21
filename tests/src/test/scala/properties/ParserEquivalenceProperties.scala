@@ -1,7 +1,7 @@
 package properties
 
 import com.google.protobuf.Message
-import fastproto.{EquivalenceOptions, RecursiveSchemaConverters, RowEquivalenceChecker, WireFormatParser, WireFormatToRowGenerator}
+import fastproto.{EquivalenceOptions, InlineParserToRowGenerator, RecursiveSchemaConverters, RowEquivalenceChecker, WireFormatParser, WireFormatToRowGenerator}
 import org.apache.spark.sql.catalyst.InternalRow
 import org.scalacheck.Prop.forAll
 import org.scalacheck.Properties
@@ -17,6 +17,7 @@ import testproto.Generators
  *
  * Test scope:
  * - WireFormatParser (direct implementation) vs GeneratedWireFormatParser (Janino codegen)
+ * - InlineParser (Janino codegen) vs WireFormatParser (direct implementation)
  * - Note: GeneratedMessageParser and DynamicMessageParser have known limitations
  *   and are not included in equivalence testing
  */
@@ -147,6 +148,132 @@ object ParserEquivalenceProperties extends Properties("ParserEquivalence") {
     } catch {
       case e: Exception =>
         println(s"Parser equivalence failed: ${e.getMessage}")
+        e.printStackTrace()
+        false
+    }
+  }
+
+  /**
+   * Test that InlineParser and WireFormatParser produce equivalent results
+   * for primitive types.
+   */
+  property("InlineParser agrees with WireFormatParser on AllPrimitiveTypes") = forAll(Generators.genAnyPrimitives) { message: AllPrimitiveTypes =>
+    val binary = message.toByteArray
+    val descriptor = message.getDescriptorForType
+    val schema = RecursiveSchemaConverters.toSqlTypeWithTrueRecursion(descriptor, enumAsInt = true)
+
+    val wireParser = new WireFormatParser(descriptor, schema)
+    val inlineParser = InlineParserToRowGenerator.generateParser(descriptor, schema)
+
+    val wireRow = wireParser.parse(binary)
+    val inlineRow = inlineParser.parse(binary)
+
+    try {
+      RowEquivalenceChecker.assertRowsEquivalent(wireRow, inlineRow, schema, Some(descriptor))
+      true
+    } catch {
+      case e: Exception =>
+        println(s"InlineParser equivalence failed: ${e.getMessage}")
+        e.printStackTrace()
+        false
+    }
+  }
+
+  /**
+   * Test that InlineParser agrees on repeated fields (packed encoding).
+   */
+  property("InlineParser agrees with WireFormatParser on AllRepeatedTypes (packed)") = forAll(Generators.genFullRepeated) { message: AllRepeatedTypes =>
+    val binary = message.toByteArray
+    val descriptor = message.getDescriptorForType
+    val schema = RecursiveSchemaConverters.toSqlTypeWithTrueRecursion(descriptor, enumAsInt = true)
+
+    val wireParser = new WireFormatParser(descriptor, schema)
+    val inlineParser = InlineParserToRowGenerator.generateParser(descriptor, schema)
+
+    val wireRow = wireParser.parse(binary)
+    val inlineRow = inlineParser.parse(binary)
+
+    try {
+      RowEquivalenceChecker.assertRowsEquivalent(wireRow, inlineRow, schema, Some(descriptor))
+      true
+    } catch {
+      case e: Exception =>
+        println(s"InlineParser equivalence failed: ${e.getMessage}")
+        e.printStackTrace()
+        false
+    }
+  }
+
+  /**
+   * Test that InlineParser agrees on unpacked repeated fields.
+   */
+  property("InlineParser agrees with WireFormatParser on AllUnpackedRepeatedTypes") = forAll(Generators.genFullUnpackedRepeated) { message: AllUnpackedRepeatedTypes =>
+    val binary = message.toByteArray
+    val descriptor = message.getDescriptorForType
+    val schema = RecursiveSchemaConverters.toSqlTypeWithTrueRecursion(descriptor, enumAsInt = true)
+
+    val wireParser = new WireFormatParser(descriptor, schema)
+    val inlineParser = InlineParserToRowGenerator.generateParser(descriptor, schema)
+
+    val wireRow = wireParser.parse(binary)
+    val inlineRow = inlineParser.parse(binary)
+
+    try {
+      RowEquivalenceChecker.assertRowsEquivalent(wireRow, inlineRow, schema, Some(descriptor))
+      true
+    } catch {
+      case e: Exception =>
+        println(s"InlineParser equivalence failed: ${e.getMessage}")
+        e.printStackTrace()
+        false
+    }
+  }
+
+  /**
+   * Test that InlineParser agrees on sparse messages (randomly omitted fields).
+   */
+  property("InlineParser agrees with WireFormatParser on sparse messages") = forAll(Generators.genSparsePrimitives) { message: AllPrimitiveTypes =>
+    val binary = message.toByteArray
+    val descriptor = message.getDescriptorForType
+    val schema = RecursiveSchemaConverters.toSqlTypeWithTrueRecursion(descriptor, enumAsInt = true)
+
+    val wireParser = new WireFormatParser(descriptor, schema)
+    val inlineParser = InlineParserToRowGenerator.generateParser(descriptor, schema)
+
+    val wireRow = wireParser.parse(binary)
+    val inlineRow = inlineParser.parse(binary)
+
+    try {
+      RowEquivalenceChecker.assertRowsEquivalent(wireRow, inlineRow, schema, Some(descriptor))
+      true
+    } catch {
+      case e: Exception =>
+        println(s"InlineParser equivalence failed: ${e.getMessage}")
+        e.printStackTrace()
+        false
+    }
+  }
+
+  /**
+   * Test that InlineParser agrees on complete messages with nested structures.
+   */
+  property("InlineParser agrees with WireFormatParser on CompleteMessage") = forAll(Generators.genCompleteMessage) { message: CompleteMessage =>
+    val binary = message.toByteArray
+    val descriptor = message.getDescriptorForType
+    val schema = RecursiveSchemaConverters.toSqlTypeWithTrueRecursion(descriptor, enumAsInt = true)
+
+    val wireParser = new WireFormatParser(descriptor, schema)
+    val inlineParser = InlineParserToRowGenerator.generateParser(descriptor, schema)
+
+    val wireRow = wireParser.parse(binary)
+    val inlineRow = inlineParser.parse(binary)
+
+    try {
+      RowEquivalenceChecker.assertRowsEquivalent(wireRow, inlineRow, schema, Some(descriptor))
+      true
+    } catch {
+      case e: Exception =>
+        println(s"InlineParser equivalence failed: ${e.getMessage}")
         e.printStackTrace()
         false
     }

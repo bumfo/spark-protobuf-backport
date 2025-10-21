@@ -1,6 +1,7 @@
 package integration
 
 import com.google.protobuf.DescriptorProtos
+import fastproto.{InlineParserToRowGenerator, RecursiveSchemaConverters}
 import org.apache.spark.sql.protobuf.backport.functions._
 import org.apache.spark.sql.{Column, SparkSession}
 import org.scalatest.flatspec.AnyFlatSpec
@@ -23,6 +24,40 @@ import testproto.{ExistingRow, TestData}
  * Run via: sbt integrationTests
  */
 object IntegrationTest extends Tag("Integration")
+
+// Minimal expression wrapper for InlineParser
+case class InlineParserExpression(
+  child: org.apache.spark.sql.catalyst.expressions.Expression,
+  messageName: String,
+  descriptorBytes: Array[Byte],
+  schema: org.apache.spark.sql.types.StructType
+) extends org.apache.spark.sql.catalyst.expressions.UnaryExpression
+    with org.apache.spark.sql.catalyst.expressions.codegen.CodegenFallback {
+  import org.apache.spark.sql.types.DataType
+
+  override def dataType: DataType = schema
+  override def nullable: Boolean = true
+
+  @transient private lazy val descriptor: com.google.protobuf.Descriptors.Descriptor = {
+    val fileDescSet = com.google.protobuf.DescriptorProtos.FileDescriptorSet.parseFrom(descriptorBytes)
+    val fileDesc = com.google.protobuf.Descriptors.FileDescriptor.buildFrom(
+      fileDescSet.getFile(0),
+      Array.empty
+    )
+    fileDesc.findMessageTypeByName(messageName)
+  }
+
+  @transient private lazy val parser = InlineParserToRowGenerator.generateParser(descriptor, schema)
+
+  override def eval(input: org.apache.spark.sql.catalyst.InternalRow): Any = {
+    val binary = child.eval(input).asInstanceOf[Array[Byte]]
+    if (binary == null) null else parser.parse(binary)
+  }
+
+  override protected def withNewChildInternal(newChild: org.apache.spark.sql.catalyst.expressions.Expression): InlineParserExpression = {
+    copy(child = newChild)
+  }
+}
 
 class SparkIntegrationSpec extends AnyFlatSpec with Matchers with BeforeAndAfterAll {
 
@@ -406,5 +441,56 @@ class SparkIntegrationSpec extends AnyFlatSpec with Matchers with BeforeAndAfter
         nestedRow should not be null
       }
     }
+  }
+
+  "InlineParser integration" should "parse 1000+ protobuf rows across multiple executors" in {
+    val sparkImplicits = spark.implicits
+    import sparkImplicits._
+
+    val rowCount = 1000
+    val messages = (1 to rowCount).map { i =>
+      AllPrimitiveTypes.newBuilder()
+        .setInt32Field(i)
+        .setInt64Field(i.toLong * 1000)
+        .setSint32Field(-i)
+        .setSint64Field(-i.toLong * 1000)
+        .setStringField(s"row_$i")
+        .setStatusField(AllPrimitiveTypes.Status.forNumber(i % 4))
+        .build()
+        .toByteArray
+    }
+
+    val df = spark.createDataset(messages).repartition(4).toDF("data")
+
+    val descriptor = AllPrimitiveTypes.getDefaultInstance.getDescriptorForType
+    val schema = RecursiveSchemaConverters.toSqlTypeWithTrueRecursion(descriptor, enumAsInt = true)
+
+    // Create binary descriptor set for serialization
+    val descriptorBytes = DescriptorProtos.FileDescriptorSet.newBuilder()
+      .addFile(descriptor.getFile.toProto)
+      .build()
+      .toByteArray
+
+    val parsedDf = df.select(
+      new Column(InlineParserExpression($"data".expr, descriptor.getName, descriptorBytes, schema)).as("proto")
+    )
+
+    val count = parsedDf.count()
+    count shouldBe rowCount
+
+    val rows = parsedDf.select("proto.int32_field", "proto.sint32_field", "proto.string_field")
+      .orderBy("proto.int32_field")
+      .collect()
+    rows.length shouldBe rowCount
+
+    val firstRow = rows.head
+    firstRow.getInt(0) shouldBe 1
+    firstRow.getInt(1) shouldBe -1
+    firstRow.getString(2) shouldBe "row_1"
+
+    val lastRow = rows.last
+    lastRow.getInt(0) shouldBe rowCount
+    lastRow.getInt(1) shouldBe -rowCount
+    lastRow.getString(2) shouldBe s"row_$rowCount"
   }
 }
