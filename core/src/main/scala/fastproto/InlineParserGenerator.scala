@@ -46,11 +46,17 @@ object InlineParserGenerator {
 
   /**
    * Generate a complete parser class for a protobuf message.
+   *
+   * @param className class name for generated parser
+   * @param descriptor protobuf message descriptor
+   * @param schema target Spark SQL schema
+   * @param protobufPackage protobuf package name (e.g., "com.google.protobuf" or "org.sparkproject.spark_protobuf.protobuf")
    */
   def generateParser(
       className: String,
       descriptor: Descriptor,
-      schema: StructType): String = {
+      schema: StructType,
+      protobufPackage: String = "com.google.protobuf"): String = {
     val fields = descriptor.getFields.asScala.toSeq
     val fieldMapping = buildFieldMapping(descriptor, schema)
 
@@ -82,7 +88,7 @@ object InlineParserGenerator {
 
     val code = s"""
     |package fastproto.generated;
-    |import com.google.protobuf.CodedInputStream;
+    |import $protobufPackage.CodedInputStream;
     |import fastproto.*;
     |import java.io.IOException;
     |

@@ -85,6 +85,16 @@ object InlineParserToRowGenerator {
     s"GeneratedInlineParser_${descriptor.getName}_${unsignedHashString(cacheKey.hashCode)}"
   }
 
+  /**
+   * Detect the actual protobuf package at runtime.
+   * Returns "com.google.protobuf" in unshaded environments,
+   * or "org.sparkproject.spark_protobuf.protobuf" in shaded environments.
+   * This enables InlineParser to work correctly regardless of shading.
+   */
+  private def detectProtobufPackage(): String = {
+    classOf[com.google.protobuf.CodedInputStream].getPackage.getName
+  }
+
   // Global cache for compiled classes: "FQN|canonical(depth=1)" -> Class
   private val classCache: ConcurrentHashMap[String, Class[_ <: StreamWireParser]] =
     new ConcurrentHashMap()
@@ -332,7 +342,8 @@ object InlineParserToRowGenerator {
       case None =>
         // Compile new class
         val className = generateClassName(descriptor, schema, config)
-        val sourceCode = InlineParserGenerator.generateParser(className, descriptor, schema)
+        val protobufPackage = detectProtobufPackage()
+        val sourceCode = InlineParserGenerator.generateParser(className, descriptor, schema, protobufPackage)
 
         // Compile using Janino
         val compiler = new SimpleCompiler()
