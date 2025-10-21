@@ -270,7 +270,7 @@ showGeneratedCode := Def.inputTaskDyn {
 
 lazy val root = (project in file("."))
   .disablePlugins(AssemblyPlugin)
-  .aggregate(core, bench, tests, shadedIntegration, uberJar, shaded)
+  .aggregate(core, bench, tests, shadedTests, shadedIntegration, uberJar, shaded)
   .settings(
     name := "spark-protobuf",
     publish / skip := true,
