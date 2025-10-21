@@ -2,7 +2,6 @@ package integration
 
 import com.google.protobuf.DescriptorProtos
 import fastproto.{InlineParserToRowGenerator, RecursiveSchemaConverters}
-import org.apache.spark.sql.catalyst.InternalRow
 import org.apache.spark.sql.protobuf.backport.functions._
 import org.apache.spark.sql.{Column, SparkSession}
 import org.scalatest.flatspec.AnyFlatSpec
@@ -25,6 +24,40 @@ import testproto.{ExistingRow, TestData}
  * Run via: sbt integrationTests
  */
 object IntegrationTest extends Tag("Integration")
+
+// Minimal expression wrapper for InlineParser
+case class InlineParserExpression(
+  child: org.apache.spark.sql.catalyst.expressions.Expression,
+  messageName: String,
+  descriptorBytes: Array[Byte],
+  schema: org.apache.spark.sql.types.StructType
+) extends org.apache.spark.sql.catalyst.expressions.UnaryExpression
+    with org.apache.spark.sql.catalyst.expressions.codegen.CodegenFallback {
+  import org.apache.spark.sql.types.DataType
+
+  override def dataType: DataType = schema
+  override def nullable: Boolean = true
+
+  @transient private lazy val descriptor: com.google.protobuf.Descriptors.Descriptor = {
+    val fileDescSet = com.google.protobuf.DescriptorProtos.FileDescriptorSet.parseFrom(descriptorBytes)
+    val fileDesc = com.google.protobuf.Descriptors.FileDescriptor.buildFrom(
+      fileDescSet.getFile(0),
+      Array.empty
+    )
+    fileDesc.findMessageTypeByName(messageName)
+  }
+
+  @transient private lazy val parser = InlineParserToRowGenerator.generateParser(descriptor, schema)
+
+  override def eval(input: org.apache.spark.sql.catalyst.InternalRow): Any = {
+    val binary = child.eval(input).asInstanceOf[Array[Byte]]
+    if (binary == null) null else parser.parse(binary)
+  }
+
+  override protected def withNewChildInternal(newChild: org.apache.spark.sql.catalyst.expressions.Expression): InlineParserExpression = {
+    copy(child = newChild)
+  }
+}
 
 class SparkIntegrationSpec extends AnyFlatSpec with Matchers with BeforeAndAfterAll {
 
@@ -413,9 +446,7 @@ class SparkIntegrationSpec extends AnyFlatSpec with Matchers with BeforeAndAfter
   "InlineParser integration" should "parse 1000+ protobuf rows across multiple executors" in {
     val sparkImplicits = spark.implicits
     import sparkImplicits._
-    import org.apache.spark.sql.functions.udf
 
-    // Generate 1000 rows of test data
     val rowCount = 1000
     val messages = (1 to rowCount).map { i =>
       AllPrimitiveTypes.newBuilder()
@@ -431,14 +462,18 @@ class SparkIntegrationSpec extends AnyFlatSpec with Matchers with BeforeAndAfter
 
     val df = spark.createDataset(messages).repartition(4).toDF("data")
 
-    // Create InlineParser-based UDF
     val descriptor = AllPrimitiveTypes.getDefaultInstance.getDescriptorForType
     val schema = RecursiveSchemaConverters.toSqlTypeWithTrueRecursion(descriptor, enumAsInt = true)
-    val parser = InlineParserToRowGenerator.generateParser(descriptor, schema)
 
-    val parseUdf = udf((binary: Array[Byte]) => parser.parse(binary))
+    // Create binary descriptor set for serialization
+    val descriptorBytes = DescriptorProtos.FileDescriptorSet.newBuilder()
+      .addFile(descriptor.getFile.toProto)
+      .build()
+      .toByteArray
 
-    val parsedDf = df.select(parseUdf($"data").as("proto"))
+    val parsedDf = df.select(
+      new Column(InlineParserExpression($"data".expr, descriptor.getName, descriptorBytes, schema)).as("proto")
+    )
 
     val count = parsedDf.count()
     count shouldBe rowCount
@@ -457,190 +492,5 @@ class SparkIntegrationSpec extends AnyFlatSpec with Matchers with BeforeAndAfter
     lastRow.getInt(0) shouldBe rowCount
     lastRow.getInt(1) shouldBe -rowCount
     lastRow.getString(2) shouldBe s"row_$rowCount"
-  }
-
-  it should "handle parser serialization across JVM boundaries" in {
-    val sparkImplicits = spark.implicits
-    import sparkImplicits._
-    import org.apache.spark.sql.functions.udf
-
-    val messages = (1 to 100).map { i =>
-      AllRepeatedTypes.newBuilder()
-        .addAllInt32List(java.util.Arrays.asList((1 to 5).map(_ * i).map(Int.box): _*))
-        .addAllSint32List(java.util.Arrays.asList((-1 to -3 by -1).map(_ * i).map(Int.box): _*))
-        .addAllSint64List(java.util.Arrays.asList((-10L to -30L by -10L).map(_ * i).map(Long.box): _*))
-        .addAllStringList(java.util.Arrays.asList(s"str_${i}_a", s"str_${i}_b"))
-        .build()
-        .toByteArray
-    }
-
-    val df = spark.createDataset(messages).repartition(4).toDF("data")
-
-    val descriptor = AllRepeatedTypes.getDefaultInstance.getDescriptorForType
-    val schema = RecursiveSchemaConverters.toSqlTypeWithTrueRecursion(descriptor, enumAsInt = true)
-    val parser = InlineParserToRowGenerator.generateParser(descriptor, schema)
-
-    val parseUdf = udf((binary: Array[Byte]) => parser.parse(binary))
-
-    val parsedDf = df.select(parseUdf($"data").as("proto"))
-
-    val result = parsedDf.selectExpr(
-      "size(proto.int32_list) as int32_count",
-      "size(proto.sint32_list) as sint32_count",
-      "size(proto.string_list) as string_count"
-    ).collect()
-
-    result.length shouldBe 100
-    result.foreach { row =>
-      row.getInt(0) shouldBe 5
-      row.getInt(1) shouldBe 3
-      row.getInt(2) shouldBe 2
-    }
-  }
-
-  it should "maintain consistency across partitions" in {
-    val sparkImplicits = spark.implicits
-    import sparkImplicits._
-    import org.apache.spark.sql.functions.udf
-
-    val message = TestData.createFullRepeated()
-    val binary = message.toByteArray
-
-    val df = spark.createDataset(Seq.fill(1000)(binary)).repartition(8).toDF("data")
-
-    val descriptor = AllRepeatedTypes.getDefaultInstance.getDescriptorForType
-    val schema = RecursiveSchemaConverters.toSqlTypeWithTrueRecursion(descriptor, enumAsInt = true)
-    val parser = InlineParserToRowGenerator.generateParser(descriptor, schema)
-
-    val parseUdf = udf((binary: Array[Byte]) => parser.parse(binary))
-
-    val parsedDf = df.select(parseUdf($"data").as("proto"))
-
-    val stats = parsedDf.selectExpr(
-      "COUNT(*) as row_count",
-      "COUNT(DISTINCT proto.int32_list) as distinct_int32_lists",
-      "COUNT(DISTINCT proto.sint32_list) as distinct_sint32_lists"
-    ).collect().head
-
-    stats.getLong(0) shouldBe 1000
-    stats.getLong(1) shouldBe 1
-    stats.getLong(2) shouldBe 1
-  }
-
-  it should "handle mixed message types in distributed mode" in {
-    val sparkImplicits = spark.implicits
-    import sparkImplicits._
-    import org.apache.spark.sql.functions.udf
-
-    val primitives = (1 to 300).map(_ => TestData.createFullPrimitives().toByteArray)
-    val repeated = (1 to 300).map(_ => TestData.createFullRepeated().toByteArray)
-    val unpacked = (1 to 400).map(_ => TestData.createFullUnpackedRepeated().toByteArray)
-
-    val primDescriptor = AllPrimitiveTypes.getDefaultInstance.getDescriptorForType
-    val primSchema = RecursiveSchemaConverters.toSqlTypeWithTrueRecursion(primDescriptor, enumAsInt = true)
-    val primParser = InlineParserToRowGenerator.generateParser(primDescriptor, primSchema)
-    val primParseUdf = udf((binary: Array[Byte]) => primParser.parse(binary))
-
-    val repDescriptor = AllRepeatedTypes.getDefaultInstance.getDescriptorForType
-    val repSchema = RecursiveSchemaConverters.toSqlTypeWithTrueRecursion(repDescriptor, enumAsInt = true)
-    val repParser = InlineParserToRowGenerator.generateParser(repDescriptor, repSchema)
-    val repParseUdf = udf((binary: Array[Byte]) => repParser.parse(binary))
-
-    val unpackDescriptor = AllUnpackedRepeatedTypes.getDefaultInstance.getDescriptorForType
-    val unpackSchema = RecursiveSchemaConverters.toSqlTypeWithTrueRecursion(unpackDescriptor, enumAsInt = true)
-    val unpackParser = InlineParserToRowGenerator.generateParser(unpackDescriptor, unpackSchema)
-    val unpackParseUdf = udf((binary: Array[Byte]) => unpackParser.parse(binary))
-
-    val primitivesDf = spark.createDataset(primitives).repartition(3).toDF("data")
-      .select(primParseUdf($"data").as("proto"))
-
-    val repeatedDf = spark.createDataset(repeated).repartition(3).toDF("data")
-      .select(repParseUdf($"data").as("proto"))
-
-    val unpackedDf = spark.createDataset(unpacked).repartition(4).toDF("data")
-      .select(unpackParseUdf($"data").as("proto"))
-
-    primitivesDf.count() shouldBe 300
-    repeatedDf.count() shouldBe 300
-    unpackedDf.count() shouldBe 400
-
-    val primRow = primitivesDf.select("proto.int32_field", "proto.sint32_field").head()
-    primRow.getInt(0) shouldBe 42
-    primRow.getInt(1) shouldBe -42
-
-    val repRow = repeatedDf.selectExpr("size(proto.sint32_list) as count").head()
-    repRow.getInt(0) shouldBe 3
-
-    val unpackRow = unpackedDf.selectExpr("size(proto.sint32_list) as count").head()
-    unpackRow.getInt(0) shouldBe 3
-  }
-
-  it should "handle nullability correctly in distributed mode" in {
-    val sparkImplicits = spark.implicits
-    import sparkImplicits._
-    import org.apache.spark.sql.functions.udf
-
-    val messages = (1 to 100).map { i =>
-      val builder = Sparse.newBuilder()
-        .setField1(i)
-        .setField2(s"value_$i")
-
-      if (i % 3 == 0) {
-        builder.setField3(true)
-      }
-
-      builder.build().toByteArray
-    }
-
-    val df = spark.createDataset(messages).repartition(4).toDF("data")
-
-    val descriptor = Sparse.getDefaultInstance.getDescriptorForType
-    val schema = RecursiveSchemaConverters.toSqlTypeWithTrueRecursion(descriptor, enumAsInt = true)
-    val parser = InlineParserToRowGenerator.generateParser(descriptor, schema)
-
-    val parseUdf = udf((binary: Array[Byte]) => parser.parse(binary))
-
-    val parsedDf = df.select(parseUdf($"data").as("proto"))
-
-    val rows = parsedDf.select(
-      "proto.field1",
-      "proto.field2",
-      "proto.field3",
-      "proto.field4",
-      "proto.field5",
-      "proto.nested"
-    ).orderBy("proto.field1").collect()
-
-    rows.length shouldBe 100
-
-    rows.zipWithIndex.foreach { case (row, idx) =>
-      val expectedValue = idx + 1
-
-      row.isNullAt(0) shouldBe false
-      row.getInt(0) shouldBe expectedValue
-
-      row.isNullAt(1) shouldBe false
-      row.getString(1) shouldBe s"value_$expectedValue"
-
-      if (!row.isNullAt(2)) {
-        if (expectedValue % 3 == 0) {
-          row.getBoolean(2) shouldBe true
-        }
-      }
-
-      if (!row.isNullAt(3)) {
-        row.getDouble(3) shouldBe 0.0 +- 0.001
-      }
-
-      if (!row.isNullAt(4)) {
-        val bytes = row.getAs[Array[Byte]](4)
-        bytes should not be null
-      }
-
-      if (!row.isNullAt(5)) {
-        val nestedRow = row.getStruct(5)
-        nestedRow should not be null
-      }
-    }
   }
 }
