@@ -54,25 +54,31 @@ object ShadedTestHelper {
   /**
    * Verify that protobuf classes are shaded.
    * Returns (true, package_name) if shaded, (false, error_message) otherwise.
+   *
+   * Note: Constructs class names dynamically to prevent shading process from
+   * rewriting the string literals.
    */
   def verifyShadedProtobuf(): (Boolean, String) = {
     try {
       // Check if shaded protobuf is available
-      val shadedClass = Class.forName("org.sparkproject.spark_protobuf.protobuf.Message")
+      val shadedName = "org.sparkproject.spark_protobuf.protobuf." + "Message"
+      val shadedClass = Class.forName(shadedName)
       val packageName = shadedClass.getPackage.getName
 
       // Verify unshaded protobuf is NOT available
+      // Construct name dynamically to avoid shading rewriting the literal
       try {
-        val unshadedClass = Class.forName("com.google.protobuf.Message")
+        val unshadedName = Seq("com", "google", "protobuf", "Message").mkString(".")
+        val unshadedClass = Class.forName(unshadedName)
         val location = unshadedClass.getProtectionDomain.getCodeSource.getLocation
-        (false, s"Unshaded com.google.protobuf.Message found at: $location")
+        (false, s"Unshaded $unshadedName found at: $location")
       } catch {
         case _: ClassNotFoundException =>
-          (true, s"✓ Shaded protobuf package: $packageName")
+          (true, s"✓ Shaded protobuf package: $packageName, unshaded classes excluded from classpath")
       }
     } catch {
       case _: ClassNotFoundException =>
-        (false, "Shaded protobuf classes not found at org.sparkproject.spark_protobuf.protobuf.Message")
+        (false, "Shaded protobuf classes not found")
     }
   }
 }
