@@ -15,7 +15,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "command -v sbt >/dev/null 2>&1 || { echo 'Installing sbt...' >&2 && echo 'deb https://repo.scala-sbt.org/scalasbt/debian all main' | tee /etc/apt/sources.list.d/sbt.list >/dev/null && curl -sL 'https://keyserver.ubuntu.com/pks/lookup?op=get&search=0x2EE0EA64E40A89B84B2DF73499E82A75642AC823' | apt-key add - >/dev/null 2>&1 && apt-get update >/dev/null 2>&1 && apt-get install -y sbt >/dev/null 2>&1; } && sbt --version >/dev/null 2>&1"
+            "command": "command -v sbt >/dev/null 2>&1 || { echo 'deb https://repo.scala-sbt.org/scalasbt/debian all main' | tee /etc/apt/sources.list.d/sbt.list >/dev/null && curl -sL 'https://keyserver.ubuntu.com/pks/lookup?op=get&search=0x2EE0EA64E40A89B84B2DF73499E82A75642AC823' | apt-key add - >/dev/null 2>&1 && apt-get update >/dev/null 2>&1 && apt-get install -y sbt >/dev/null 2>&1; } && sbt --version >/dev/null 2>&1"
           }
         ]
       }
