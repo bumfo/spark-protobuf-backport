@@ -232,11 +232,6 @@ lazy val shadedIntegration = project
       "org.apache.spark" %% "spark-core" % sparkVersion % "test" exclude("com.google.protobuf", "protobuf-java"),
       "org.scalatest" %% "scalatest" % "3.2.15" % Test
     ),
-
-    // Integration tests task for this module
-    integrationTests := {
-      (Test / test).value
-    }
   )
 
 // Test execution tasks
@@ -251,9 +246,10 @@ propertyTests := {
 }
 
 lazy val integrationTests = taskKey[Unit]("Run Tier 3 integration tests (<60s)")
-integrationTests := {
-  (tests / Test / testOnly).toTask(" integration.*").value
-}
+integrationTests := Def.sequential(
+  (tests / Test / testOnly).toTask(" integration.*"),
+  (shadedIntegration / Test / test)
+).value
 
 lazy val allTestTiers = taskKey[Unit]("Run all test tiers sequentially")
 allTestTiers := Def.sequential(
