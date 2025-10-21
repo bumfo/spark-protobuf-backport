@@ -1,9 +1,6 @@
 # Created by https://www.toptal.com/developers/gitignore/api/scala,java,intellij,sbt
 # Edit at https://www.toptal.com/developers/gitignore?templates=scala,java,intellij,sbt
 
-.claude/*
-!.claude/settings.json
-
 .idea/*
 .sbt
 .ivy2
