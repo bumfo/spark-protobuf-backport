@@ -31,31 +31,42 @@ def _check_spark_version():
 def from_protobuf(data, messageType, descFilePath=None, options=None, binaryDescriptorSet=None):
     """
     Converts binary column of protobuf format into its corresponding catalyst value.
-    
+
     This is a backport of Spark 3.4's from_protobuf function for use with Spark < 3.4.
-    
+
     Args:
         data: Column containing binary protobuf data
         messageType: String name of the protobuf message type
         descFilePath: Path to protobuf descriptor file (optional if binaryDescriptorSet provided)
-        options: Dict of parsing options (optional)
+        options: Dict of parsing options (optional). Supported options:
+            - "mode": Parse mode, either "PERMISSIVE" or "FAILFAST" (default: "FAILFAST")
+            - "recursive.fields.max.depth": Maximum recursion depth for nested messages (default: "-1" disabled)
+            - "recursive.fields.mode": How to handle recursive message types (default: "struct")
+                - "struct": Use RecursiveStructType with true circular references
+                - "binary": Mock recursive fields as BinaryType
+                - "drop": Drop recursive fields from schema entirely
+                Note: Only applies to WireFormat parser (binary descriptor set usage)
         binaryDescriptorSet: Binary descriptor set bytes (optional)
-    
+
     Returns:
         Column with decoded protobuf data as Catalyst struct
-    
+
     Examples:
         >>> # Using descriptor file
         >>> df.select(from_protobuf(df.data, "Person", "/path/to/person.desc"))
-        
+
         >>> # Using binary descriptor set
         >>> with open("person.desc", "rb") as f:
         ...     desc_bytes = f.read()
         >>> df.select(from_protobuf(df.data, "Person", binaryDescriptorSet=desc_bytes))
-        
+
         >>> # With parsing options
-        >>> df.select(from_protobuf(df.data, "Person", "/path/to/person.desc", 
+        >>> df.select(from_protobuf(df.data, "Person", "/path/to/person.desc",
         ...                        options={"mode": "PERMISSIVE"}))
+
+        >>> # Handling recursive schemas
+        >>> df.select(from_protobuf(df.data, "DomNode", binaryDescriptorSet=desc_bytes,
+        ...                        options={"recursive.fields.mode": "binary"}))
     """
     _check_spark_version()
     

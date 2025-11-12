@@ -39,6 +39,24 @@ private[backport] class ProtobufOptions(
    * disables recursion entirely.  Values greater than 10 are prohibited.
    */
   val recursiveFieldMaxDepth: Int = parameters.getOrElse("recursive.fields.max.depth", "-1").toInt
+
+  /** How to handle recursive message types in schema conversion.
+   * Only applies to WireFormat parser (binary descriptor set usage).
+   *
+   * Supported values:
+   * - "struct" (default): Use RecursiveStructType with true circular references
+   * - "binary": Mock recursive fields as BinaryType
+   * - "drop": Drop recursive fields from schema entirely
+   */
+  val recursiveFieldsMode: String = {
+    val mode = parameters.getOrElse("recursive.fields.mode", "struct")
+    if (!Set("struct", "binary", "drop").contains(mode)) {
+      throw new IllegalArgumentException(
+        s"Invalid value for 'recursive.fields.mode': '$mode'. " +
+        "Supported values are: 'struct', 'binary', 'drop'")
+    }
+    mode
+  }
 }
 
 private[backport] object ProtobufOptions {

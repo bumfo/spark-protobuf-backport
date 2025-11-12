@@ -33,7 +33,22 @@ object RecursiveSchemaConverters {
    */
   def toSqlTypeWithRecursionMocking(descriptor: Descriptor, enumAsInt: Boolean = false): DataType = {
     val visitedTypes = mutable.Set[String]()
-    convertMessageType(descriptor, visitedTypes, enumAsInt)
+    convertMessageType(descriptor, visitedTypes, enumAsInt, dropRecursive = false)
+  }
+
+  /**
+   * Convert protobuf descriptor to Spark SQL type with recursive fields dropped.
+   *
+   * When a recursive field is detected, it's completely omitted from the schema.
+   * This produces the most compact schema but loses data from recursive fields.
+   *
+   * @param descriptor the protobuf message descriptor
+   * @param enumAsInt if true, represent enum fields as IntegerType instead of StringType
+   * @return Spark SQL StructType with recursive fields dropped
+   */
+  def toSqlTypeWithRecursionDropping(descriptor: Descriptor, enumAsInt: Boolean = false): DataType = {
+    val visitedTypes = mutable.Set[String]()
+    convertMessageType(descriptor, visitedTypes, enumAsInt, dropRecursive = true)
   }
 
   /**
@@ -64,16 +79,19 @@ object RecursiveSchemaConverters {
   private def convertMessageType(
       descriptor: Descriptor,
       visitedTypes: mutable.Set[String],
-      enumAsInt: Boolean = false): StructType = {
+      enumAsInt: Boolean = false,
+      dropRecursive: Boolean = false): StructType = {
 
     // Mark this type as being visited to detect cycles
     val typeName = descriptor.getFullName
     val wasAlreadyVisited = visitedTypes.contains(typeName)
     visitedTypes += typeName
 
-    val fields = supportedFields(descriptor).map { field =>
-      val sparkType = convertFieldType(field, visitedTypes, wasAlreadyVisited, enumAsInt)
-      StructField(field.getName, sparkType, nullable = true)
+    val fields = supportedFields(descriptor).flatMap { field =>
+      convertFieldType(field, visitedTypes, wasAlreadyVisited, enumAsInt, dropRecursive) match {
+        case None => None  // Field dropped due to recursion
+        case Some(sparkType) => Some(StructField(field.getName, sparkType, nullable = true))
+      }
     }.toSeq
 
     // Clean up: remove from visited set when done (for clean recursion detection)
@@ -86,70 +104,83 @@ object RecursiveSchemaConverters {
 
   /**
    * Convert a single field type, handling recursion detection.
+   * Returns None if the field should be dropped due to recursion.
    */
   private def convertFieldType(
       field: FieldDescriptor,
       visitedTypes: mutable.Set[String],
       parentWasVisited: Boolean,
-      enumAsInt: Boolean = false): DataType = {
+      enumAsInt: Boolean = false,
+      dropRecursive: Boolean = false): Option[DataType] = {
     // Filter out deprecated GROUP fields - should not happen but defensive check
     require(field.getType != FieldDescriptor.Type.GROUP, "GROUP fields are not supported")
 
-    val baseType = field.getJavaType match {
+    val baseTypeOpt = field.getJavaType match {
       case FieldDescriptor.JavaType.MESSAGE =>
         val messageDescriptor = field.getMessageType
         val messageTypeName = messageDescriptor.getFullName
 
-        // Check for recursion: if we're already processing this type, mock it
+        // Check for recursion: if we're already processing this type, mock it or drop it
         if (visitedTypes.contains(messageTypeName)) {
-          // RECURSION DETECTED! Mock with BinaryType
-          BinaryType
+          // RECURSION DETECTED!
+          if (dropRecursive) {
+            None  // Drop the field
+          } else {
+            Some(BinaryType)  // Mock with BinaryType
+          }
         } else {
           // Not recursive yet, continue normal conversion
-          convertMessageType(messageDescriptor, visitedTypes.clone(), enumAsInt)
+          Some(convertMessageType(messageDescriptor, visitedTypes.clone(), enumAsInt, dropRecursive))
         }
 
       case FieldDescriptor.JavaType.INT =>
-        IntegerType
+        Some(IntegerType)
       case FieldDescriptor.JavaType.LONG =>
-        LongType
+        Some(LongType)
       case FieldDescriptor.JavaType.FLOAT =>
-        FloatType
+        Some(FloatType)
       case FieldDescriptor.JavaType.DOUBLE =>
-        DoubleType
+        Some(DoubleType)
       case FieldDescriptor.JavaType.BOOLEAN =>
-        BooleanType
+        Some(BooleanType)
       case FieldDescriptor.JavaType.STRING =>
-        StringType
+        Some(StringType)
       case FieldDescriptor.JavaType.BYTE_STRING =>
-        BinaryType
+        Some(BinaryType)
       case FieldDescriptor.JavaType.ENUM =>
-        if (enumAsInt) IntegerType else StringType
+        Some(if (enumAsInt) IntegerType else StringType)
     }
 
     // Handle repeated fields
-    if (field.isRepeated) {
-      // Handle map fields - for compatibility with WireFormatParser,
-      // treat maps as ArrayType[StructType] rather than MapType
-      if (field.isMapField) {
-        val mapEntryDescriptor = field.getMessageType
-        val keyField = mapEntryDescriptor.findFieldByName("key")
-        val valueField = mapEntryDescriptor.findFieldByName("value")
+    baseTypeOpt.flatMap { baseType =>
+      if (field.isRepeated) {
+        // Handle map fields - for compatibility with WireFormatParser,
+        // treat maps as ArrayType[StructType] rather than MapType
+        if (field.isMapField) {
+          val mapEntryDescriptor = field.getMessageType
+          val keyField = mapEntryDescriptor.findFieldByName("key")
+          val valueField = mapEntryDescriptor.findFieldByName("value")
 
-        val keyType = convertFieldType(keyField, visitedTypes, parentWasVisited, enumAsInt)
-        val valueType = convertFieldType(valueField, visitedTypes, parentWasVisited, enumAsInt)
+          val keyTypeOpt = convertFieldType(keyField, visitedTypes, parentWasVisited, enumAsInt, dropRecursive)
+          val valueTypeOpt = convertFieldType(valueField, visitedTypes, parentWasVisited, enumAsInt, dropRecursive)
 
-        // Create a synthetic struct type for map entries to be compatible with parsers
-        val mapEntryStruct = StructType(Seq(
-          StructField("key", keyType, nullable = false),
-          StructField("value", valueType, nullable = true)
-        ))
-        ArrayType(mapEntryStruct)
+          // Only create map entry if both key and value are available
+          for {
+            keyType <- keyTypeOpt
+            valueType <- valueTypeOpt
+          } yield {
+            val mapEntryStruct = StructType(Seq(
+              StructField("key", keyType, nullable = false),
+              StructField("value", valueType, nullable = true)
+            ))
+            ArrayType(mapEntryStruct)
+          }
+        } else {
+          Some(ArrayType(baseType))
+        }
       } else {
-        ArrayType(baseType)
+        Some(baseType)
       }
-    } else {
-      baseType
     }
   }
 

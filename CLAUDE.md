@@ -128,8 +128,58 @@ For detailed implementation and development information:
 The backport supports three protobuf usage patterns:
 
 1. **Compiled Java class**: `from_protobuf(col("data"), "com.example.MyMessage")`
-2. **Descriptor file**: `from_protobuf(col("data"), "MyMessage", "/path/to/schema.desc")`  
+2. **Descriptor file**: `from_protobuf(col("data"), "MyMessage", "/path/to/schema.desc")`
 3. **Binary descriptor set**: `from_protobuf(col("data"), "MyMessage", descriptor_bytes)`
+
+## Options
+
+The `from_protobuf` function accepts an `options` parameter for customizing parsing behavior:
+
+### Parse Mode
+```scala
+// Permissive mode: returns null on parsing errors
+from_protobuf(col("data"), "MyMessage", descriptorBytes,
+  Map("mode" -> "PERMISSIVE"))
+
+// Fail-fast mode: throws exception on errors (default)
+from_protobuf(col("data"), "MyMessage", descriptorBytes,
+  Map("mode" -> "FAILFAST"))
+```
+
+### Recursive Fields Handling
+
+Control how recursive message types are represented in the schema (WireFormat parser only):
+
+```scala
+// Default: RecursiveStructType with true circular references
+from_protobuf(col("data"), "DomNode", descriptorBytes)
+
+// Binary mode: Mock recursive fields as BinaryType
+from_protobuf(col("data"), "DomNode", descriptorBytes,
+  Map("recursive.fields.mode" -> "binary"))
+
+// Drop mode: Omit recursive fields from schema entirely
+from_protobuf(col("data"), "DomNode", descriptorBytes,
+  Map("recursive.fields.mode" -> "drop"))
+```
+
+**Modes**:
+- `"struct"` (default): Use `RecursiveStructType` for true circular references. Best for preserving full schema structure.
+- `"binary"`: Replace recursive fields with `BinaryType`. Useful when you don't need to access recursive fields.
+- `"drop"`: Remove recursive fields entirely. Most compact schema but loses data from recursive fields.
+
+**Note**: This option only applies to WireFormat parser (binary descriptor set usage). Generated and Dynamic parsers ignore this setting.
+
+### Recursion Depth Limit
+
+For non-WireFormat parsers, control maximum recursion depth:
+
+```scala
+from_protobuf(col("data"), "MyMessage",
+  Map("recursive.fields.max.depth" -> "5"))
+```
+
+Default is `-1` (recursion disabled, will drop recursive fields).
 
 ## Documentation Style
 
