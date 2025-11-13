@@ -54,19 +54,43 @@ object RecursiveSchemaConverters {
       allowRecursion: Boolean,
       enumAsInt: Boolean = false): DataType = {
 
-    // Determine effective mode based on precedence rules
-    val effectiveMode = if (recursiveFieldMaxDepth == -1) {
-      // depth=-1: ignore binary/drop, use allowRecursion or explicit mode
-      if (recursiveFieldsMode == "fail" || recursiveFieldsMode == "recursive") {
-        recursiveFieldsMode  // Explicit mode takes precedence
-      } else if (allowRecursion) {
-        "recursive"
-      } else {
-        "fail"
-      }
-    } else {
-      // depth>=0: ignore allowRecursion, use mode (default=drop)
-      if (recursiveFieldsMode == "") "drop" else recursiveFieldsMode
+    // Determine effective mode based on Spark-aligned precedence rules
+    val effectiveMode = recursiveFieldMaxDepth match {
+      case -1 =>
+        // Spark default: forbid recursion
+        if (recursiveFieldsMode == "drop" || recursiveFieldsMode == "binary" ||
+            recursiveFieldsMode == "recursive") {
+          recursiveFieldsMode  // Override with explicit mode
+        } else if (recursiveFieldsMode == "fail") {
+          "fail"  // Explicit fail mode
+        } else {
+          // mode="" → default based on allowRecursion (internal flag)
+          if (allowRecursion) "recursive" else "fail"
+        }
+
+      case 0 =>
+        // Our extension: unlimited recursion
+        if (recursiveFieldsMode == "drop" || recursiveFieldsMode == "binary" ||
+            recursiveFieldsMode == "fail") {
+          recursiveFieldsMode  // Override unlimited with explicit mode
+        } else if (recursiveFieldsMode == "recursive") {
+          "recursive"  // Explicit recursive mode
+        } else {
+          // mode="" → default to unlimited RecursiveStructType
+          "recursive"
+        }
+
+      case depth if depth >= 1 =>
+        // Spark-aligned depth limit
+        if (recursiveFieldsMode == "") "drop" else recursiveFieldsMode
+    }
+
+    // Convert Spark depth to internal maxRecursiveDepth
+    // Spark counts total field appearances, we count depth from recursion point
+    val internalMaxDepth = recursiveFieldMaxDepth match {
+      case -1 => -1  // Not used in fail/recursive modes
+      case 0 => -1   // Unlimited (not used in recursive mode)
+      case n if n >= 1 => n - 1  // Spark depth N → internal depth N-1
     }
 
     // Apply effective mode
@@ -81,11 +105,11 @@ object RecursiveSchemaConverters {
 
       case "drop" =>
         // Drop recursive fields beyond depth
-        toSqlTypeWithRecursionDropping(descriptor, enumAsInt, recursiveFieldMaxDepth)
+        toSqlTypeWithRecursionDropping(descriptor, enumAsInt, internalMaxDepth)
 
       case "binary" =>
         // Mock recursive fields beyond depth as BinaryType
-        toSqlTypeWithRecursionMocking(descriptor, enumAsInt, recursiveFieldMaxDepth)
+        toSqlTypeWithRecursionMocking(descriptor, enumAsInt, internalMaxDepth)
     }
   }
 

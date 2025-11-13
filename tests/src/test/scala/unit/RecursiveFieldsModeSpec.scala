@@ -185,19 +185,32 @@ class RecursiveFieldsModeSpec extends AnyFunSpec with Matchers {
       }
     }
 
-    describe("Unified toSqlType() with depth limiting") {
+    describe("Unified toSqlType() with Spark-aligned depth semantics") {
       val descriptor: Descriptor = NestedProtos.Recursive.getDescriptor
 
-      it("mode='recursive' + maxDepth=-1 should produce RecursiveStructType (unlimited)") {
+      it("mode='' + depth=-1 + allowRecursion=false should fail on recursion (Spark default)") {
+        val thrown = intercept[IllegalArgumentException] {
+          RecursiveSchemaConverters.toSqlType(
+            descriptor,
+            recursiveFieldsMode = "",
+            recursiveFieldMaxDepth = -1,
+            allowRecursion = false,  // Non-WireFormat parser
+            enumAsInt = true
+          )
+        }
+        thrown.getMessage should include("Recursive field")
+      }
+
+      it("mode='' + depth=-1 + allowRecursion=true should produce RecursiveStructType (WireFormat default)") {
         val schema = RecursiveSchemaConverters.toSqlType(
           descriptor,
-          recursiveFieldsMode = "recursive",
+          recursiveFieldsMode = "",
           recursiveFieldMaxDepth = -1,
-          allowRecursion = true,
+          allowRecursion = true,  // WireFormat parser
           enumAsInt = true
         )
 
-        // Should be RecursiveStructType (unlimited recursion)
+        // Should be RecursiveStructType (WireFormat allows unlimited recursion by default)
         schema shouldBe a[RecursiveStructType]
         schema.asInstanceOf[RecursiveStructType].fieldNames should contain allOf ("id", "depth", "child", "children")
 
@@ -206,28 +219,39 @@ class RecursiveFieldsModeSpec extends AnyFunSpec with Matchers {
         childField.dataType shouldBe a[RecursiveStructType]
       }
 
-      it("mode='' + maxDepth=0 should produce StructType with no nested messages") {
+      it("mode='recursive' + depth=-1 should produce RecursiveStructType (explicit override)") {
+        val schema = RecursiveSchemaConverters.toSqlType(
+          descriptor,
+          recursiveFieldsMode = "recursive",
+          recursiveFieldMaxDepth = -1,
+          allowRecursion = false,  // Even non-WireFormat parser can be overridden
+          enumAsInt = true
+        )
+
+        // Should be RecursiveStructType (explicit mode overrides allowRecursion)
+        schema shouldBe a[RecursiveStructType]
+        schema.asInstanceOf[RecursiveStructType].fieldNames should contain allOf ("id", "depth", "child", "children")
+      }
+
+      it("mode='' + depth=0 should produce RecursiveStructType (unlimited, our extension)") {
         val schema = RecursiveSchemaConverters.toSqlType(
           descriptor,
           recursiveFieldsMode = "",
           recursiveFieldMaxDepth = 0,
           allowRecursion = true,
           enumAsInt = true
-        ).asInstanceOf[StructType]
+        )
 
-        // Should be regular StructType
-        schema shouldBe a[StructType]
-        schema should not be a[RecursiveStructType]
+        // Spark extension: depth=0 means unlimited recursion
+        schema shouldBe a[RecursiveStructType]
+        schema.asInstanceOf[RecursiveStructType].fieldNames should contain allOf ("id", "depth", "child", "children")
 
-        // Should have only primitive fields
-        schema.fieldNames should contain allOf ("id", "depth")
-
-        // Should NOT have nested message fields (depth limit exceeded)
-        schema.fieldNames should not contain "child"
-        schema.fieldNames should not contain "children"
+        // Child field should be RecursiveStructType
+        val childField = schema.asInstanceOf[RecursiveStructType]("child")
+        childField.dataType shouldBe a[RecursiveStructType]
       }
 
-      it("mode='' + maxDepth=1 should produce StructType with one level") {
+      it("mode='' + depth=1 should drop all recursive fields (Spark: 0 recursions allowed)") {
         val schema = RecursiveSchemaConverters.toSqlType(
           descriptor,
           recursiveFieldsMode = "",
@@ -236,21 +260,19 @@ class RecursiveFieldsModeSpec extends AnyFunSpec with Matchers {
           enumAsInt = true
         ).asInstanceOf[StructType]
 
-        // Should be regular StructType
+        // Spark semantics: depth=1 means drop ALL recursive fields
         schema shouldBe a[StructType]
         schema should not be a[RecursiveStructType]
-        schema.fieldNames should contain allOf ("id", "depth", "child", "children")
 
-        // Child field should be StructType with only primitives (depth limit)
-        val childField = schema("child")
-        childField.dataType shouldBe a[StructType]
-        val childSchema = childField.dataType.asInstanceOf[StructType]
-        childSchema.fieldNames should contain allOf ("id", "depth")
-        childSchema.fieldNames should not contain "child"
-        childSchema.fieldNames should not contain "children"
+        // Should have only primitive fields
+        schema.fieldNames should contain allOf ("id", "depth")
+
+        // Should NOT have recursive fields (depth=1 = 0 recursions)
+        schema.fieldNames should not contain "child"
+        schema.fieldNames should not contain "children"
       }
 
-      it("mode='' + maxDepth=2 should produce StructType with two levels") {
+      it("mode='' + depth=2 should allow field to appear twice (Spark: recursed once)") {
         val schema = RecursiveSchemaConverters.toSqlType(
           descriptor,
           recursiveFieldsMode = "",
@@ -259,18 +281,41 @@ class RecursiveFieldsModeSpec extends AnyFunSpec with Matchers {
           enumAsInt = true
         ).asInstanceOf[StructType]
 
-        // Should be regular StructType
+        // Spark semantics: depth=2 means field appears twice total (recursed once)
         schema shouldBe a[StructType]
         schema should not be a[RecursiveStructType]
         schema.fieldNames should contain allOf ("id", "depth", "child", "children")
 
-        // Child field should have nested child
+        // Child field (1st appearance) should be StructType with only primitives (no more recursion)
+        val childField = schema("child")
+        childField.dataType shouldBe a[StructType]
+        val childSchema = childField.dataType.asInstanceOf[StructType]
+        childSchema.fieldNames should contain allOf ("id", "depth")
+        childSchema.fieldNames should not contain "child"
+        childSchema.fieldNames should not contain "children"
+      }
+
+      it("mode='' + depth=3 should allow field to appear three times (Spark: recursed twice)") {
+        val schema = RecursiveSchemaConverters.toSqlType(
+          descriptor,
+          recursiveFieldsMode = "",
+          recursiveFieldMaxDepth = 3,
+          allowRecursion = true,
+          enumAsInt = true
+        ).asInstanceOf[StructType]
+
+        // Spark semantics: depth=3 means field appears three times total (recursed twice)
+        schema shouldBe a[StructType]
+        schema should not be a[RecursiveStructType]
+        schema.fieldNames should contain allOf ("id", "depth", "child", "children")
+
+        // First level child
         val childField = schema("child")
         childField.dataType shouldBe a[StructType]
         val childSchema = childField.dataType.asInstanceOf[StructType]
         childSchema.fieldNames should contain allOf ("id", "depth", "child", "children")
 
-        // Nested child's child should only have primitives (depth limit)
+        // Second level child (last appearance before hitting limit)
         val nestedChildField = childSchema("child")
         nestedChildField.dataType shouldBe a[StructType]
         val nestedChildSchema = nestedChildField.dataType.asInstanceOf[StructType]
