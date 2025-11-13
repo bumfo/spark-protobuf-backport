@@ -45,19 +45,19 @@ import org.apache.spark.sql.catalyst.util.{CaseInsensitiveMap, FailFastMode, Par
  * Configuration Precedence:
  *
  * When depth=-1 (forbid, Spark default):
- * - mode="" → fail (forbid recursion, throw error)
+ * - mode="" → fail if allow_recursion=false, recursive if allow_recursion=true
  * - mode="fail" → fail (explicit)
  * - mode="drop"/"binary"/"recursive" → use specified mode (override Spark default)
- * - allow_recursion → IGNORED
+ * - allow_recursion → used when mode="" (determines default behavior)
  *
  * When depth=0 (unlimited, our extension):
- * - mode="" → recursive (RecursiveStructType)
+ * - mode="" → recursive (RecursiveStructType, always)
  * - mode="recursive" → recursive (explicit)
  * - mode="drop"/"binary"/"fail" → use specified mode (override unlimited default)
- * - allow_recursion → IGNORED
+ * - allow_recursion → IGNORED (mode="" always uses recursive)
  *
  * When depth>=1 (Spark-aligned depth limit):
- * - mode="" → drop (default for depth-limited)
+ * - mode="" → drop (default for depth-limited, always)
  * - mode="drop"/"binary" → use specified mode
  * - mode="fail" → forbid (unusual with depth limit)
  * - mode="recursive" → ERROR (illegal combination)
