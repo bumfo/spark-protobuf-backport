@@ -182,18 +182,21 @@ private[backport] case class ProtobufDataToCatalyst(
       case ParserKind.WireFormat =>
         // For WireFormat parser, use pruned schema if provided, otherwise compute full schema
         // using unified config-aware schema conversion
+        // WireFormat parser allows recursion (RecursiveStructType)
         requiredSchema.getOrElse {
           RecursiveSchemaConverters.toSqlType(
             desc,
             recursiveFieldsMode = protobufOptions.recursiveFieldsMode,
             recursiveFieldMaxDepth = protobufOptions.recursiveFieldMaxDepth,
+            allowRecursion = true,  // WireFormat parser supports RecursiveStructType
             enumAsInt = true
           ).asInstanceOf[StructType]
         }
       case _ =>
         // Schema pruning only supported for WireFormat parser, ignore requiredSchema for others
+        // Generated/Dynamic parsers do not allow recursion (fail mode)
         // TODO: Migrate Generated/Dynamic parsers to use RecursiveSchemaConverters.toSqlType()
-        //       for unified config handling across all parser types
+        //       with allowRecursion=false for unified config handling
         SchemaConverters.toSqlType(desc, protobufOptions).dataType
     }
 

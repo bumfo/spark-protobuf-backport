@@ -25,46 +25,61 @@ import org.apache.spark.sql.catalyst.util.{CaseInsensitiveMap, FailFastMode, Par
  *    Applies to: All parsers (error handling)
  *
  * 2. Recursive Fields Mode (recursive.fields.mode):
- *    - "struct": Use RecursiveStructType with true circular references (default)
+ *    User-facing values (recommended):
+ *    - "" (empty): Default behavior based on allow_recursion and depth
+ *    - "drop": Drop recursive fields from schema
  *    - "binary": Mock recursive fields as BinaryType
- *    - "drop": Omit recursive fields from schema entirely
- *    Currently applies to: WireFormat parser (via RecursiveSchemaConverters)
- *    Future: Will apply to all parsers
+ *
+ *    Internal values (discouraged for users):
+ *    - "fail": Forbid recursive schemas (throw error on recursion)
+ *    - "recursive": Allow RecursiveStructType (only valid with depth=-1)
  *
  * 3. Recursive Fields Max Depth (recursive.fields.max.depth):
- *    - "-1": Unlimited recursion (default, only with mode="struct")
- *    - "0+": Maximum nesting depth before dropping fields
- *    Currently applies to: Generated/Dynamic parsers (via SchemaConverters)
- *    Future: Will apply to all parsers
+ *    - "-1": Default behavior (default)
+ *    - "0+": Maximum recursive depth before applying mode handling
  *
- * Interaction between mode and maxDepth:
- * - mode="struct" + maxDepth=-1: RecursiveStructType (unlimited recursion)
- * - mode="struct" + maxDepth>=0: Regular StructType with depth limit
- * - mode="binary": maxDepth ignored, recursive fields become BinaryType
- * - mode="drop": maxDepth ignored, recursive fields dropped
+ * Configuration Precedence:
  *
- * Parser Compatibility Matrix (Current State):
- * | Config                     | WireFormat | Generated | Dynamic | Applied At |
- * |----------------------------|------------|-----------|---------|------------|
- * | mode                       | ✓          | ✓         | ✓       | Error handling |
- * | recursive.fields.mode      | ✓          | (future)  | (future)| Schema generation |
- * | recursive.fields.max.depth | (future)   | ✓         | ✓       | Schema generation |
+ * When depth=-1 (default/unlimited):
+ * - mode="" + allow_recursion=false → fail (forbid recursion)
+ * - mode="" + allow_recursion=true → recursive (RecursiveStructType)
+ * - mode="drop"/"binary" → IGNORED (depth=-1 takes precedence)
+ * - mode="fail" → fail (explicit)
+ * - mode="recursive" → recursive (explicit)
  *
- * Future Migration:
- * - All parsers will use RecursiveSchemaConverters.toSqlType() for schema generation
- * - All configs will be respected consistently across parser types
- * - See RecursiveSchemaConverters.toSqlType() for unified config handling
+ * When depth>=0 (depth-limited):
+ * - mode="" → drop (default)
+ * - mode="drop" → drop recursive fields beyond depth
+ * - mode="binary" → mock recursive fields beyond depth as BinaryType
+ * - mode="fail" → forbid recursion (unusual with depth limit)
+ * - mode="recursive" → ERROR (illegal combination)
+ * - allow_recursion → IGNORED (mode takes precedence)
+ *
+ * Depth Counting:
+ * - Depth is counted from INSIDE a recursive cycle
+ * - Example A→B→A→C→A: depths are 0, 0, 0, 1, 2
+ * - C is first visit but inside cycle, so depth 1
+ *
+ * Parser Defaults:
+ * - WireFormat parser: allow_recursion=true
+ * - Generated/Dynamic parsers: allow_recursion=false
  *
  * @param parameters user-provided options
  * @param conf       Hadoop configuration used by the reader
+ * @param allowRecursion Whether recursion is allowed (set by parser selection)
  */
 private[backport] class ProtobufOptions(
     @transient val parameters: CaseInsensitiveMap[String],
-    @transient val conf: Configuration)
+    @transient val conf: Configuration,
+    val allowRecursion: Boolean = false)
   extends Serializable {
 
   def this(parameters: Map[String, String], conf: Configuration) = {
-    this(CaseInsensitiveMap(parameters), conf)
+    this(CaseInsensitiveMap(parameters), conf, allowRecursion = false)
+  }
+
+  def this(parameters: Map[String, String], conf: Configuration, allowRecursion: Boolean) = {
+    this(CaseInsensitiveMap(parameters), conf, allowRecursion)
   }
 
   /**
@@ -81,45 +96,52 @@ private[backport] class ProtobufOptions(
   /**
    * Maximum recursion depth for nested message fields.
    *
-   * Controls how deep nested messages can go before fields are dropped.
-   * - "-1": Unlimited depth (default, works with recursive.fields.mode="struct")
-   * - "0+": Maximum nesting levels allowed
+   * Controls when mode-based handling kicks in for recursive fields.
+   * - "-1": Default behavior (unlimited for recursive mode, forbidden for fail mode)
+   * - "0+": Apply mode handling when recursive depth exceeds this value
    *
-   * Currently applies to:
-   * - Generated parser (via SchemaConverters)
-   * - Dynamic parser (via SchemaConverters)
+   * Depth is counted from inside a recursive cycle (see class documentation).
    *
-   * Future: Will work with all parsers via RecursiveSchemaConverters.
-   * When mode="struct" and maxDepth is set, produces regular StructType (not RecursiveStructType).
+   * Applies to: All parsers via RecursiveSchemaConverters
    */
   val recursiveFieldMaxDepth: Int = parameters.getOrElse("recursive.fields.max.depth", "-1").toInt
 
   /**
    * How to handle recursive message types in schema conversion.
    *
-   * Controls schema generation for messages with recursive references.
-   * - "struct": Use RecursiveStructType with true circular references (default)
+   * User-facing values:
+   * - "" (empty, default): Behavior depends on allow_recursion and depth
+   * - "drop": Drop recursive fields from schema
    * - "binary": Replace recursive fields with BinaryType
-   * - "drop": Remove recursive fields from schema entirely
    *
-   * Currently applies to:
-   * - WireFormat parser (via RecursiveSchemaConverters)
+   * Internal values (not recommended for users):
+   * - "fail": Throw exception on recursion detection
+   * - "recursive": Use RecursiveStructType (only valid with depth=-1)
    *
-   * Future: Will work with all parsers via RecursiveSchemaConverters.
+   * Precedence rules:
+   * - depth=-1: mode="drop"/"binary" ignored, uses allow_recursion
+   * - depth>=0: allow_recursion ignored, uses mode (default="drop")
    *
-   * Interaction with recursive.fields.max.depth:
-   * - mode="struct" + maxDepth=-1: RecursiveStructType (unlimited)
-   * - mode="struct" + maxDepth=N: Regular StructType with depth limit
-   * - mode="binary": maxDepth ignored
-   * - mode="drop": maxDepth ignored
+   * Applies to: All parsers via RecursiveSchemaConverters
    */
   val recursiveFieldsMode: String = {
-    val mode = parameters.getOrElse("recursive.fields.mode", "struct")
-    if (!Set("struct", "binary", "drop").contains(mode)) {
+    val mode = parameters.getOrElse("recursive.fields.mode", "")
+
+    // Validate mode value
+    if (!Set("", "drop", "binary", "fail", "recursive").contains(mode)) {
       throw new IllegalArgumentException(
         s"Invalid value for 'recursive.fields.mode': '$mode'. " +
-        "Supported values are: 'struct', 'binary', 'drop'")
+        "Supported values are: '' (empty), 'drop', 'binary', 'fail', 'recursive'")
     }
+
+    // Validate illegal combination: recursive + depth>=0
+    if (mode == "recursive" && recursiveFieldMaxDepth >= 0) {
+      throw new IllegalArgumentException(
+        "Invalid configuration: 'recursive.fields.mode=recursive' cannot be used with " +
+        s"'recursive.fields.max.depth=${recursiveFieldMaxDepth}'. " +
+        "RecursiveStructType requires unlimited depth (depth=-1).")
+    }
+
     mode
   }
 }
@@ -130,6 +152,10 @@ private[backport] object ProtobufOptions {
     // the SessionState API may differ or not be available.  Use a fresh Hadoop Configuration
     // instead.  Users can specify a different configuration when instantiating ProtobufOptions
     // directly if needed.
-    new ProtobufOptions(CaseInsensitiveMap(parameters), new Configuration())
+    new ProtobufOptions(CaseInsensitiveMap(parameters), new Configuration(), allowRecursion = false)
+  }
+
+  def apply(parameters: Map[String, String], allowRecursion: Boolean): ProtobufOptions = {
+    new ProtobufOptions(CaseInsensitiveMap(parameters), new Configuration(), allowRecursion)
   }
 }
