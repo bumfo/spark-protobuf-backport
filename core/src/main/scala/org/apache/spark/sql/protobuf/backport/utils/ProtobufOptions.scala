@@ -68,14 +68,12 @@ import org.apache.spark.sql.catalyst.util.{CaseInsensitiveMap, FailFastMode, Par
  * - depth=2: Allow recursed once (field appears 2 times total)
  * - depth=N (N>=2): Allow recursed N-1 times (field appears N times total)
  *
- * Internal Conversion:
- * - Spark depth=N → Internal maxRecursiveDepth=N-1
- * - Example: Spark depth=2 → maxRecursiveDepth=1 (one level after recursion detection)
- *
- * Depth Counting (Internal):
- * - Depth is counted from INSIDE a recursive cycle
- * - Example A→B→A→C→A: depths are 0, 0, 0, 1, 2
- * - C is first visit but inside cycle, so depth 1
+ * Internal Implementation:
+ * - Spark depth values used directly (no conversion)
+ * - First cycle occurrence is at depth=1 (matching Spark's occurrence counting)
+ * - Depth increments with each nested level inside cycle
+ * - Example A→B→A→C→A: internal depths are 0, 0, 1, 2, 3
+ *   (A and B not in cycle=0, first A recursion=1, C inside cycle=2, second A recursion=3)
  *
  * Parser Defaults:
  * - WireFormat parser: allow_recursion=true

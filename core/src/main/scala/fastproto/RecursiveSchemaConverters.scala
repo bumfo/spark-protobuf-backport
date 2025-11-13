@@ -85,12 +85,12 @@ object RecursiveSchemaConverters {
         if (recursiveFieldsMode == "") "drop" else recursiveFieldsMode
     }
 
-    // Convert Spark depth to internal maxRecursiveDepth
-    // Spark counts total field appearances, we count depth from recursion point
+    // Use Spark depth directly (no conversion needed)
+    // Internal depth=1 when first cycle detected, matching Spark's occurrence counting
     val internalMaxDepth = recursiveFieldMaxDepth match {
       case -1 => -1  // Not used in fail/recursive modes
       case 0 => -1   // Unlimited (not used in recursive mode)
-      case n if n >= 1 => n - 1  // Spark depth N → internal depth N-1
+      case n if n >= 1 => n  // Use Spark depth directly
     }
 
     // Apply effective mode
@@ -137,7 +137,7 @@ object RecursiveSchemaConverters {
    *
    * @param descriptor the protobuf message descriptor
    * @param enumAsInt if true, represent enum fields as IntegerType instead of StringType
-   * @param maxRecursiveDepth Maximum recursive depth (-1 for immediate mocking, 0+ for depth limit)
+   * @param maxRecursiveDepth Maximum recursive depth (-1 for immediate mocking, 1+ for depth limit)
    * @return Spark SQL StructType with recursive fields mocked
    */
   def toSqlTypeWithRecursionMocking(descriptor: Descriptor, enumAsInt: Boolean = false,
@@ -145,7 +145,7 @@ object RecursiveSchemaConverters {
     val visitedTypes = mutable.Set[String]()
     convertMessageType(descriptor, visitedTypes, enumAsInt, dropRecursive = false, mockRecursive = true,
                        failOnRecursion = false, recursiveDepth = 0,
-                       maxRecursiveDepth = if (maxRecursiveDepth == -1) 0 else maxRecursiveDepth)
+                       maxRecursiveDepth = maxRecursiveDepth)
   }
 
   /**
@@ -156,7 +156,7 @@ object RecursiveSchemaConverters {
    *
    * @param descriptor the protobuf message descriptor
    * @param enumAsInt if true, represent enum fields as IntegerType instead of StringType
-   * @param maxRecursiveDepth Maximum recursive depth (-1 for immediate dropping, 0+ for depth limit)
+   * @param maxRecursiveDepth Maximum recursive depth (-1 for immediate dropping, 1+ for depth limit)
    * @return Spark SQL StructType with recursive fields dropped
    */
   def toSqlTypeWithRecursionDropping(descriptor: Descriptor, enumAsInt: Boolean = false,
@@ -164,7 +164,7 @@ object RecursiveSchemaConverters {
     val visitedTypes = mutable.Set[String]()
     convertMessageType(descriptor, visitedTypes, enumAsInt, dropRecursive = true, mockRecursive = false,
                        failOnRecursion = false, recursiveDepth = 0,
-                       maxRecursiveDepth = if (maxRecursiveDepth == -1) 0 else maxRecursiveDepth)
+                       maxRecursiveDepth = maxRecursiveDepth)
   }
 
   /**
@@ -388,10 +388,11 @@ object RecursiveSchemaConverters {
 
         // Check for recursion: if we're already processing this type
         if (visitedTypes.contains(messageTypeName)) {
-          // RECURSION DETECTED! We're at recursiveDepth=0 for this cycle
+          // RECURSION DETECTED! First cycle occurrence is at depth=1 (matching Spark semantics)
+          val cycleDepth = recursiveDepth + 1
 
           // Check if we've exceeded the recursive depth limit
-          if (recursiveDepth >= maxRecursiveDepth) {
+          if (cycleDepth >= maxRecursiveDepth) {
             // Apply mode-specific handling
             if (failOnRecursion) {
               throw new IllegalArgumentException(
@@ -405,11 +406,10 @@ object RecursiveSchemaConverters {
               None  // Should not happen, but safe default
             }
           } else {
-            // Within depth limit - continue with recursiveDepth + 1
-            // Note: We're entering a cycle, so next field will be at depth 1
+            // Within depth limit - continue with cycleDepth
             Some(convertMessageType(messageDescriptor, visitedTypes.clone(), enumAsInt,
                                    dropRecursive, mockRecursive, failOnRecursion,
-                                   recursiveDepth + 1, maxRecursiveDepth))
+                                   cycleDepth, maxRecursiveDepth))
           }
         } else {
           // Not recursive - check if we're inside a cycle
