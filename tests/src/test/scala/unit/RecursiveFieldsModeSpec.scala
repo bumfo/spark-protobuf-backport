@@ -184,5 +184,134 @@ class RecursiveFieldsModeSpec extends AnyFunSpec with Matchers {
         simpleStr should not include "children"
       }
     }
+
+    describe("Unified toSqlType() with depth limiting") {
+      val descriptor: Descriptor = NestedProtos.Recursive.getDescriptor
+
+      it("mode='struct' + maxDepth=-1 should produce RecursiveStructType (unlimited)") {
+        val schema = RecursiveSchemaConverters.toSqlType(
+          descriptor,
+          recursiveFieldsMode = "struct",
+          recursiveFieldMaxDepth = -1,
+          enumAsInt = true
+        )
+
+        // Should be RecursiveStructType (unlimited recursion)
+        schema shouldBe a[RecursiveStructType]
+        schema.asInstanceOf[RecursiveStructType].fieldNames should contain allOf ("id", "depth", "child", "children")
+
+        // Child field should be RecursiveStructType
+        val childField = schema.asInstanceOf[RecursiveStructType]("child")
+        childField.dataType shouldBe a[RecursiveStructType]
+      }
+
+      it("mode='struct' + maxDepth=0 should produce StructType with no nested messages") {
+        val schema = RecursiveSchemaConverters.toSqlType(
+          descriptor,
+          recursiveFieldsMode = "struct",
+          recursiveFieldMaxDepth = 0,
+          enumAsInt = true
+        ).asInstanceOf[StructType]
+
+        // Should be regular StructType
+        schema shouldBe a[StructType]
+        schema should not be a[RecursiveStructType]
+
+        // Should have only primitive fields
+        schema.fieldNames should contain allOf ("id", "depth")
+
+        // Should NOT have nested message fields (depth limit exceeded)
+        schema.fieldNames should not contain "child"
+        schema.fieldNames should not contain "children"
+      }
+
+      it("mode='struct' + maxDepth=1 should produce StructType with one level") {
+        val schema = RecursiveSchemaConverters.toSqlType(
+          descriptor,
+          recursiveFieldsMode = "struct",
+          recursiveFieldMaxDepth = 1,
+          enumAsInt = true
+        ).asInstanceOf[StructType]
+
+        // Should be regular StructType
+        schema shouldBe a[StructType]
+        schema should not be a[RecursiveStructType]
+        schema.fieldNames should contain allOf ("id", "depth", "child", "children")
+
+        // Child field should be StructType with only primitives (depth limit)
+        val childField = schema("child")
+        childField.dataType shouldBe a[StructType]
+        val childSchema = childField.dataType.asInstanceOf[StructType]
+        childSchema.fieldNames should contain allOf ("id", "depth")
+        childSchema.fieldNames should not contain "child"
+        childSchema.fieldNames should not contain "children"
+      }
+
+      it("mode='struct' + maxDepth=2 should produce StructType with two levels") {
+        val schema = RecursiveSchemaConverters.toSqlType(
+          descriptor,
+          recursiveFieldsMode = "struct",
+          recursiveFieldMaxDepth = 2,
+          enumAsInt = true
+        ).asInstanceOf[StructType]
+
+        // Should be regular StructType
+        schema shouldBe a[StructType]
+        schema should not be a[RecursiveStructType]
+        schema.fieldNames should contain allOf ("id", "depth", "child", "children")
+
+        // Child field should have nested child
+        val childField = schema("child")
+        childField.dataType shouldBe a[StructType]
+        val childSchema = childField.dataType.asInstanceOf[StructType]
+        childSchema.fieldNames should contain allOf ("id", "depth", "child", "children")
+
+        // Nested child's child should only have primitives (depth limit)
+        val nestedChildField = childSchema("child")
+        nestedChildField.dataType shouldBe a[StructType]
+        val nestedChildSchema = nestedChildField.dataType.asInstanceOf[StructType]
+        nestedChildSchema.fieldNames should contain allOf ("id", "depth")
+        nestedChildSchema.fieldNames should not contain "child"
+        nestedChildSchema.fieldNames should not contain "children"
+      }
+
+      it("mode='binary' should ignore maxDepth and mock as BinaryType") {
+        val schema = RecursiveSchemaConverters.toSqlType(
+          descriptor,
+          recursiveFieldsMode = "binary",
+          recursiveFieldMaxDepth = 5, // Should be ignored
+          enumAsInt = true
+        ).asInstanceOf[StructType]
+
+        // Should be regular StructType
+        schema shouldBe a[StructType]
+        schema should not be a[RecursiveStructType]
+        schema.fieldNames should contain allOf ("id", "depth", "child", "children")
+
+        // Child field should be BinaryType (maxDepth ignored)
+        val childField = schema("child")
+        childField.dataType shouldBe BinaryType
+      }
+
+      it("mode='drop' should ignore maxDepth and drop recursive fields") {
+        val schema = RecursiveSchemaConverters.toSqlType(
+          descriptor,
+          recursiveFieldsMode = "drop",
+          recursiveFieldMaxDepth = 5, // Should be ignored
+          enumAsInt = true
+        ).asInstanceOf[StructType]
+
+        // Should be regular StructType
+        schema shouldBe a[StructType]
+        schema should not be a[RecursiveStructType]
+
+        // Should have non-recursive fields
+        schema.fieldNames should contain allOf ("id", "depth")
+
+        // Should NOT have recursive fields (maxDepth ignored)
+        schema.fieldNames should not contain "child"
+        schema.fieldNames should not contain "children"
+      }
+    }
   }
 }

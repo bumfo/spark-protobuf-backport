@@ -181,19 +181,19 @@ private[backport] case class ProtobufDataToCatalyst(
     val schema: StructType = parserKind match {
       case ParserKind.WireFormat =>
         // For WireFormat parser, use pruned schema if provided, otherwise compute full schema
-        // based on recursive fields mode
+        // using unified config-aware schema conversion
         requiredSchema.getOrElse {
-          protobufOptions.recursiveFieldsMode match {
-            case "struct" =>
-              RecursiveSchemaConverters.toSqlTypeWithTrueRecursion(desc, enumAsInt = true)
-            case "binary" =>
-              RecursiveSchemaConverters.toSqlTypeWithRecursionMocking(desc, enumAsInt = true).asInstanceOf[StructType]
-            case "drop" =>
-              RecursiveSchemaConverters.toSqlTypeWithRecursionDropping(desc, enumAsInt = true).asInstanceOf[StructType]
-          }
+          RecursiveSchemaConverters.toSqlType(
+            desc,
+            recursiveFieldsMode = protobufOptions.recursiveFieldsMode,
+            recursiveFieldMaxDepth = protobufOptions.recursiveFieldMaxDepth,
+            enumAsInt = true
+          ).asInstanceOf[StructType]
         }
       case _ =>
         // Schema pruning only supported for WireFormat parser, ignore requiredSchema for others
+        // TODO: Migrate Generated/Dynamic parsers to use RecursiveSchemaConverters.toSqlType()
+        //       for unified config handling across all parser types
         SchemaConverters.toSqlType(desc, protobufOptions).dataType
     }
 
