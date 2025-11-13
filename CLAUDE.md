@@ -148,69 +148,17 @@ from_protobuf(col("data"), "MyMessage", descriptorBytes,
 
 ### Recursive Fields Handling
 
-The backport supports Spark 3.4+ compatible recursive field handling with two orthogonal configuration options:
-
-**1. Recursion Depth (`recursive.fields.max.depth`)**
-
-Spark-aligned depth semantics:
-- **`-1`** (Spark default): Forbid recursive fields. WireFormat parser allows RecursiveStructType by default, Generated/Dynamic parsers throw error on recursion.
-- **`0`** (Our extension): Unlimited recursion using RecursiveStructType. Not in Spark 3.4+.
-- **`1`**: Drop all recursive fields (0 recursions allowed).
-- **`2`**: Allow field to appear twice total (recursed once).
-- **`3-10`**: Allow field to appear N times total (recursed N-1 times).
+Control recursive schema handling via `recursive.fields.max.depth` (Spark 3.4+ aligned: `-1`=forbid, `0`=unlimited, `1-10`=depth limit) and `recursive.fields.mode` (`drop`/`binary`).
 
 ```scala
-// Spark default: forbid recursion (WireFormat: RecursiveStructType, others: error)
-from_protobuf(col("data"), "DomNode", descriptorBytes)
+// Unlimited recursion (our extension)
+Map("recursive.fields.max.depth" -> "0")
 
-// Unlimited recursion (our extension, not in Spark)
-from_protobuf(col("data"), "DomNode", descriptorBytes,
-  Map("recursive.fields.max.depth" -> "0"))
-
-// Spark-aligned: allow field to appear twice (recursed once)
-from_protobuf(col("data"), "DomNode", descriptorBytes,
-  Map("recursive.fields.max.depth" -> "2"))
+// Drop recursive fields
+Map("recursive.fields.mode" -> "drop")
 ```
 
-**2. Recursion Mode (`recursive.fields.mode`)**
-
-Controls how recursion is handled:
-- **`""`** (default): Behavior depends on depth and parser (see precedence below)
-- **`"drop"`**: Drop recursive fields from schema entirely
-- **`"binary"`**: Replace recursive fields with BinaryType
-- **`"fail"`**: Throw exception on recursion (explicit, not recommended for users)
-- **`"recursive"`**: Use RecursiveStructType (explicit, only valid with depth=0 or depth=-1)
-
-```scala
-// Binary mode: Mock recursive fields as BinaryType
-from_protobuf(col("data"), "DomNode", descriptorBytes,
-  Map("recursive.fields.mode" -> "binary"))
-
-// Drop mode: Omit recursive fields from schema entirely
-from_protobuf(col("data"), "DomNode", descriptorBytes,
-  Map("recursive.fields.mode" -> "drop"))
-```
-
-**Configuration Precedence**
-
-When `depth=-1` (Spark default):
-- `mode=""` → fail for Generated/Dynamic parsers, recursive for WireFormat parser
-- `mode="drop"/"binary"/"recursive"` → override Spark default with explicit mode
-
-When `depth=0` (unlimited, our extension):
-- `mode=""` → recursive (RecursiveStructType)
-- `mode="drop"/"binary"/"fail"` → override unlimited with explicit mode
-
-When `depth≥1` (Spark-aligned depth limit):
-- `mode=""` → drop (default for depth-limited)
-- `mode="drop"/"binary"` → use specified mode
-- `mode="recursive"` → ERROR (illegal combination)
-
-**Internal Conversion**
-
-Spark counts total field appearances, we count depth from recursion point:
-- Spark depth N → Internal maxRecursiveDepth = N - 1
-- Example: Spark depth=2 → Internal maxRecursiveDepth=1 (allow once after recursion detection)
+See `ProtobufOptions.scala` javadoc for complete configuration details.
 
 ## Documentation Style
 
