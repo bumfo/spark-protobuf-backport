@@ -29,7 +29,7 @@ private[fastproto] object RecursionMode {
  * Unified schema converter that handles recursive message types with full config support.
  *
  * Supports all recursive field handling modes and depth limiting:
- * - recursive.fields.mode: "struct", "binary", or "drop"
+ * - recursive.fields.mode: "recursive", "binary", "drop", "fail", or "" (default)
  * - recursive.fields.max.depth: Maximum nesting depth for messages
  *
  * Standard SchemaConverters.toSqlType() fails on recursive protobuf messages because
@@ -200,131 +200,6 @@ object RecursiveSchemaConverters {
     convertMessageType(descriptor, visitedTypes, enumAsInt, dropRecursive = true, mockRecursive = false,
                        failOnRecursion = false, recursiveDepth = 0,
                        maxRecursiveDepth = maxRecursiveDepth)
-  }
-
-  /**
-   * Convert protobuf descriptor to Spark SQL type with depth limit.
-   *
-   * Creates a regular StructType (not RecursiveStructType) that drops fields beyond maxDepth.
-   * This allows controlled nesting without circular references.
-   *
-   * @param descriptor the protobuf message descriptor
-   * @param enumAsInt if true, represent enum fields as IntegerType instead of StringType
-   * @param maxDepth Maximum nesting depth (0 = no nested messages, 1 = one level, etc.)
-   * @return Regular StructType with fields beyond maxDepth dropped
-   */
-  private def toSqlTypeWithDepthLimit(
-      descriptor: Descriptor,
-      enumAsInt: Boolean,
-      maxDepth: Int): StructType = {
-
-    require(maxDepth >= 0, s"maxDepth must be >= 0, got $maxDepth")
-
-    val visitedTypes = mutable.Set[String]()
-    convertMessageTypeWithDepth(descriptor, visitedTypes, enumAsInt, currentDepth = 0, maxDepth)
-  }
-
-  /**
-   * Convert a message type to StructType with depth tracking.
-   */
-  private def convertMessageTypeWithDepth(
-      descriptor: Descriptor,
-      visitedTypes: mutable.Set[String],
-      enumAsInt: Boolean,
-      currentDepth: Int,
-      maxDepth: Int): StructType = {
-
-    val typeName = descriptor.getFullName
-    val wasAlreadyVisited = visitedTypes.contains(typeName)
-    visitedTypes += typeName
-
-    val fields = supportedFields(descriptor).flatMap { field =>
-      convertFieldTypeWithDepth(field, visitedTypes, wasAlreadyVisited, enumAsInt, currentDepth, maxDepth) match {
-        case None => None
-        case Some(sparkType) => Some(StructField(field.getName, sparkType, nullable = true))
-      }
-    }.toSeq
-
-    if (!wasAlreadyVisited) {
-      visitedTypes -= typeName
-    }
-
-    StructType(fields)
-  }
-
-  /**
-   * Convert a single field type with depth tracking.
-   * Returns None if the field should be dropped due to depth limit or recursion.
-   */
-  private def convertFieldTypeWithDepth(
-      field: FieldDescriptor,
-      visitedTypes: mutable.Set[String],
-      parentWasVisited: Boolean,
-      enumAsInt: Boolean,
-      currentDepth: Int,
-      maxDepth: Int): Option[DataType] = {
-
-    require(field.getType != FieldDescriptor.Type.GROUP, "GROUP fields are not supported")
-
-    val baseTypeOpt = field.getJavaType match {
-      case FieldDescriptor.JavaType.MESSAGE =>
-        val messageDescriptor = field.getMessageType
-
-        // For depth limiting, check depth first regardless of recursion.
-        // The depth limit alone is sufficient to prevent infinite recursion,
-        // so we don't need the visitedTypes check here.
-        if (currentDepth >= maxDepth) {
-          // At or beyond max depth - drop nested messages
-          None
-        } else {
-          // Within depth limit - continue
-          Some(convertMessageTypeWithDepth(
-            messageDescriptor,
-            visitedTypes.clone(),
-            enumAsInt,
-            currentDepth + 1,
-            maxDepth))
-        }
-
-      case FieldDescriptor.JavaType.INT => Some(IntegerType)
-      case FieldDescriptor.JavaType.LONG => Some(LongType)
-      case FieldDescriptor.JavaType.FLOAT => Some(FloatType)
-      case FieldDescriptor.JavaType.DOUBLE => Some(DoubleType)
-      case FieldDescriptor.JavaType.BOOLEAN => Some(BooleanType)
-      case FieldDescriptor.JavaType.STRING => Some(StringType)
-      case FieldDescriptor.JavaType.BYTE_STRING => Some(BinaryType)
-      case FieldDescriptor.JavaType.ENUM => Some(if (enumAsInt) IntegerType else StringType)
-    }
-
-    // Handle repeated fields
-    baseTypeOpt.flatMap { baseType =>
-      if (field.isRepeated) {
-        if (field.isMapField) {
-          val mapEntryDescriptor = field.getMessageType
-          val keyField = mapEntryDescriptor.findFieldByName("key")
-          val valueField = mapEntryDescriptor.findFieldByName("value")
-
-          val keyTypeOpt = convertFieldTypeWithDepth(keyField, visitedTypes, parentWasVisited, enumAsInt, currentDepth, maxDepth)
-          val valueTypeOpt = convertFieldTypeWithDepth(valueField, visitedTypes, parentWasVisited, enumAsInt, currentDepth, maxDepth)
-
-          // Only create map entry if both key and value are available
-          for {
-            keyType <- keyTypeOpt
-            valueType <- valueTypeOpt
-          } yield {
-            val mapEntryStruct = StructType(Seq(
-              StructField("key", keyType, nullable = false),
-              StructField("value", valueType, nullable = true)
-            ))
-            ArrayType(mapEntryStruct)
-          }
-        } else {
-          Some(ArrayType(baseType))
-        }
-      } else {
-        Some(baseType)
-      }
-    }
   }
 
   /**
