@@ -151,11 +151,17 @@ from_protobuf(col("data"), "MyMessage", descriptorBytes,
 Control recursive schema handling via `recursive.fields.max.depth` and `recursive.fields.mode`.
 
 ```scala
-// Unlimited recursion (our extension)
+// Unlimited recursion (RecursiveStructType)
+Map("recursive.fields.mode" -> "recursive")
+
+// Drop recursive fields (no recursions allowed)
 Map("recursive.fields.max.depth" -> "0")
 
-// Drop recursive fields
-Map("recursive.fields.mode" -> "drop")
+// Allow up to 3 recursions, then drop
+Map("recursive.fields.max.depth" -> "3")
+
+// Mock recursive fields as BinaryType
+Map("recursive.fields.mode" -> "binary")
 ```
 
 **Depth values**:
