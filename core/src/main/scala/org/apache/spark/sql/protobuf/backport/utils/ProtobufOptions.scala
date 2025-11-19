@@ -47,8 +47,15 @@ import org.apache.spark.sql.catalyst.util.{CaseInsensitiveMap, FailFastMode, Par
  *
  * When depth=-1 (default):
  * - mode="" → recursive if allow_recursion=true, fail if allow_recursion=false
- * - mode="fail"/"drop"/"binary"/"recursive" → use specified mode (explicit override)
+ * - mode="recursive" → recursive (RecursiveStructType, unlimited depth)
+ * - mode="fail" → fail on first recursion (same as depth=0 + mode="fail")
+ * - mode="drop" → drop on first recursion (same as depth=0 + mode="drop")
+ * - mode="binary" → mock on first recursion (same as depth=0 + mode="binary")
  * - allow_recursion → used when mode="" (parser default: true for WireFormat, false for others)
+ *
+ * NOTE: depth=-1 has different meanings depending on mode:
+ * - With mode="" or "recursive": "default" or "unlimited" (allows recursion)
+ * - With mode="fail"/"drop"/"binary": "no recursions" (equivalent to depth=0)
  *
  * When depth=0 (no recursions):
  * - mode="" → drop (default for depth=0)

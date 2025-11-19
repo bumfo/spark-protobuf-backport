@@ -451,6 +451,66 @@ class RecursiveFieldsModeSpec extends AnyFunSpec with Matchers {
         schema.fieldNames should not contain "child"
         schema.fieldNames should not contain "children"
       }
+
+      it("mode='drop' + depth=-1 should drop on first recursion (same as depth=0)") {
+        val schema = RecursiveSchemaConverters.toSqlType(
+          descriptor,
+          recursiveFieldsMode = RecursionMode.Drop,
+          recursiveFieldMaxDepth = -1,
+          allowRecursion = true,
+          enumAsInt = true
+        ).asInstanceOf[StructType]
+
+        // depth=-1 + mode="drop" → drop on first recursion (same as depth=0)
+        schema shouldBe a[StructType]
+        schema should not be a[RecursiveStructType]
+
+        // Should have non-recursive fields
+        schema.fieldNames should contain allOf ("id", "depth")
+
+        // Recursive fields should be dropped immediately
+        schema.fieldNames should not contain "child"
+        schema.fieldNames should not contain "children"
+      }
+
+      it("mode='binary' + depth=-1 should mock on first recursion (same as depth=0)") {
+        val schema = RecursiveSchemaConverters.toSqlType(
+          descriptor,
+          recursiveFieldsMode = RecursionMode.MockAsBinary,
+          recursiveFieldMaxDepth = -1,
+          allowRecursion = true,
+          enumAsInt = true
+        ).asInstanceOf[StructType]
+
+        // depth=-1 + mode="binary" → mock on first recursion (same as depth=0)
+        schema shouldBe a[StructType]
+        schema should not be a[RecursiveStructType]
+        schema.fieldNames should contain allOf ("id", "depth", "child", "children")
+
+        // Child field should be BinaryType (mocked at first recursion)
+        val childField = schema("child")
+        childField.dataType shouldBe BinaryType
+
+        // Children field should be ArrayType(BinaryType)
+        val childrenField = schema("children")
+        childrenField.dataType shouldBe a[ArrayType]
+        childrenField.dataType.asInstanceOf[ArrayType].elementType shouldBe BinaryType
+      }
+
+      it("mode='fail' + depth=-1 should fail on first recursion (same as depth=0)") {
+        val thrown = intercept[IllegalArgumentException] {
+          RecursiveSchemaConverters.toSqlType(
+            descriptor,
+            recursiveFieldsMode = RecursionMode.Fail,
+            recursiveFieldMaxDepth = -1,
+            allowRecursion = true,
+            enumAsInt = true
+          )
+        }
+
+        // depth=-1 + mode="fail" → fail on first recursion (same as depth=0)
+        thrown.getMessage should include("Recursive field")
+      }
     }
   }
 }
