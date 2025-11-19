@@ -159,13 +159,13 @@ Map("recursive.fields.mode" -> "drop")
 ```
 
 **Depth values**:
-- `-1`: Forbid recursive fields (Spark 3.4+ default)
-- `0`: Unlimited recursion (our extension)
-- `1-10`: Depth limit (counts message traversals in cycle, differs from Spark)
+- `-1`: Default behavior (recursive for WireFormat parser, fail for others)
+- `0`: No recursive fields allowed (drop on first recursion)
+- `1-10`: Depth limit (drop when depth > N)
 
-**Depth Counting**: Counts nested message field traversals after entering a cycle.
-Different from Spark which tracks per-type occurrences independently.
-Example: `depth=3` with A↔B mutual recursion → A→B→A→B(primitives only).
+**Depth Counting**: First recursion assigned depth=1, drop when depth > maxDepth.
+Counts total recursions across all types (differs from Spark's per-type counting).
+Example: `depth=3` with A↔B → A→B→A→B→A (4th recursion at depth 4 > 3, dropped).
 
 See `ProtobufOptions.scala` javadoc for complete configuration details.
 

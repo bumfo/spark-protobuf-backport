@@ -186,7 +186,7 @@ private[backport] case class ProtobufDataToCatalyst(
         requiredSchema.getOrElse {
           RecursiveSchemaConverters.toSqlType(
             desc,
-            recursiveFieldsMode = protobufOptions.recursiveFieldsMode,
+            recursiveFieldsMode = protobufOptions.recursiveFieldsModeEnum,
             recursiveFieldMaxDepth = protobufOptions.recursiveFieldMaxDepth,
             allowRecursion = true,  // WireFormat parser supports RecursiveStructType
             enumAsInt = true

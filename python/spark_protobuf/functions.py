@@ -40,11 +40,20 @@ def from_protobuf(data, messageType, descFilePath=None, options=None, binaryDesc
         descFilePath: Path to protobuf descriptor file (optional if binaryDescriptorSet provided)
         options: Dict of parsing options (optional). Supported options:
             - "mode": Parse mode, either "PERMISSIVE" or "FAILFAST" (default: "FAILFAST")
-            - "recursive.fields.max.depth": Maximum recursion depth for nested messages (default: "-1" disabled)
-            - "recursive.fields.mode": How to handle recursive message types (default: "struct")
-                - "struct": Use RecursiveStructType with true circular references
+            - "recursive.fields.max.depth": Maximum recursion depth for nested messages
+                - "-1": Default behavior (recursive for WireFormat parser, fail for others)
+                - "0": No recursive fields allowed (drop on first recursion)
+                - "1": Allow 1 recursion (drop when depth > 1)
+                - "2": Allow 2 recursions (drop when depth > 2)
+                - "3-10": Allow N recursions (drop when depth > N)
+                Depth semantics: First recursion assigned depth=1, drop when depth > maxDepth.
+                Example with depth=3: allows recursions at depth 1, 2, and 3, drops at depth 4
+            - "recursive.fields.mode": How to handle recursive message types (default: "" empty)
+                - "": Default behavior based on parser and depth
+                - "drop": Drop recursive fields from schema
                 - "binary": Mock recursive fields as BinaryType
-                - "drop": Drop recursive fields from schema entirely
+                - "fail": Forbid recursive schemas (throw error on recursion)
+                - "recursive": Allow RecursiveStructType (only valid with depth=-1)
                 Note: Only applies to WireFormat parser (binary descriptor set usage)
         binaryDescriptorSet: Binary descriptor set bytes (optional)
 

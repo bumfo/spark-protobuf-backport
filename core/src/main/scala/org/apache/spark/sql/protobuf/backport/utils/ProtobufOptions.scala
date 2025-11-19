@@ -10,6 +10,7 @@
 
 package org.apache.spark.sql.protobuf.backport.utils
 
+import fastproto.RecursionMode
 import org.apache.hadoop.conf.Configuration
 import org.apache.spark.sql.catalyst.util.{CaseInsensitiveMap, FailFastMode, ParseMode}
 
@@ -36,48 +37,46 @@ import org.apache.spark.sql.catalyst.util.{CaseInsensitiveMap, FailFastMode, Par
  *
  * 3. Recursive Fields Max Depth (recursive.fields.max.depth):
  *    Values:
- *    - "-1": Forbid recursive fields (Spark 3.4+ default, throws error on recursion)
- *    - "0": Unlimited recursion (our extension, enables RecursiveStructType)
- *    - "1": Allow 1 recursion (first recursion at depth 0, drop at depth 1)
- *    - "2": Allow 2 recursions (recursions at depth 0 and 1, drop at depth 2)
- *    - "3-10": Allow N recursions (recursions at depths 0 to N-1, drop at depth N)
+ *    - "-1": Default behavior (recursive for WireFormat parser, fail for others)
+ *    - "0": No recursive fields allowed (drop on first recursion)
+ *    - "1": Allow 1 recursion (drop when depth > 1)
+ *    - "2": Allow 2 recursions (drop when depth > 2)
+ *    - "3-10": Allow N recursions (drop when depth > N)
  *
  * Configuration Precedence:
  *
- * When depth=-1 (forbid, Spark default):
- * - mode="" → fail if allow_recursion=false, recursive if allow_recursion=true
- * - mode="fail" → fail (explicit)
- * - mode="drop"/"binary"/"recursive" → use specified mode (override Spark default)
- * - allow_recursion → used when mode="" (determines default behavior)
+ * When depth=-1 (default):
+ * - mode="" → recursive if allow_recursion=true, fail if allow_recursion=false
+ * - mode="fail"/"drop"/"binary"/"recursive" → use specified mode (explicit override)
+ * - allow_recursion → used when mode="" (parser default: true for WireFormat, false for others)
  *
- * When depth=0 (unlimited, our extension):
- * - mode="" → recursive (RecursiveStructType, always)
- * - mode="recursive" → recursive (explicit)
- * - mode="drop"/"binary"/"fail" → use specified mode (override unlimited default)
- * - allow_recursion → IGNORED (mode="" always uses recursive)
+ * When depth=0 (no recursions):
+ * - mode="" → drop (default for depth=0)
+ * - mode="drop"/"binary"/"fail" → use specified mode
+ * - mode="recursive" → ERROR (no recursions means no RecursiveStructType)
+ * - allow_recursion → IGNORED (depth takes precedence)
  *
- * When depth>=1 (Spark-aligned depth limit):
- * - mode="" → drop (default for depth-limited, always)
- * - mode="drop"/"binary" → use specified mode
- * - mode="fail" → forbid (unusual with depth limit)
- * - mode="recursive" → ERROR (illegal combination)
- * - allow_recursion → IGNORED (mode takes precedence)
+ * When depth>=1 (depth limit):
+ * - mode="" → drop (default for depth-limited)
+ * - mode="drop"/"binary"/"fail" → use specified mode
+ * - mode="recursive" → ERROR (depth limit incompatible with RecursiveStructType)
+ * - allow_recursion → IGNORED (depth takes precedence)
  *
  * Depth Semantics:
- * - depth=N: Allow N recursions (recursiveDepth from 0 to N-1)
- * - First recursion is at recursiveDepth=0
- * - Limit check: recursiveDepth >= maxDepth (drops when equal or exceeds)
- * - Example with depth=2: allows recursions at depth 0 and 1, drops at depth 2
+ * - depth=N: Allow N recursions (depth values 1 through N)
+ * - First recursion is assigned depth=1
+ * - Drop when depth > maxDepth
+ * - Example with depth=3: allows recursions at depth 1, 2, and 3, drops at depth 4
  *
  * IMPORTANT: Depth increments for ALL nested message fields visited inside a cycle,
  * not just recursive edges. Non-recursive types visited while in a cycle also increment depth.
  *
  * Internal Implementation:
  * - User depth N maps to internal maxRecursiveDepth N
- * - First recursion check at recursiveDepth=0
+ * - First recursion: recursiveDepth=0 → depth=0+1=1
  * - Depth increments for EVERY message field visited while recursiveDepth > 0
- * - Example A→B→A→C→A: depths are 0, 0, 0, 1, 2
- *   (A and B outside cycle=0, first A recursion at 0, C inside cycle=1, second A recursion=1→2)
+ * - Example A→B→A→C with depth=2: depths 0, 0, 1, 2
+ *   (A root=0, B first=0, A recursion=1, C inside cycle=2 > 2, dropped)
  *
  * Semantic Difference from Spark SQL:
  *
@@ -86,8 +85,8 @@ import org.apache.spark.sql.catalyst.util.{CaseInsensitiveMap, FailFastMode, Par
  *
  * Example - Mutual recursion A↔B with depth=3:
  * - Our result: A→B→A→B→A(primitives only, recursive fields dropped)
- * - Path depths: A(0) → B(0) → A(recursion at 0→1) → B(recursion at 1→2) → A(recursion at 2→3, dropped)
- * - depth=3 allows 3 recursions total across all types
+ * - Path depths: A(0) → B(0) → A(1) → B(2) → A(3) → B(4>3, dropped)
+ * - depth=3 allows recursions at depths 1, 2, and 3 (total 3 recursions across all types)
  *
  * Spark SQL tracks occurrences per message type independently:
  * - Spark depth=3 for type A: allows A to appear 3 times total
@@ -140,14 +139,16 @@ private[backport] class ProtobufOptions(
    * Values:
    * - "-1": Forbid recursive fields (Spark 3.4+ default, throws error on recursion)
    * - "0": Unlimited recursion (enables RecursiveStructType, our extension)
-   * - "1": Allow 1 recursion (first recursion at depth 0, drop at depth 1)
-   * - "2": Allow 2 recursions (recursions at depths 0 and 1, drop at depth 2)
-   * - "3-10": Allow N recursions (recursions at depths 0 to N-1, drop at depth N)
+   * - "1": Allow 1 recursion (drop when depth > 1)
+   * - "2": Allow 2 recursions (drop when depth > 2)
+   * - "3-10": Allow N recursions (drop when depth > N)
    *
    * Validation: Must be in range [-1, 10]. Values > 10 can cause stack overflows.
    *
-   * Depth counting: Counts total recursions across all message types in a cycle.
-   * Different from Spark's per-type occurrence counting.
+   * Depth counting:
+   * - First recursion assigned depth=1
+   * - Counts total recursions across all message types in a cycle
+   * - Different from Spark's per-type occurrence counting
    *
    * Applies to: All parsers via RecursiveSchemaConverters
    */
@@ -166,7 +167,7 @@ private[backport] class ProtobufOptions(
   }
 
   /**
-   * How to handle recursive message types in schema conversion.
+   * How to handle recursive message types in schema conversion (raw string from config).
    *
    * User-facing values:
    * - "" (empty, default): Behavior depends on allow_recursion and depth
@@ -175,35 +176,30 @@ private[backport] class ProtobufOptions(
    *
    * Internal values (not recommended for users):
    * - "fail": Throw exception on recursion detection
-   * - "recursive": Use RecursiveStructType (only valid with depth=0 or depth=-1)
-   *
-   * Precedence rules:
-   * - depth=-1: mode="drop"/"binary" override Spark default (forbid)
-   * - depth=0: Defaults to "recursive" (unlimited)
-   * - depth>=1: Defaults to "drop", allow_recursion ignored
+   * - "recursive": Use RecursiveStructType (only valid with depth=-1)
    *
    * Applies to: All parsers via RecursiveSchemaConverters
    */
-  val recursiveFieldsMode: String = {
-    val mode = parameters.getOrElse("recursive.fields.mode", "")
+  val recursiveFieldsMode: String = parameters.getOrElse("recursive.fields.mode", "")
 
-    // Validate mode value
-    if (!Set("", "drop", "binary", "fail", "recursive").contains(mode)) {
-      throw new IllegalArgumentException(
-        s"Invalid value for 'recursive.fields.mode': '$mode'. " +
-        "Supported values are: '' (empty), 'drop', 'binary', 'fail', 'recursive'")
-    }
+  /**
+   * Parsed RecursionMode enum for internal use.
+   * Parse the string at config boundary and validate combinations.
+   */
+  val recursiveFieldsModeEnum: RecursionMode = {
+    // Parse mode string to enum (validation happens in fromString)
+    val parsedMode = RecursionMode.fromString(recursiveFieldsMode)
 
-    // Validate illegal combination: recursive + depth>=1
-    // (RecursiveStructType requires unlimited depth, depth=0 or depth=-1)
-    if (mode == "recursive" && recursiveFieldMaxDepth >= 1) {
+    // Validate illegal combinations: recursive mode + depth >= 0
+    // (RecursiveStructType requires depth=-1 with explicit mode, not depth limits)
+    if (parsedMode == RecursionMode.AllowRecursive && recursiveFieldMaxDepth >= 0) {
       throw new IllegalArgumentException(
         "Invalid configuration: 'recursive.fields.mode=recursive' cannot be used with " +
         s"'recursive.fields.max.depth=${recursiveFieldMaxDepth}'. " +
-        "RecursiveStructType requires unlimited depth (depth=0 or depth=-1 with explicit mode).")
+        "RecursiveStructType requires depth=-1 (default) with explicit mode=recursive.")
     }
 
-    mode
+    parsedMode
   }
 }
 

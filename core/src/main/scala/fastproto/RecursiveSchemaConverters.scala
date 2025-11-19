@@ -9,9 +9,9 @@ import scala.collection.mutable
 /**
  * Strategy for handling recursive message types during schema conversion.
  */
-private[fastproto] sealed trait RecursionMode extends Serializable
+sealed trait RecursionMode extends Serializable
 
-private[fastproto] object RecursionMode {
+object RecursionMode {
   /** Throw exception when recursion is detected */
   case object Fail extends RecursionMode
 
@@ -23,6 +23,21 @@ private[fastproto] object RecursionMode {
 
   /** Allow recursive types using RecursiveStructType (unlimited depth) */
   case object AllowRecursive extends RecursionMode
+
+  /**
+   * Parse user-facing mode string to RecursionMode enum.
+   * This should be called at the configuration boundary (ProtobufOptions).
+   */
+  def fromString(mode: String): RecursionMode = mode match {
+    case "fail" => Fail
+    case "drop" => Drop
+    case "binary" => MockAsBinary
+    case "recursive" => AllowRecursive
+    case "" => null  // Empty string means use default (determined by depth and allowRecursion)
+    case _ => throw new IllegalArgumentException(
+      s"Invalid value for 'recursive.fields.mode': '$mode'. " +
+      "Supported values are: '' (empty), 'drop', 'binary', 'fail', 'recursive'")
+  }
 }
 
 /**
@@ -47,40 +62,30 @@ object RecursiveSchemaConverters {
    *
    * Precedence:
    * 1. Explicit mode (if specified) always takes precedence
-   * 2. Depth-based defaults when mode="" (empty)
-   * 3. allowRecursion flag only used for depth=-1 with mode=""
+   * 2. Depth-based defaults when mode=null (empty string parsed to null)
+   * 3. allowRecursion flag only used for depth=-1 with mode=null
    */
   private def determineRecursionMode(
-      recursiveFieldsMode: String,
+      parsedMode: RecursionMode,
       recursiveFieldMaxDepth: Int,
       allowRecursion: Boolean): RecursionMode = {
 
-    // Parse explicit mode string to enum
-    def parseMode(mode: String): RecursionMode = mode match {
-      case "fail" => RecursionMode.Fail
-      case "drop" => RecursionMode.Drop
-      case "binary" => RecursionMode.MockAsBinary
-      case "recursive" => RecursionMode.AllowRecursive
-      case "" => null  // Will be handled by depth-based defaults
-      case _ => throw new IllegalArgumentException(s"Invalid recursion mode: '$mode'")
-    }
-
-    // If explicit mode specified (non-empty), use it
-    if (recursiveFieldsMode != "") {
-      parseMode(recursiveFieldsMode)
+    // If explicit mode specified (non-null), use it
+    if (parsedMode != null) {
+      parsedMode
     } else {
-      // mode="" → use depth-based defaults
+      // mode=null (empty string) → use depth-based defaults
       recursiveFieldMaxDepth match {
         case -1 =>
-          // Spark default: forbid recursion, but allow if allowRecursion=true
+          // Default behavior: depends on parser (allowRecursion flag)
           if (allowRecursion) RecursionMode.AllowRecursive else RecursionMode.Fail
 
         case 0 =>
-          // Our extension: unlimited recursion
-          RecursionMode.AllowRecursive
+          // depth=0: No recursive fields allowed
+          RecursionMode.Drop
 
         case _ if recursiveFieldMaxDepth >= 1 =>
-          // Spark-aligned depth limit: default to drop
+          // depth>=1: Depth limit, default to drop
           RecursionMode.Drop
       }
     }
@@ -92,27 +97,31 @@ object RecursiveSchemaConverters {
    * This is the unified entry point that handles all recursive field configurations with
    * precedence rules:
    *
-   * When depth=-1 (default/unlimited):
-   * - mode="" + allowRecursion=false → fail (throw on recursion)
-   * - mode="" + allowRecursion=true → recursive (RecursiveStructType)
-   * - mode="drop"/"binary" → IGNORED (depth=-1 takes precedence)
-   * - mode="fail"/"recursive" → explicit mode used
+   * When depth=-1 (default):
+   * - mode=null + allowRecursion=false → fail (throw on recursion)
+   * - mode=null + allowRecursion=true → recursive (RecursiveStructType)
+   * - mode=explicit → use specified mode
    *
-   * When depth>=0 (depth-limited):
-   * - mode="" → drop (default)
-   * - mode="drop"/"binary"/"fail" → use specified mode
-   * - allowRecursion → IGNORED (mode takes precedence)
+   * When depth=0 (no recursions):
+   * - mode=null → drop (default)
+   * - mode=explicit → use specified mode
+   * - allowRecursion → IGNORED (depth takes precedence)
+   *
+   * When depth>=1 (depth-limited):
+   * - mode=null → drop (default)
+   * - mode=explicit → use specified mode
+   * - allowRecursion → IGNORED (depth takes precedence)
    *
    * @param descriptor the protobuf message descriptor
-   * @param recursiveFieldsMode How to handle recursive fields ("", "drop", "binary", "fail", "recursive")
-   * @param recursiveFieldMaxDepth Maximum recursion depth (-1 for unlimited, 0+ for limit)
-   * @param allowRecursion Whether recursion is allowed (set by parser selection)
+   * @param recursiveFieldsMode How to handle recursive fields (RecursionMode enum, null for default)
+   * @param recursiveFieldMaxDepth Maximum recursion depth (-1 for default, 0 for none, 1+ for limit)
+   * @param allowRecursion Whether recursion is allowed (set by parser selection, used when depth=-1 and mode=null)
    * @param enumAsInt if true, represent enum fields as IntegerType instead of StringType
    * @return Spark SQL DataType with recursive fields handled according to config
    */
   def toSqlType(
       descriptor: Descriptor,
-      recursiveFieldsMode: String,
+      recursiveFieldsMode: RecursionMode,
       recursiveFieldMaxDepth: Int,
       allowRecursion: Boolean,
       enumAsInt: Boolean = false): DataType = {
@@ -121,11 +130,10 @@ object RecursiveSchemaConverters {
     val mode = determineRecursionMode(recursiveFieldsMode, recursiveFieldMaxDepth, allowRecursion)
 
     // Convert user depth to internal max depth
-    // User depth N means allow N recursions (recursiveDepth 0 to N-1)
     val internalMaxDepth = recursiveFieldMaxDepth match {
-      case -1 => -1  // Not used in fail/recursive modes
-      case 0 => -1   // Unlimited (not used in recursive mode)
-      case n if n >= 1 => n  // Allow recursiveDepth from 0 to n-1
+      case -1 => -1  // Not used (fail/recursive modes determined by allowRecursion)
+      case 0 => 0    // No recursions allowed (drop on first recursion)
+      case n if n >= 1 => n  // Allow recursions at depth 1 through n
     }
 
     // Apply effective mode
@@ -370,7 +378,7 @@ object RecursiveSchemaConverters {
    * Print schema information for debugging.
    */
   def printSchemaInfo(descriptor: Descriptor): Unit = {
-    val schema = toSqlType(descriptor, recursiveFieldsMode = "binary", recursiveFieldMaxDepth = -1,
+    val schema = toSqlType(descriptor, recursiveFieldsMode = RecursionMode.MockAsBinary, recursiveFieldMaxDepth = -1,
                           allowRecursion = false, enumAsInt = false)
     val mockedFields = getMockedFields(descriptor)
 

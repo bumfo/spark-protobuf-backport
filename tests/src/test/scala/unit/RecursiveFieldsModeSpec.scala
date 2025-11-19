@@ -1,7 +1,7 @@
 package unit
 
 import com.google.protobuf.Descriptors.Descriptor
-import fastproto.RecursiveSchemaConverters
+import fastproto.{RecursionMode, RecursiveSchemaConverters}
 import org.apache.spark.sql.types._
 import org.scalatest.funspec.AnyFunSpec
 import org.scalatest.matchers.should.Matchers
@@ -36,7 +36,7 @@ class RecursiveFieldsModeSpec extends AnyFunSpec with Matchers {
 
       it("mode 'binary' should mock recursive fields as BinaryType") {
         val schema = RecursiveSchemaConverters.toSqlType(
-          descriptor, recursiveFieldsMode = "binary", recursiveFieldMaxDepth = -1,
+          descriptor, recursiveFieldsMode = RecursionMode.MockAsBinary, recursiveFieldMaxDepth = -1,
           allowRecursion = false, enumAsInt = true).asInstanceOf[StructType]
 
         // Schema should be regular StructType
@@ -56,7 +56,7 @@ class RecursiveFieldsModeSpec extends AnyFunSpec with Matchers {
 
       it("mode 'drop' should omit recursive fields") {
         val schema = RecursiveSchemaConverters.toSqlType(
-          descriptor, recursiveFieldsMode = "drop", recursiveFieldMaxDepth = -1,
+          descriptor, recursiveFieldsMode = RecursionMode.Drop, recursiveFieldMaxDepth = -1,
           allowRecursion = false, enumAsInt = true).asInstanceOf[StructType]
 
         // Schema should be regular StructType
@@ -101,7 +101,7 @@ class RecursiveFieldsModeSpec extends AnyFunSpec with Matchers {
 
       it("mode 'binary' should mock recursive fields as BinaryType") {
         val schemaA = RecursiveSchemaConverters.toSqlType(
-          descriptorA, recursiveFieldsMode = "binary", recursiveFieldMaxDepth = -1,
+          descriptorA, recursiveFieldsMode = RecursionMode.MockAsBinary, recursiveFieldMaxDepth = -1,
           allowRecursion = false, enumAsInt = true).asInstanceOf[StructType]
 
         // Schema A should be regular StructType
@@ -133,7 +133,7 @@ class RecursiveFieldsModeSpec extends AnyFunSpec with Matchers {
 
       it("mode 'drop' should omit recursive fields") {
         val schemaA = RecursiveSchemaConverters.toSqlType(
-          descriptorA, recursiveFieldsMode = "drop", recursiveFieldMaxDepth = -1,
+          descriptorA, recursiveFieldsMode = RecursionMode.Drop, recursiveFieldMaxDepth = -1,
           allowRecursion = false, enumAsInt = true).asInstanceOf[StructType]
 
         // Schema A should be regular StructType
@@ -165,7 +165,7 @@ class RecursiveFieldsModeSpec extends AnyFunSpec with Matchers {
       it("depth=3 with mutual recursion A↔B (tests depth counting through different types)") {
         val schemaA = RecursiveSchemaConverters.toSqlType(
           descriptorA,
-          recursiveFieldsMode = "drop",
+          recursiveFieldsMode = RecursionMode.Drop,
           recursiveFieldMaxDepth = 3,
           allowRecursion = true,
           enumAsInt = true
@@ -230,7 +230,7 @@ class RecursiveFieldsModeSpec extends AnyFunSpec with Matchers {
 
       it("mode 'binary' should show binary types") {
         val schema = RecursiveSchemaConverters.toSqlType(
-          descriptor, recursiveFieldsMode = "binary", recursiveFieldMaxDepth = -1,
+          descriptor, recursiveFieldsMode = RecursionMode.MockAsBinary, recursiveFieldMaxDepth = -1,
           allowRecursion = false, enumAsInt = true).asInstanceOf[StructType]
 
         val simpleStr = schema.simpleString
@@ -239,7 +239,7 @@ class RecursiveFieldsModeSpec extends AnyFunSpec with Matchers {
 
       it("mode 'drop' should have minimal schema") {
         val schema = RecursiveSchemaConverters.toSqlType(
-          descriptor, recursiveFieldsMode = "drop", recursiveFieldMaxDepth = -1,
+          descriptor, recursiveFieldsMode = RecursionMode.Drop, recursiveFieldMaxDepth = -1,
           allowRecursion = false, enumAsInt = true).asInstanceOf[StructType]
 
         // Should only have non-recursive fields
@@ -258,7 +258,7 @@ class RecursiveFieldsModeSpec extends AnyFunSpec with Matchers {
         val thrown = intercept[IllegalArgumentException] {
           RecursiveSchemaConverters.toSqlType(
             descriptor,
-            recursiveFieldsMode = "",
+            recursiveFieldsMode = null,
             recursiveFieldMaxDepth = -1,
             allowRecursion = false,  // Non-WireFormat parser
             enumAsInt = true
@@ -270,7 +270,7 @@ class RecursiveFieldsModeSpec extends AnyFunSpec with Matchers {
       it("mode='' + depth=-1 + allowRecursion=true should produce RecursiveStructType (WireFormat default)") {
         val schema = RecursiveSchemaConverters.toSqlType(
           descriptor,
-          recursiveFieldsMode = "",
+          recursiveFieldsMode = null,
           recursiveFieldMaxDepth = -1,
           allowRecursion = true,  // WireFormat parser
           enumAsInt = true
@@ -288,7 +288,7 @@ class RecursiveFieldsModeSpec extends AnyFunSpec with Matchers {
       it("mode='recursive' + depth=-1 should produce RecursiveStructType (explicit override)") {
         val schema = RecursiveSchemaConverters.toSqlType(
           descriptor,
-          recursiveFieldsMode = "recursive",
+          recursiveFieldsMode = RecursionMode.AllowRecursive,
           recursiveFieldMaxDepth = -1,
           allowRecursion = false,  // Even non-WireFormat parser can be overridden
           enumAsInt = true
@@ -299,28 +299,31 @@ class RecursiveFieldsModeSpec extends AnyFunSpec with Matchers {
         schema.asInstanceOf[RecursiveStructType].fieldNames should contain allOf ("id", "depth", "child", "children")
       }
 
-      it("mode='' + depth=0 should produce RecursiveStructType (unlimited, our extension)") {
+      it("mode='' + depth=0 should drop all recursive fields (no recursions allowed)") {
         val schema = RecursiveSchemaConverters.toSqlType(
           descriptor,
-          recursiveFieldsMode = "",
+          recursiveFieldsMode = null,
           recursiveFieldMaxDepth = 0,
           allowRecursion = true,
           enumAsInt = true
-        )
+        ).asInstanceOf[StructType]
 
-        // Spark extension: depth=0 means unlimited recursion
-        schema shouldBe a[RecursiveStructType]
-        schema.asInstanceOf[RecursiveStructType].fieldNames should contain allOf ("id", "depth", "child", "children")
+        // depth=0 means no recursive fields allowed (drop on first recursion)
+        schema shouldBe a[StructType]
+        schema should not be a[RecursiveStructType]
 
-        // Child field should be RecursiveStructType
-        val childField = schema.asInstanceOf[RecursiveStructType]("child")
-        childField.dataType shouldBe a[RecursiveStructType]
+        // Should have non-recursive fields
+        schema.fieldNames should contain allOf ("id", "depth")
+
+        // Recursive fields should be dropped
+        schema.fieldNames should not contain "child"
+        schema.fieldNames should not contain "children"
       }
 
       it("mode='' + depth=1 should allow 1 recursion") {
         val schema = RecursiveSchemaConverters.toSqlType(
           descriptor,
-          recursiveFieldsMode = "",
+          recursiveFieldsMode = null,
           recursiveFieldMaxDepth = 1,
           allowRecursion = true,
           enumAsInt = true
@@ -346,7 +349,7 @@ class RecursiveFieldsModeSpec extends AnyFunSpec with Matchers {
       it("mode='' + depth=2 should allow 2 recursions") {
         val schema = RecursiveSchemaConverters.toSqlType(
           descriptor,
-          recursiveFieldsMode = "",
+          recursiveFieldsMode = null,
           recursiveFieldMaxDepth = 2,
           allowRecursion = true,
           enumAsInt = true
@@ -376,7 +379,7 @@ class RecursiveFieldsModeSpec extends AnyFunSpec with Matchers {
       it("mode='' + depth=3 should allow 3 recursions") {
         val schema = RecursiveSchemaConverters.toSqlType(
           descriptor,
-          recursiveFieldsMode = "",
+          recursiveFieldsMode = null,
           recursiveFieldMaxDepth = 3,
           allowRecursion = true,
           enumAsInt = true
@@ -412,8 +415,8 @@ class RecursiveFieldsModeSpec extends AnyFunSpec with Matchers {
       it("mode='binary' + maxDepth=0 should mock recursive fields as BinaryType") {
         val schema = RecursiveSchemaConverters.toSqlType(
           descriptor,
-          recursiveFieldsMode = "binary",
-          recursiveFieldMaxDepth = 0, // Mock immediately at recursion
+          recursiveFieldsMode = RecursionMode.MockAsBinary,
+          recursiveFieldMaxDepth = 0, // depth=0: no recursions, mock on first recursion
           allowRecursion = true,
           enumAsInt = true
         ).asInstanceOf[StructType]
@@ -423,7 +426,7 @@ class RecursiveFieldsModeSpec extends AnyFunSpec with Matchers {
         schema should not be a[RecursiveStructType]
         schema.fieldNames should contain allOf ("id", "depth", "child", "children")
 
-        // Child field should be BinaryType (maxDepth ignored)
+        // Child field should be BinaryType (mocked at first recursion)
         val childField = schema("child")
         childField.dataType shouldBe BinaryType
       }
@@ -431,8 +434,8 @@ class RecursiveFieldsModeSpec extends AnyFunSpec with Matchers {
       it("mode='drop' + maxDepth=0 should drop recursive fields") {
         val schema = RecursiveSchemaConverters.toSqlType(
           descriptor,
-          recursiveFieldsMode = "drop",
-          recursiveFieldMaxDepth = 0, // Drop immediately at recursion
+          recursiveFieldsMode = RecursionMode.Drop,
+          recursiveFieldMaxDepth = 0, // depth=0: no recursions, drop on first recursion
           allowRecursion = true,
           enumAsInt = true
         ).asInstanceOf[StructType]
