@@ -63,17 +63,40 @@ import org.apache.spark.sql.catalyst.util.{CaseInsensitiveMap, FailFastMode, Par
  * - mode="recursive" → ERROR (illegal combination)
  * - allow_recursion → IGNORED (mode takes precedence)
  *
- * Depth Semantics (Spark-aligned):
- * - depth=1: Drop all recursive fields (0 recursions allowed)
- * - depth=2: Allow recursed once (field appears 2 times total)
- * - depth=N (N>=2): Allow recursed N-1 times (field appears N times total)
+ * Depth Semantics:
+ * - depth=1: Drop immediately at first cycle detection
+ * - depth=2: Allow 1 message traversal after entering cycle
+ * - depth=N: Allow N-1 message traversals after entering cycle
+ *
+ * IMPORTANT: Depth counts ALL nested message fields visited inside a cycle,
+ * not per-type occurrences. In mutual recursion A↔B, visiting B after entering
+ * the cycle increments depth even though B is not a recursive edge.
  *
  * Internal Implementation:
  * - Spark depth values used directly (no conversion)
- * - First cycle occurrence is at depth=1 (matching Spark's occurrence counting)
- * - Depth increments with each nested level inside cycle
+ * - First cycle occurrence is at depth=1
+ * - Depth increments for EVERY message field visited inside cycle
  * - Example A→B→A→C→A: internal depths are 0, 0, 1, 2, 3
  *   (A and B not in cycle=0, first A recursion=1, C inside cycle=2, second A recursion=3)
+ *
+ * Semantic Difference from Spark SQL:
+ *
+ * Our implementation counts nested message field traversals after entering a cycle.
+ * The depth counter increments for EVERY message field visited while in a cycle,
+ * including non-recursive intermediate types.
+ *
+ * Example - Mutual recursion A↔B with depth=3:
+ * - Our result: A→B→A→B(primitives only, recursive fields dropped)
+ * - Cycle path: A(depth 0) → B(depth 0) → A(cycle depth 1) → B(next depth 2, cycle depth 3)
+ * - At cycle depth 3: B's recursive fields (a_field) are dropped
+ *
+ * Spark SQL tracks total occurrences per message type independently:
+ * - Spark depth=3 for type A: allows A to appear 3 times total
+ * - Spark depth=3 for type B: allows B to appear 3 times total
+ * - Each type tracked separately
+ *
+ * This difference means our depth limit may drop fields earlier than expected
+ * in complex mutual recursion patterns.
  *
  * Parser Defaults:
  * - WireFormat parser: allow_recursion=true

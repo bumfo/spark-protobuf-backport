@@ -148,7 +148,7 @@ from_protobuf(col("data"), "MyMessage", descriptorBytes,
 
 ### Recursive Fields Handling
 
-Control recursive schema handling via `recursive.fields.max.depth` (Spark 3.4+ aligned: `-1`=forbid, `0`=unlimited, `1-10`=depth limit) and `recursive.fields.mode` (`drop`/`binary`).
+Control recursive schema handling via `recursive.fields.max.depth` and `recursive.fields.mode`.
 
 ```scala
 // Unlimited recursion (our extension)
@@ -157,6 +157,15 @@ Map("recursive.fields.max.depth" -> "0")
 // Drop recursive fields
 Map("recursive.fields.mode" -> "drop")
 ```
+
+**Depth values**:
+- `-1`: Forbid recursive fields (Spark 3.4+ default)
+- `0`: Unlimited recursion (our extension)
+- `1-10`: Depth limit (counts message traversals in cycle, differs from Spark)
+
+**Depth Counting**: Counts nested message field traversals after entering a cycle.
+Different from Spark which tracks per-type occurrences independently.
+Example: `depth=3` with A↔B mutual recursion → A→B→A→B(primitives only).
 
 See `ProtobufOptions.scala` javadoc for complete configuration details.
 

@@ -324,8 +324,9 @@ object RecursiveSchemaConverters {
         } else {
           // Not recursive - check if we're inside a cycle
           val nextDepth = if (recursiveDepth > 0) {
-            // We're inside a cycle (visiting C in A→B→A→C pattern)
-            // Increment depth for this new field
+            // Inside a cycle: increment for ALL message fields, not just recursive edges
+            // This differs from Spark's per-type counting
+            // Example A↔B: After A recursion (depth 1), visiting B increments to 2
             recursiveDepth + 1
           } else {
             // Not in a cycle yet, stay at 0

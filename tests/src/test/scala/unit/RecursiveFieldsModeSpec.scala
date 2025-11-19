@@ -153,6 +153,39 @@ class RecursiveFieldsModeSpec extends AnyFunSpec with Matchers {
         bListElementType.fieldNames should not contain "a_field"
         bListElementType.fieldNames should not contain "a_list"
       }
+
+      it("depth=3 with mutual recursion A↔B (tests depth counting through different types)") {
+        val schemaA = RecursiveSchemaConverters.toSqlType(
+          descriptorA,
+          recursiveFieldsMode = "drop",
+          recursiveFieldMaxDepth = 3,
+          allowRecursion = true,
+          enumAsInt = true
+        ).asInstanceOf[StructType]
+
+        // Root MutualA should have b_field
+        schemaA.fieldNames should contain allOf ("name", "value_a", "b_field", "b_list")
+
+        // First B (MutualB) should have a_field (recursion back to A)
+        val bField = schemaA("b_field")
+        bField.dataType shouldBe a[StructType]
+        val bSchema = bField.dataType.asInstanceOf[StructType]
+        bSchema.fieldNames should contain allOf ("label", "value_b", "a_field", "a_list")
+
+        // Second A (inside first B) should have b_field
+        val aFieldInB = bSchema("a_field")
+        aFieldInB.dataType shouldBe a[StructType]
+        val aSchemaInB = aFieldInB.dataType.asInstanceOf[StructType]
+        aSchemaInB.fieldNames should contain allOf ("name", "value_a", "b_field", "b_list")
+
+        // Second B (inside second A) should exist BUT have ONLY primitives (recursion limit)
+        val secondBField = aSchemaInB("b_field")
+        secondBField.dataType shouldBe a[StructType]
+        val secondBSchema = secondBField.dataType.asInstanceOf[StructType]
+        secondBSchema.fieldNames should contain allOf ("label", "value_b")
+        secondBSchema.fieldNames should not contain "a_field"  // Recursive fields dropped at depth limit
+        secondBSchema.fieldNames should not contain "a_list"
+      }
     }
 
     describe("Schema string representations") {
