@@ -163,28 +163,49 @@ class RecursiveFieldsModeSpec extends AnyFunSpec with Matchers {
           enumAsInt = true
         ).asInstanceOf[StructType]
 
-        // Root MutualA should have b_field
+        println("\n=== Testing depth=3 with A↔B (a037c5b semantic) ===")
+
+        // Root A (depth 0)
+        println("Root A (depth 0):")
+        println(s"  Fields: ${schemaA.fieldNames.mkString(", ")}")
         schemaA.fieldNames should contain allOf ("name", "value_a", "b_field", "b_list")
 
-        // First B (MutualB) should have a_field (recursion back to A)
+        // First B (depth 0, not recursive)
         val bField = schemaA("b_field")
         bField.dataType shouldBe a[StructType]
         val bSchema = bField.dataType.asInstanceOf[StructType]
+        println("First B (depth 0, not recursive):")
+        println(s"  Fields: ${bSchema.fieldNames.mkString(", ")}")
         bSchema.fieldNames should contain allOf ("label", "value_b", "a_field", "a_list")
 
-        // Second A (inside first B) should have b_field
+        // Second A (recursion at depth 0, check 0>=3 false, continue with depth 1)
         val aFieldInB = bSchema("a_field")
         aFieldInB.dataType shouldBe a[StructType]
         val aSchemaInB = aFieldInB.dataType.asInstanceOf[StructType]
+        println("Second A (depth 1, recursion occurred at depth 0):")
+        println(s"  Fields: ${aSchemaInB.fieldNames.mkString(", ")}")
         aSchemaInB.fieldNames should contain allOf ("name", "value_a", "b_field", "b_list")
 
-        // Second B (inside second A) should exist BUT have ONLY primitives (recursion limit)
+        // Second B (recursion at depth 1, check 1>=3 false, continue with depth 2)
         val secondBField = aSchemaInB("b_field")
         secondBField.dataType shouldBe a[StructType]
         val secondBSchema = secondBField.dataType.asInstanceOf[StructType]
-        secondBSchema.fieldNames should contain allOf ("label", "value_b")
-        secondBSchema.fieldNames should not contain "a_field"  // Recursive fields dropped at depth limit
-        secondBSchema.fieldNames should not contain "a_list"
+        println("Second B (depth 2, recursion occurred at depth 1):")
+        println(s"  Fields: ${secondBSchema.fieldNames.mkString(", ")}")
+        secondBSchema.fieldNames should contain allOf ("label", "value_b", "a_field", "a_list")
+
+        // Third A (recursion at depth 2, check 2>=3 false, continue with depth 3)
+        val secondAFieldInB = secondBSchema("a_field")
+        secondAFieldInB.dataType shouldBe a[StructType]
+        val secondASchemaInB = secondAFieldInB.dataType.asInstanceOf[StructType]
+        println("Third A (depth 3, recursion occurred at depth 2):")
+        println(s"  Fields: ${secondASchemaInB.fieldNames.mkString(", ")}")
+        secondASchemaInB.fieldNames should contain allOf ("name", "value_a")
+        // Third B would recurse at depth 3, check 3>=3 true, DROPPED
+        secondASchemaInB.fieldNames should not contain "b_field"
+        secondASchemaInB.fieldNames should not contain "b_list"
+
+        println("Result: A→B→A→B→A(primitives only) - allows 3 recursions with depth=3")
       }
     }
 
@@ -284,7 +305,7 @@ class RecursiveFieldsModeSpec extends AnyFunSpec with Matchers {
         childField.dataType shouldBe a[RecursiveStructType]
       }
 
-      it("mode='' + depth=1 should drop all recursive fields (Spark: 0 recursions allowed)") {
+      it("mode='' + depth=1 should allow 1 recursion (a037c5b semantic)") {
         val schema = RecursiveSchemaConverters.toSqlType(
           descriptor,
           recursiveFieldsMode = "",
@@ -293,19 +314,23 @@ class RecursiveFieldsModeSpec extends AnyFunSpec with Matchers {
           enumAsInt = true
         ).asInstanceOf[StructType]
 
-        // Spark semantics: depth=1 means drop ALL recursive fields
+        // a037c5b semantic: depth=1 allows first recursion at depth 0, drops at depth 1
         schema shouldBe a[StructType]
         schema should not be a[RecursiveStructType]
 
-        // Should have only primitive fields
-        schema.fieldNames should contain allOf ("id", "depth")
+        // Root should have recursive fields (first recursion at depth 0)
+        schema.fieldNames should contain allOf ("id", "depth", "child", "children")
 
-        // Should NOT have recursive fields (depth=1 = 0 recursions)
-        schema.fieldNames should not contain "child"
-        schema.fieldNames should not contain "children"
+        // First child (recursion at depth 0 -> depth 1) should have only primitives
+        val childField = schema("child")
+        childField.dataType shouldBe a[StructType]
+        val childSchema = childField.dataType.asInstanceOf[StructType]
+        childSchema.fieldNames should contain allOf ("id", "depth")
+        childSchema.fieldNames should not contain "child"  // Second recursion at depth 1 >= 1, DROPPED
+        childSchema.fieldNames should not contain "children"
       }
 
-      it("mode='' + depth=2 should allow field to appear twice (Spark: recursed once)") {
+      it("mode='' + depth=2 should allow 2 recursions (a037c5b semantic)") {
         val schema = RecursiveSchemaConverters.toSqlType(
           descriptor,
           recursiveFieldsMode = "",
@@ -314,21 +339,27 @@ class RecursiveFieldsModeSpec extends AnyFunSpec with Matchers {
           enumAsInt = true
         ).asInstanceOf[StructType]
 
-        // Spark semantics: depth=2 means field appears twice total (recursed once)
+        // a037c5b semantic: depth=2 allows recursions at depth 0 and 1, drops at depth 2
         schema shouldBe a[StructType]
         schema should not be a[RecursiveStructType]
         schema.fieldNames should contain allOf ("id", "depth", "child", "children")
 
-        // Child field (1st appearance) should be StructType with only primitives (no more recursion)
+        // First child (recursion at depth 0 -> depth 1) should have recursive fields
         val childField = schema("child")
         childField.dataType shouldBe a[StructType]
         val childSchema = childField.dataType.asInstanceOf[StructType]
-        childSchema.fieldNames should contain allOf ("id", "depth")
-        childSchema.fieldNames should not contain "child"
-        childSchema.fieldNames should not contain "children"
+        childSchema.fieldNames should contain allOf ("id", "depth", "child", "children")
+
+        // Second child (recursion at depth 1 -> depth 2) should have only primitives
+        val nestedChildField = childSchema("child")
+        nestedChildField.dataType shouldBe a[StructType]
+        val nestedChildSchema = nestedChildField.dataType.asInstanceOf[StructType]
+        nestedChildSchema.fieldNames should contain allOf ("id", "depth")
+        nestedChildSchema.fieldNames should not contain "child"  // Third recursion at depth 2 >= 2, DROPPED
+        nestedChildSchema.fieldNames should not contain "children"
       }
 
-      it("mode='' + depth=3 should allow field to appear three times (Spark: recursed twice)") {
+      it("mode='' + depth=3 should allow 3 recursions (a037c5b semantic)") {
         val schema = RecursiveSchemaConverters.toSqlType(
           descriptor,
           recursiveFieldsMode = "",
@@ -337,24 +368,30 @@ class RecursiveFieldsModeSpec extends AnyFunSpec with Matchers {
           enumAsInt = true
         ).asInstanceOf[StructType]
 
-        // Spark semantics: depth=3 means field appears three times total (recursed twice)
+        // a037c5b semantic: depth=3 allows recursions at depth 0, 1, and 2, drops at depth 3
         schema shouldBe a[StructType]
         schema should not be a[RecursiveStructType]
         schema.fieldNames should contain allOf ("id", "depth", "child", "children")
 
-        // First level child
+        // First child (recursion at depth 0 -> depth 1)
         val childField = schema("child")
         childField.dataType shouldBe a[StructType]
         val childSchema = childField.dataType.asInstanceOf[StructType]
         childSchema.fieldNames should contain allOf ("id", "depth", "child", "children")
 
-        // Second level child (last appearance before hitting limit)
+        // Second child (recursion at depth 1 -> depth 2)
         val nestedChildField = childSchema("child")
         nestedChildField.dataType shouldBe a[StructType]
         val nestedChildSchema = nestedChildField.dataType.asInstanceOf[StructType]
-        nestedChildSchema.fieldNames should contain allOf ("id", "depth")
-        nestedChildSchema.fieldNames should not contain "child"
-        nestedChildSchema.fieldNames should not contain "children"
+        nestedChildSchema.fieldNames should contain allOf ("id", "depth", "child", "children")
+
+        // Third child (recursion at depth 2 -> depth 3) should have only primitives
+        val thirdChildField = nestedChildSchema("child")
+        thirdChildField.dataType shouldBe a[StructType]
+        val thirdChildSchema = thirdChildField.dataType.asInstanceOf[StructType]
+        thirdChildSchema.fieldNames should contain allOf ("id", "depth")
+        thirdChildSchema.fieldNames should not contain "child"  // Fourth recursion at depth 3 >= 3, DROPPED
+        thirdChildSchema.fieldNames should not contain "children"
       }
 
       it("mode='binary' + maxDepth=0 should mock recursive fields as BinaryType") {

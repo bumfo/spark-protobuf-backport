@@ -120,12 +120,12 @@ object RecursiveSchemaConverters {
     // Determine effective mode using precedence rules
     val mode = determineRecursionMode(recursiveFieldsMode, recursiveFieldMaxDepth, allowRecursion)
 
-    // Use Spark depth directly (no conversion needed)
-    // Internal depth=1 when first cycle detected, matching Spark's occurrence counting
+    // Convert user depth to internal max depth
+    // User depth N means allow N recursions (recursiveDepth 0 to N-1)
     val internalMaxDepth = recursiveFieldMaxDepth match {
       case -1 => -1  // Not used in fail/recursive modes
       case 0 => -1   // Unlimited (not used in recursive mode)
-      case n if n >= 1 => n  // Use Spark depth directly
+      case n if n >= 1 => n  // Allow recursiveDepth from 0 to n-1
     }
 
     // Apply effective mode
@@ -228,8 +228,8 @@ object RecursiveSchemaConverters {
    * Convert a message type to StructType, tracking visited types to detect recursion.
    *
    * Recursive depth tracking (for A→B→A→C→A pattern):
-   * - recursiveDepth=0: Not inside a recursive cycle yet
-   * - recursiveDepth>0: Inside a cycle, counts depth from first recursion
+   * - recursiveDepth=0: Not inside a recursive cycle yet OR first recursion
+   * - recursiveDepth>0: Inside a cycle, counts recursions
    * - Example A→B→A→C→A: depths 0, 0, 0, 1, 2
    */
   private def convertMessageType(
@@ -267,14 +267,14 @@ object RecursiveSchemaConverters {
    * Convert a single field type, handling recursion detection and depth tracking.
    *
    * Recursive depth counting (A→B→A→C→A pattern):
-   * - When recursion detected (visitedTypes contains type): recursiveDepth = 0 (first cycle)
-   * - When inside cycle: increment recursiveDepth for each new field
-   * - Example A→B→A→C→A: depths 0, 0, 0, 1, 2
+   * - When recursion detected (visitedTypes contains type): check recursiveDepth >= maxDepth
+   * - When inside cycle: increment recursiveDepth for each message field
+   * - Example A→B→A→C→A with depth=2: depths 0, 0, 0, 1, 2
    *   - A (first): depth 0, not in cycle
    *   - B (first): depth 0, not in cycle
-   *   - A (second, recursion detected): depth 0, cycle starts
-   *   - C (first, but inside cycle): depth 1
-   *   - A (third, still in cycle): depth 2
+   *   - A (second, recursion detected): depth 0, check 0>=2 false, continue with depth 1
+   *   - C (inside cycle): depth 1, check if visited (no), continue
+   *   - A (third, recursion detected): depth 1, check 1>=2 false, continue with depth 2
    *
    * Returns None if the field should be dropped due to recursion or depth limit.
    */
@@ -298,11 +298,10 @@ object RecursiveSchemaConverters {
 
         // Check for recursion: if we're already processing this type
         if (visitedTypes.contains(messageTypeName)) {
-          // RECURSION DETECTED! First cycle occurrence is at depth=1 (matching Spark semantics)
-          val cycleDepth = recursiveDepth + 1
+          // RECURSION DETECTED! Check if we've exceeded the depth limit
+          // First recursion is at recursiveDepth=0, second at depth=1, etc.
 
-          // Check if we've exceeded the recursive depth limit
-          if (cycleDepth >= maxRecursiveDepth) {
+          if (recursiveDepth >= maxRecursiveDepth) {
             // Apply mode-specific handling
             if (failOnRecursion) {
               throw new IllegalArgumentException(
@@ -316,10 +315,10 @@ object RecursiveSchemaConverters {
               None  // Should not happen, but safe default
             }
           } else {
-            // Within depth limit - continue with cycleDepth
+            // Within depth limit - continue with recursiveDepth + 1 for next level
             Some(convertMessageType(messageDescriptor, visitedTypes.clone(), enumAsInt,
                                    dropRecursive, mockRecursive, failOnRecursion,
-                                   cycleDepth, maxRecursiveDepth))
+                                   recursiveDepth + 1, maxRecursiveDepth))
           }
         } else {
           // Not recursive - check if we're inside a cycle

@@ -35,12 +35,12 @@ import org.apache.spark.sql.catalyst.util.{CaseInsensitiveMap, FailFastMode, Par
  *    - "recursive": Allow RecursiveStructType (only valid with depth=0 or depth=-1)
  *
  * 3. Recursive Fields Max Depth (recursive.fields.max.depth):
- *    Spark-aligned values:
+ *    Values:
  *    - "-1": Forbid recursive fields (Spark 3.4+ default, throws error on recursion)
  *    - "0": Unlimited recursion (our extension, enables RecursiveStructType)
- *    - "1": Drop all recursive fields (Spark semantics: 0 recursions allowed)
- *    - "2": Allow recursed once (Spark semantics: field appears twice total)
- *    - "3-10": Allow recursed N-1 times (Spark semantics: field appears N times total)
+ *    - "1": Allow 1 recursion (first recursion at depth 0, drop at depth 1)
+ *    - "2": Allow 2 recursions (recursions at depth 0 and 1, drop at depth 2)
+ *    - "3-10": Allow N recursions (recursions at depths 0 to N-1, drop at depth N)
  *
  * Configuration Precedence:
  *
@@ -64,39 +64,42 @@ import org.apache.spark.sql.catalyst.util.{CaseInsensitiveMap, FailFastMode, Par
  * - allow_recursion → IGNORED (mode takes precedence)
  *
  * Depth Semantics:
- * - depth=1: Drop immediately at first cycle detection
- * - depth=2: Allow 1 message traversal after entering cycle
- * - depth=N: Allow N-1 message traversals after entering cycle
+ * - depth=N: Allow N recursions (recursiveDepth from 0 to N-1)
+ * - First recursion is at recursiveDepth=0
+ * - Limit check: recursiveDepth >= maxDepth (drops when equal or exceeds)
+ * - Example with depth=2: allows recursions at depth 0 and 1, drops at depth 2
  *
- * IMPORTANT: Depth counts ALL nested message fields visited inside a cycle,
- * not per-type occurrences. In mutual recursion A↔B, visiting B after entering
- * the cycle increments depth even though B is not a recursive edge.
+ * IMPORTANT: Depth increments for ALL nested message fields visited inside a cycle,
+ * not just recursive edges. Non-recursive types visited while in a cycle also increment depth.
  *
  * Internal Implementation:
- * - Spark depth values used directly (no conversion)
- * - First cycle occurrence is at depth=1
- * - Depth increments for EVERY message field visited inside cycle
- * - Example A→B→A→C→A: internal depths are 0, 0, 1, 2, 3
- *   (A and B not in cycle=0, first A recursion=1, C inside cycle=2, second A recursion=3)
+ * - User depth N maps to internal maxRecursiveDepth N
+ * - First recursion check at recursiveDepth=0
+ * - Depth increments for EVERY message field visited while recursiveDepth > 0
+ * - Example A→B→A→C→A: depths are 0, 0, 0, 1, 2
+ *   (A and B outside cycle=0, first A recursion at 0, C inside cycle=1, second A recursion=1→2)
  *
  * Semantic Difference from Spark SQL:
  *
- * Our implementation counts nested message field traversals after entering a cycle.
- * The depth counter increments for EVERY message field visited while in a cycle,
- * including non-recursive intermediate types.
+ * Our implementation uses a single depth counter that increments for ALL message fields
+ * visited after entering a recursive cycle. The limit applies globally across all types.
  *
  * Example - Mutual recursion A↔B with depth=3:
- * - Our result: A→B→A→B(primitives only, recursive fields dropped)
- * - Cycle path: A(depth 0) → B(depth 0) → A(cycle depth 1) → B(next depth 2, cycle depth 3)
- * - At cycle depth 3: B's recursive fields (a_field) are dropped
+ * - Our result: A→B→A→B→A(primitives only, recursive fields dropped)
+ * - Path depths: A(0) → B(0) → A(recursion at 0→1) → B(recursion at 1→2) → A(recursion at 2→3, dropped)
+ * - depth=3 allows 3 recursions total across all types
  *
- * Spark SQL tracks total occurrences per message type independently:
+ * Spark SQL tracks occurrences per message type independently:
  * - Spark depth=3 for type A: allows A to appear 3 times total
  * - Spark depth=3 for type B: allows B to appear 3 times total
- * - Each type tracked separately
+ * - Each type has its own counter
  *
- * This difference means our depth limit may drop fields earlier than expected
- * in complex mutual recursion patterns.
+ * With Spark depth=3 and A↔B mutual recursion:
+ * - Spark result: A→B→A→B→A→B (allows 3 A's and 3 B's)
+ * - Our result: A→B→A→B→A (allows 3 recursions total)
+ *
+ * Our approach limits total recursion depth to prevent stack overflow,
+ * while Spark's per-type counting allows deeper nesting in mutual recursion.
  *
  * Parser Defaults:
  * - WireFormat parser: allow_recursion=true
@@ -132,21 +135,19 @@ private[backport] class ProtobufOptions(
   val parseMode: ParseMode = parameters.get("mode").map(ParseMode.fromString).getOrElse(FailFastMode)
 
   /**
-   * Maximum recursion depth for nested message fields (Spark-aligned semantics).
+   * Maximum recursion depth for nested message fields.
    *
-   * Spark 3.4+ compatible values:
-   * - "-1": Forbid recursive fields (Spark default, throws error on recursion)
-   * - "1": Drop all recursive fields (no recursion allowed)
-   * - "2": Allow recursed once (field appears twice total)
-   * - "3-10": Allow recursed N-1 times (field appears N times total)
-   *
-   * Our extension:
-   * - "0": Unlimited recursion (enables RecursiveStructType, not in Spark)
+   * Values:
+   * - "-1": Forbid recursive fields (Spark 3.4+ default, throws error on recursion)
+   * - "0": Unlimited recursion (enables RecursiveStructType, our extension)
+   * - "1": Allow 1 recursion (first recursion at depth 0, drop at depth 1)
+   * - "2": Allow 2 recursions (recursions at depths 0 and 1, drop at depth 2)
+   * - "3-10": Allow N recursions (recursions at depths 0 to N-1, drop at depth N)
    *
    * Validation: Must be in range [-1, 10]. Values > 10 can cause stack overflows.
    *
-   * Internal conversion: User depth N → Internal maxRecursiveDepth N-1
-   * (Spark counts total appearances, we count depth from recursion point)
+   * Depth counting: Counts total recursions across all message types in a cycle.
+   * Different from Spark's per-type occurrence counting.
    *
    * Applies to: All parsers via RecursiveSchemaConverters
    */
