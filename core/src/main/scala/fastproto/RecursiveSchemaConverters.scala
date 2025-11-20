@@ -7,12 +7,49 @@ import scala.collection.JavaConverters._
 import scala.collection.mutable
 
 /**
- * Custom schema converter for benchmarks that handles recursive message types.
+ * Strategy for handling recursive message types during schema conversion.
+ */
+sealed trait RecursionMode extends Serializable
+
+object RecursionMode {
+  /** Throw exception when recursion is detected */
+  case object Fail extends RecursionMode
+
+  /** Drop recursive fields from schema entirely */
+  case object Drop extends RecursionMode
+
+  /** Replace recursive fields with BinaryType */
+  case object MockAsBinary extends RecursionMode
+
+  /** Allow recursive types using RecursiveStructType (unlimited depth) */
+  case object AllowRecursive extends RecursionMode
+
+  /**
+   * Parse user-facing mode string to RecursionMode enum.
+   * This should be called at the configuration boundary (ProtobufOptions).
+   */
+  def fromString(mode: String): RecursionMode = mode match {
+    case "fail" => Fail
+    case "drop" => Drop
+    case "binary" => MockAsBinary
+    case "recursive" => AllowRecursive
+    case "" => null  // Empty string means use default (determined by depth and allowRecursion)
+    case _ => throw new IllegalArgumentException(
+      s"Invalid value for 'recursive.fields.mode': '$mode'. " +
+      "Supported values are: '' (empty), 'drop', 'binary', 'fail', 'recursive'")
+  }
+}
+
+/**
+ * Unified schema converter that handles recursive message types with full config support.
+ *
+ * Supports all recursive field handling modes and depth limiting:
+ * - recursive.fields.mode: "recursive", "binary", "drop", "fail", or "" (default)
+ * - recursive.fields.max.depth: Maximum nesting depth for messages
  *
  * Standard SchemaConverters.toSqlType() fails on recursive protobuf messages because
- * Spark SQL cannot represent infinite recursive types. This converter detects
- * recursive fields during traversal and mocks them as BinaryType to avoid
- * infinite type definitions.
+ * Spark SQL cannot represent infinite recursive types. This converter provides multiple
+ * strategies for handling recursion based on configuration.
  */
 object RecursiveSchemaConverters {
 
@@ -21,19 +58,97 @@ object RecursiveSchemaConverters {
     descriptor.getFields.asScala.filter(_.getType != FieldDescriptor.Type.GROUP)
 
   /**
-   * Convert protobuf descriptor to Spark SQL type with recursion detection and mocking.
+   * Determine the effective recursion handling mode based on configuration precedence rules.
    *
-   * When a recursive field is detected (e.g., DomNode.children referring back to DomNode),
-   * it's replaced with BinaryType (or ArrayType(BinaryType) for repeated fields).
-   * This allows the schema to be finite while still testing recursive parsing performance.
+   * Precedence:
+   * 1. Explicit mode (if specified) always takes precedence
+   * 2. Depth-based defaults when mode=null (empty string parsed to null)
+   * 3. allowRecursion flag only used for depth=-1 with mode=null
+   */
+  private def determineRecursionMode(
+      parsedMode: RecursionMode,
+      recursiveFieldMaxDepth: Int,
+      allowRecursion: Boolean): RecursionMode = {
+
+    // If explicit mode specified (non-null), use it
+    if (parsedMode != null) {
+      parsedMode
+    } else {
+      // mode=null (empty string) → use depth-based defaults
+      recursiveFieldMaxDepth match {
+        case -1 =>
+          // Default behavior: depends on parser (allowRecursion flag)
+          if (allowRecursion) RecursionMode.AllowRecursive else RecursionMode.Fail
+
+        case 0 =>
+          // depth=0: No recursive fields allowed
+          RecursionMode.Drop
+
+        case _ if recursiveFieldMaxDepth >= 1 =>
+          // depth>=1: Depth limit, default to drop
+          RecursionMode.Drop
+      }
+    }
+  }
+
+  /**
+   * Convert protobuf descriptor to Spark SQL type respecting all configuration options.
+   *
+   * This is the unified entry point that handles all recursive field configurations with
+   * precedence rules:
+   *
+   * When depth=-1 (default):
+   * - mode=null + allowRecursion=false → fail (throw on recursion)
+   * - mode=null + allowRecursion=true → recursive (RecursiveStructType)
+   * - mode=explicit → use specified mode
+   *
+   * When depth=0 (no recursions):
+   * - mode=null → drop (default)
+   * - mode=explicit → use specified mode
+   * - allowRecursion → IGNORED (depth takes precedence)
+   *
+   * When depth>=1 (depth-limited):
+   * - mode=null → drop (default)
+   * - mode=explicit → use specified mode
+   * - allowRecursion → IGNORED (depth takes precedence)
    *
    * @param descriptor the protobuf message descriptor
+   * @param recursiveFieldsMode How to handle recursive fields (RecursionMode enum, null for default)
+   * @param recursiveFieldMaxDepth Maximum recursion depth (-1 for default, 0 for none, 1+ for limit)
+   * @param allowRecursion Whether recursion is allowed (set by parser selection, used when depth=-1 and mode=null)
    * @param enumAsInt if true, represent enum fields as IntegerType instead of StringType
-   * @return Spark SQL StructType with recursive fields mocked
+   * @return Spark SQL DataType with recursive fields handled according to config
    */
-  def toSqlTypeWithRecursionMocking(descriptor: Descriptor, enumAsInt: Boolean = false): DataType = {
-    val visitedTypes = mutable.Set[String]()
-    convertMessageType(descriptor, visitedTypes, enumAsInt)
+  def toSqlType(
+      descriptor: Descriptor,
+      recursiveFieldsMode: RecursionMode,
+      recursiveFieldMaxDepth: Int,
+      allowRecursion: Boolean,
+      enumAsInt: Boolean = false): DataType = {
+
+    // Determine effective mode using precedence rules
+    val mode = determineRecursionMode(recursiveFieldsMode, recursiveFieldMaxDepth, allowRecursion)
+
+    // Convert user depth to internal max depth
+    val internalMaxDepth = recursiveFieldMaxDepth match {
+      case -1 => -1  // Not used (fail/recursive modes determined by allowRecursion)
+      case 0 => 0    // No recursions allowed (drop on first recursion)
+      case n if n >= 1 => n  // Allow recursions at depth 1 through n
+    }
+
+    // Apply effective mode
+    mode match {
+      case RecursionMode.AllowRecursive =>
+        // RecursiveStructType with true circular references (unlimited only)
+        toSqlTypeWithTrueRecursion(descriptor, enumAsInt)
+
+      case RecursionMode.Fail | RecursionMode.Drop | RecursionMode.MockAsBinary =>
+        // Use unified conversion with mode-specific handling
+        val visitedTypes = mutable.Set[String]()
+        convertMessageType(descriptor, visitedTypes, enumAsInt, mode,
+                         recursiveDepth = 0, maxRecursiveDepth = internalMaxDepth)
+          .getOrElse(StructType(Seq.empty))  // Return empty struct if depth exceeded
+    }
   }
 
   /**
@@ -60,20 +175,44 @@ object RecursiveSchemaConverters {
 
   /**
    * Convert a message type to StructType, tracking visited types to detect recursion.
+   *
+   * Recursive depth tracking:
+   * - recursiveDepth=0: Not in a cycle
+   * - recursiveDepth=1: First recursion
+   * - recursiveDepth>1: Nested recursions
+   * - Returns None when recursiveDepth > maxRecursiveDepth (for drop/mock modes)
+   *
+   * Example A→B→A→B→A with maxDepth=3:
+   * - A (root): depth=0
+   * - B (first): depth=0
+   * - A (recurse): depth=1
+   * - B (recurse): depth=2
+   * - A (recurse): depth=3
+   * - B (recurse): depth=4 > 3, returns None
    */
   private def convertMessageType(
       descriptor: Descriptor,
       visitedTypes: mutable.Set[String],
-      enumAsInt: Boolean = false): StructType = {
+      enumAsInt: Boolean = false,
+      mode: RecursionMode = RecursionMode.Fail,
+      recursiveDepth: Int = 0,
+      maxRecursiveDepth: Int = -1): Option[StructType] = {
+
+    // Check depth limit (drop when depth > maxDepth)
+    if (maxRecursiveDepth >= 0 && recursiveDepth > maxRecursiveDepth) {
+      return None
+    }
 
     // Mark this type as being visited to detect cycles
     val typeName = descriptor.getFullName
     val wasAlreadyVisited = visitedTypes.contains(typeName)
     visitedTypes += typeName
 
-    val fields = supportedFields(descriptor).map { field =>
-      val sparkType = convertFieldType(field, visitedTypes, wasAlreadyVisited, enumAsInt)
-      StructField(field.getName, sparkType, nullable = true)
+    val fields = supportedFields(descriptor).flatMap { field =>
+      convertFieldType(field, visitedTypes, enumAsInt, mode, recursiveDepth, maxRecursiveDepth) match {
+        case None => None  // Field dropped due to recursion or depth limit
+        case Some(sparkType) => Some(StructField(field.getName, sparkType, nullable = true))
+      }
     }.toSeq
 
     // Clean up: remove from visited set when done (for clean recursion detection)
@@ -81,75 +220,119 @@ object RecursiveSchemaConverters {
       visitedTypes -= typeName
     }
 
-    StructType(fields)
+    Some(StructType(fields))
   }
 
   /**
-   * Convert a single field type, handling recursion detection.
+   * Convert a single field type, handling recursion detection and depth tracking.
+   *
+   * Returns None if the field should be dropped due to recursion or depth limit.
    */
   private def convertFieldType(
       field: FieldDescriptor,
       visitedTypes: mutable.Set[String],
-      parentWasVisited: Boolean,
-      enumAsInt: Boolean = false): DataType = {
-    // Filter out deprecated GROUP fields - should not happen but defensive check
+      enumAsInt: Boolean = false,
+      mode: RecursionMode = RecursionMode.Fail,
+      recursiveDepth: Int = 0,
+      maxRecursiveDepth: Int = -1): Option[DataType] = {
+
     require(field.getType != FieldDescriptor.Type.GROUP, "GROUP fields are not supported")
 
-    val baseType = field.getJavaType match {
+    val baseTypeOpt = field.getJavaType match {
       case FieldDescriptor.JavaType.MESSAGE =>
         val messageDescriptor = field.getMessageType
         val messageTypeName = messageDescriptor.getFullName
 
-        // Check for recursion: if we're already processing this type, mock it
+        // Check for recursion: if we're already processing this type
         if (visitedTypes.contains(messageTypeName)) {
-          // RECURSION DETECTED! Mock with BinaryType
-          BinaryType
+          // RECURSION DETECTED! Apply mode-specific handling
+          mode match {
+            case RecursionMode.Fail =>
+              throw new IllegalArgumentException(
+                s"Recursive field detected: ${field.getName} of type ${messageTypeName}. " +
+                "Recursive schemas are not supported in fail mode.")
+
+            case RecursionMode.Drop =>
+              // Check if we've exceeded depth (for depth=-1, drop immediately on recursion)
+              if (maxRecursiveDepth == -1 || recursiveDepth + 1 > maxRecursiveDepth) {
+                // Drop recursive field
+                None
+              } else {
+                // Within depth limit, continue recursing
+                convertMessageType(messageDescriptor, visitedTypes.clone(), enumAsInt, mode,
+                                 recursiveDepth + 1, maxRecursiveDepth)
+              }
+
+            case RecursionMode.MockAsBinary =>
+              // Check if we've exceeded depth (for depth=-1, mock immediately on recursion)
+              if (maxRecursiveDepth == -1 || recursiveDepth + 1 > maxRecursiveDepth) {
+                // Mock recursive field as BinaryType
+                Some(BinaryType)
+              } else {
+                // Within depth limit, continue recursing
+                convertMessageType(messageDescriptor, visitedTypes.clone(), enumAsInt, mode,
+                                 recursiveDepth + 1, maxRecursiveDepth)
+              }
+
+            case RecursionMode.AllowRecursive =>
+              // This should not happen (AllowRecursive uses toSqlTypeWithTrueRecursion)
+              throw new IllegalStateException("AllowRecursive mode should use toSqlTypeWithTrueRecursion")
+          }
         } else {
-          // Not recursive yet, continue normal conversion
-          convertMessageType(messageDescriptor, visitedTypes.clone(), enumAsInt)
+          // Not recursive - check if we're inside a cycle
+          val nextDepth = if (recursiveDepth > 0) {
+            // Inside a cycle: increment for ALL message fields
+            recursiveDepth + 1
+          } else {
+            // Not in a cycle yet, stay at 0
+            0
+          }
+
+          // Continue normal conversion
+          convertMessageType(messageDescriptor, visitedTypes.clone(), enumAsInt, mode,
+                           nextDepth, maxRecursiveDepth)
         }
 
-      case FieldDescriptor.JavaType.INT =>
-        IntegerType
-      case FieldDescriptor.JavaType.LONG =>
-        LongType
-      case FieldDescriptor.JavaType.FLOAT =>
-        FloatType
-      case FieldDescriptor.JavaType.DOUBLE =>
-        DoubleType
-      case FieldDescriptor.JavaType.BOOLEAN =>
-        BooleanType
-      case FieldDescriptor.JavaType.STRING =>
-        StringType
-      case FieldDescriptor.JavaType.BYTE_STRING =>
-        BinaryType
-      case FieldDescriptor.JavaType.ENUM =>
-        if (enumAsInt) IntegerType else StringType
+      case FieldDescriptor.JavaType.INT => Some(IntegerType)
+      case FieldDescriptor.JavaType.LONG => Some(LongType)
+      case FieldDescriptor.JavaType.FLOAT => Some(FloatType)
+      case FieldDescriptor.JavaType.DOUBLE => Some(DoubleType)
+      case FieldDescriptor.JavaType.BOOLEAN => Some(BooleanType)
+      case FieldDescriptor.JavaType.STRING => Some(StringType)
+      case FieldDescriptor.JavaType.BYTE_STRING => Some(BinaryType)
+      case FieldDescriptor.JavaType.ENUM => Some(if (enumAsInt) IntegerType else StringType)
     }
 
     // Handle repeated fields
-    if (field.isRepeated) {
-      // Handle map fields - for compatibility with WireFormatParser,
-      // treat maps as ArrayType[StructType] rather than MapType
-      if (field.isMapField) {
-        val mapEntryDescriptor = field.getMessageType
-        val keyField = mapEntryDescriptor.findFieldByName("key")
-        val valueField = mapEntryDescriptor.findFieldByName("value")
+    baseTypeOpt.flatMap { baseType =>
+      if (field.isRepeated) {
+        if (field.isMapField) {
+          val mapEntryDescriptor = field.getMessageType
+          val keyField = mapEntryDescriptor.findFieldByName("key")
+          val valueField = mapEntryDescriptor.findFieldByName("value")
 
-        val keyType = convertFieldType(keyField, visitedTypes, parentWasVisited, enumAsInt)
-        val valueType = convertFieldType(valueField, visitedTypes, parentWasVisited, enumAsInt)
+          val keyTypeOpt = convertFieldType(keyField, visitedTypes, enumAsInt, mode,
+                                           recursiveDepth, maxRecursiveDepth)
+          val valueTypeOpt = convertFieldType(valueField, visitedTypes, enumAsInt, mode,
+                                             recursiveDepth, maxRecursiveDepth)
 
-        // Create a synthetic struct type for map entries to be compatible with parsers
-        val mapEntryStruct = StructType(Seq(
-          StructField("key", keyType, nullable = false),
-          StructField("value", valueType, nullable = true)
-        ))
-        ArrayType(mapEntryStruct)
+          // Only create map entry if both key and value are available
+          for {
+            keyType <- keyTypeOpt
+            valueType <- valueTypeOpt
+          } yield {
+            val mapEntryStruct = StructType(Seq(
+              StructField("key", keyType, nullable = false),
+              StructField("value", valueType, nullable = true)
+            ))
+            ArrayType(mapEntryStruct)
+          }
+        } else {
+          Some(ArrayType(baseType))
+        }
       } else {
-        ArrayType(baseType)
+        Some(baseType)
       }
-    } else {
-      baseType
     }
   }
 
@@ -195,7 +378,8 @@ object RecursiveSchemaConverters {
    * Print schema information for debugging.
    */
   def printSchemaInfo(descriptor: Descriptor): Unit = {
-    val schema = toSqlTypeWithRecursionMocking(descriptor)
+    val schema = toSqlType(descriptor, recursiveFieldsMode = RecursionMode.MockAsBinary, recursiveFieldMaxDepth = -1,
+                          allowRecursion = false, enumAsInt = false)
     val mockedFields = getMockedFields(descriptor)
 
     println(s"Schema for ${descriptor.getFullName}:")

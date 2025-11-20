@@ -128,8 +128,52 @@ For detailed implementation and development information:
 The backport supports three protobuf usage patterns:
 
 1. **Compiled Java class**: `from_protobuf(col("data"), "com.example.MyMessage")`
-2. **Descriptor file**: `from_protobuf(col("data"), "MyMessage", "/path/to/schema.desc")`  
+2. **Descriptor file**: `from_protobuf(col("data"), "MyMessage", "/path/to/schema.desc")`
 3. **Binary descriptor set**: `from_protobuf(col("data"), "MyMessage", descriptor_bytes)`
+
+## Options
+
+The `from_protobuf` function accepts an `options` parameter for customizing parsing behavior:
+
+### Parse Mode
+```scala
+// Permissive mode: returns null on parsing errors
+from_protobuf(col("data"), "MyMessage", descriptorBytes,
+  Map("mode" -> "PERMISSIVE"))
+
+// Fail-fast mode: throws exception on errors (default)
+from_protobuf(col("data"), "MyMessage", descriptorBytes,
+  Map("mode" -> "FAILFAST"))
+```
+
+### Recursive Fields Handling
+
+Control recursive schema handling via `recursive.fields.max.depth` and `recursive.fields.mode`.
+
+```scala
+// Unlimited recursion (RecursiveStructType)
+Map("recursive.fields.mode" -> "recursive")
+
+// Drop recursive fields (no recursions allowed)
+Map("recursive.fields.max.depth" -> "0")
+
+// Allow up to 3 recursions, then drop
+Map("recursive.fields.max.depth" -> "3")
+
+// Mock recursive fields as BinaryType
+Map("recursive.fields.mode" -> "binary")
+```
+
+**Depth values**:
+- `-1`: Default behavior (recursive for WireFormat parser, fail for others)
+- `0`: No recursive fields allowed (drop on first recursion)
+- `1-10`: Depth limit (drop when depth > N)
+
+**Depth Counting**: First recursion assigned depth=1, drop when depth > maxDepth.
+Counts total recursions across all types (differs from Spark's per-type counting).
+Example: `depth=3` with A↔B → A→B→A→B→A (4th recursion at depth 4 > 3, dropped).
+
+See `ProtobufOptions.scala` javadoc for complete configuration details.
 
 ## Documentation Style
 

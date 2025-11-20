@@ -1,6 +1,7 @@
-package fastproto
+package org.apache.spark.sql.types
 
-import org.apache.spark.sql.types._
+import org.json4s.JsonAST.JValue
+import org.json4s.JsonDSL._
 
 import scala.collection.mutable
 
@@ -87,6 +88,15 @@ class RecursiveStructType(fields: Array[StructField], override val typeName: Str
   }
 
   /**
+   * Override jsonValue to use "struct" instead of custom typeName.
+   * This ensures JSON serialization is compatible with regular StructType.
+   */
+  override private[sql] def jsonValue = {
+    ("type" -> "struct") ~
+      ("fields" -> map(_.jsonValue))
+  }
+
+  /**
    * Override equals to add reference equality check at the top level.
    * This breaks recursion naturally for circular references since the same
    * instance will be reference-equal to itself.
@@ -156,7 +166,7 @@ class RecursiveStructType(fields: Array[StructField], override val typeName: Str
   private def catalogStringInternal(visitedIdentities: mutable.Set[Int]): String = {
     val thisIdentity = System.identityHashCode(this)
     if (visitedIdentities.contains(thisIdentity)) {
-      s"STRUCT<recursive:$typeName>"
+      s"struct<recursive:$typeName>"
     } else {
       visitedIdentities += thisIdentity
       val fieldStrings = fields.map { field =>
@@ -164,29 +174,29 @@ class RecursiveStructType(fields: Array[StructField], override val typeName: Str
           case rst: RecursiveStructType =>
             rst.catalogStringInternal(visitedIdentities)
           case ArrayType(rst: RecursiveStructType, _) =>
-            s"ARRAY<${rst.catalogStringInternal(visitedIdentities)}>"
+            s"array<${rst.catalogStringInternal(visitedIdentities)}>"
           case dt =>
             catalogDataTypeString(dt, visitedIdentities)
         }
         s"${field.name}:$typeStr"
       }
       visitedIdentities -= thisIdentity
-      s"STRUCT<${fieldStrings.mkString(",")}>"
+      s"struct<${fieldStrings.mkString(",")}>"
     }
   }
 
   private def catalogDataTypeString(dataType: DataType, visitedIdentities: mutable.Set[Int]): String = {
     dataType match {
       case rst: RecursiveStructType => rst.catalogStringInternal(visitedIdentities)
-      case ArrayType(rst: RecursiveStructType, _) => s"ARRAY<${rst.catalogStringInternal(visitedIdentities)}>"
-      case ArrayType(elementType, _) => s"ARRAY<${catalogDataTypeString(elementType, visitedIdentities)}>"
+      case ArrayType(rst: RecursiveStructType, _) => s"array<${rst.catalogStringInternal(visitedIdentities)}>"
+      case ArrayType(elementType, _) => s"array<${catalogDataTypeString(elementType, visitedIdentities)}>"
       case MapType(keyType, valueType, _) =>
-        s"MAP<${catalogDataTypeString(keyType, visitedIdentities)},${catalogDataTypeString(valueType, visitedIdentities)}>"
+        s"map<${catalogDataTypeString(keyType, visitedIdentities)},${catalogDataTypeString(valueType, visitedIdentities)}>"
       case StructType(nestedFields) =>
         val fieldStrings = nestedFields.map { field =>
           s"${field.name}:${catalogDataTypeString(field.dataType, visitedIdentities)}"
         }
-        s"STRUCT<${fieldStrings.mkString(",")}>"
+        s"struct<${fieldStrings.mkString(",")}>"
       case other => other.catalogString
     }
   }
@@ -211,7 +221,8 @@ class RecursiveStructType(fields: Array[StructField], override val typeName: Str
           case dt =>
             sqlDataTypeString(dt, visitedIdentities)
         }
-        s"`${field.name}` $typeStr"
+        // Match StructField.sql format with colon separator
+        s"`${field.name}`: $typeStr"
       }
       visitedIdentities -= thisIdentity
       s"STRUCT<${fieldStrings.mkString(", ")}>"
@@ -227,7 +238,7 @@ class RecursiveStructType(fields: Array[StructField], override val typeName: Str
         s"MAP<${sqlDataTypeString(keyType, visitedIdentities)}, ${sqlDataTypeString(valueType, visitedIdentities)}>"
       case StructType(nestedFields) =>
         val fieldStrings = nestedFields.map { field =>
-          s"`${field.name}` ${sqlDataTypeString(field.dataType, visitedIdentities)}"
+          s"`${field.name}`: ${sqlDataTypeString(field.dataType, visitedIdentities)}"
         }
         s"STRUCT<${fieldStrings.mkString(", ")}>"
       case other => other.sql
