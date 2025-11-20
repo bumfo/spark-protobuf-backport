@@ -144,8 +144,8 @@ private[backport] class ProtobufOptions(
    * Maximum recursion depth for nested message fields.
    *
    * Values:
-   * - "-1": Forbid recursive fields (Spark 3.4+ default, throws error on recursion)
-   * - "0": Unlimited recursion (enables RecursiveStructType, our extension)
+   * - "-1": Default behavior (recursive for WireFormat parser, fail for others)
+   * - "0": No recursive fields allowed (drop on first recursion)
    * - "1": Allow 1 recursion (drop when depth > 1)
    * - "2": Allow 2 recursions (drop when depth > 2)
    * - "3-10": Allow N recursions (drop when depth > N)
@@ -162,11 +162,11 @@ private[backport] class ProtobufOptions(
   val recursiveFieldMaxDepth: Int = {
     val depth = parameters.getOrElse("recursive.fields.max.depth", "-1").toInt
 
-    // Validate depth range (Spark enforces -1 or 1-10, we add 0 for unlimited)
+    // Validate depth range (-1 default, 0 no recursions, 1-10 depth limit)
     if (depth < -1 || depth > 10) {
       throw new IllegalArgumentException(
         s"Invalid value for 'recursive.fields.max.depth': $depth. " +
-        "Supported values are -1 (forbid), 0 (unlimited), or 1-10 (specific depth limit). " +
+        "Supported values are -1 (default), 0 (no recursions), or 1-10 (specific depth limit). " +
         "Values > 10 can cause stack overflows.")
     }
 
